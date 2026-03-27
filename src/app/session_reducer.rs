@@ -125,6 +125,8 @@ pub fn apply_event(session: &mut SessionState, event: AgentEvent, now: DateTime<
         }
 
         AgentEvent::SessionBound { agent_session_id } => {
+            // Store the Claude-native session id for use with --resume on the next turn.
+            session.claude_session_id = Some(agent_session_id.clone());
             session.session_id = agent_session_id;
         }
 
@@ -199,6 +201,28 @@ mod tests {
 
         assert_eq!(s.session_id, "native-abc-123",
             "SessionBound should overwrite the local placeholder id with the native agent session id");
+    }
+
+    #[test]
+    fn session_bound_populates_claude_session_id() {
+        let mut s = fresh_session();
+        assert!(s.claude_session_id.is_none(), "claude_session_id should start as None");
+
+        apply_event(&mut s, AgentEvent::SessionBound { agent_session_id: "claude-sess-xyz".into() }, t0());
+
+        assert_eq!(
+            s.claude_session_id.as_deref(),
+            Some("claude-sess-xyz"),
+            "SessionBound should store the native session id in claude_session_id for --resume",
+        );
+    }
+
+    #[test]
+    fn session_bound_updates_claude_session_id_on_subsequent_turns() {
+        let mut s = fresh_session();
+        apply_event(&mut s, AgentEvent::SessionBound { agent_session_id: "id-first".into() }, t0());
+        apply_event(&mut s, AgentEvent::SessionBound { agent_session_id: "id-second".into() }, t0());
+        assert_eq!(s.claude_session_id.as_deref(), Some("id-second"));
     }
 
     #[test]

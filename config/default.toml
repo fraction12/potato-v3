@@ -3,10 +3,10 @@
 
 # ── Model ─────────────────────────────────────────────────────────────────────
 
-# Default model to use for chat requests.
-model = "llama3"
+# Default model passed to Claude Code via --model flag (leave empty to use Claude's default).
+model = ""
 
-# Base URL of the Ollama instance.
+# (Legacy — unused in cockpit mode)
 ollama_url = "http://localhost:11434"
 
 # Whether to require manual approval before executing any tool call.

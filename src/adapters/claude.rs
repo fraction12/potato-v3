@@ -53,13 +53,18 @@ impl AgentAdapter for ClaudeAdapter {
 
     /// Build the Claude CLI command.
     ///
-    /// Produces: `claude --output-format stream-json --verbose [--resume id] [--model m] [flags…]`
+    /// Produces: `claude --print --output-format stream-json --verbose [--resume id] [--model m] [flags…]`
+    ///
+    /// `--print` is required by the Claude CLI when using `--output-format stream-json`.
+    /// The prompt is NOT passed as a CLI arg — it must be piped via stdin.
     fn build_command(&self, config: &AdapterConfig) -> Command {
         let binary = self.detect().unwrap_or_else(|| PathBuf::from("claude"));
         let mut cmd = Command::new(binary);
 
         cmd.current_dir(&config.working_dir);
-        cmd.args(["--output-format", "stream-json", "--verbose"]);
+        // --print is required for stream-json output format.
+        // Prompt is passed via stdin, not as a CLI argument.
+        cmd.args(["--print", "--output-format", "stream-json", "--verbose"]);
 
         if let Some(ref session_id) = config.resume_session_id {
             cmd.args(["--resume", session_id]);
@@ -99,12 +104,20 @@ impl AgentAdapter for ClaudeAdapter {
         let msg_type = value["type"].as_str().unwrap_or("");
 
         match msg_type {
-            // ── Session init ─────────────────────────────────────────────────
-            "system" if value["subtype"].as_str() == Some("init") => {
-                if let Some(session_id) = value["session_id"].as_str() {
-                    vec![AgentEvent::SessionBound { agent_session_id: session_id.to_string() }]
-                } else {
-                    vec![AgentEvent::Raw { payload: trimmed.to_string() }]
+            // ── System events ─────────────────────────────────────────────────
+            "system" => {
+                match value["subtype"].as_str() {
+                    // hook_started and hook_response are internal lifecycle events — silently ignore.
+                    Some("hook_started") | Some("hook_response") => vec![],
+                    // init → bind the agent session id.
+                    Some("init") => {
+                        if let Some(session_id) = value["session_id"].as_str() {
+                            vec![AgentEvent::SessionBound { agent_session_id: session_id.to_string() }]
+                        } else {
+                            vec![AgentEvent::Raw { payload: trimmed.to_string() }]
+                        }
+                    }
+                    _ => vec![AgentEvent::Raw { payload: trimmed.to_string() }],
                 }
             }
 
@@ -185,9 +198,11 @@ impl AgentAdapter for ClaudeAdapter {
             // ── User message echo (ignore) ────────────────────────────────────
             "user" => vec![],
 
+            // ── Rate limit events (ignore) ────────────────────────────────────
+            "rate_limit_event" => vec![],
+
             // ── Unknown / passthrough ─────────────────────────────────────────
             _ => {
-                warn!("claude adapter: unrecognised line type {:?}", msg_type);
                 vec![AgentEvent::Raw { payload: trimmed.to_string() }]
             }
         }
@@ -303,6 +318,27 @@ mod tests {
         let events = adapter().parse_line(line);
         assert_eq!(events.len(), 1);
         assert!(matches!(&events[0], AgentEvent::Raw { .. }));
+    }
+
+    #[test]
+    fn parse_system_hook_started_returns_empty() {
+        let line = r#"{"type":"system","subtype":"hook_started","hook_id":"h1"}"#;
+        let events = adapter().parse_line(line);
+        assert!(events.is_empty(), "hook_started should be silently ignored, got {:?}", events);
+    }
+
+    #[test]
+    fn parse_system_hook_response_returns_empty() {
+        let line = r#"{"type":"system","subtype":"hook_response","hook_id":"h1","response":{}}"#;
+        let events = adapter().parse_line(line);
+        assert!(events.is_empty(), "hook_response should be silently ignored, got {:?}", events);
+    }
+
+    #[test]
+    fn parse_rate_limit_event_returns_empty() {
+        let line = r#"{"type":"rate_limit_event","retry_after_ms":5000}"#;
+        let events = adapter().parse_line(line);
+        assert!(events.is_empty(), "rate_limit_event should be silently ignored, got {:?}", events);
     }
 
     // ── parse_line: assistant text → TextDelta ────────────────────────────────
@@ -564,6 +600,13 @@ mod tests {
     }
 
     #[test]
+    fn build_command_includes_print_flag() {
+        let cmd = adapter().build_command(&default_config());
+        let args = cmd_args(&cmd);
+        assert!(args.contains(&"--print".to_string()), "--print must be in args (required for stream-json), got {:?}", args);
+    }
+
+    #[test]
     fn build_command_includes_output_format_stream_json() {
         let cmd = adapter().build_command(&default_config());
         let args = cmd_args(&cmd);
@@ -590,6 +633,7 @@ mod tests {
         };
         let cmd = adapter().build_command(&config);
         let args = cmd_args(&cmd);
+        assert!(args.contains(&"--print".to_string()), "--print must always be present");
         assert!(args.contains(&"--verbose".to_string()));
         let pos = args.iter().position(|a| a == "--output-format").expect("--output-format missing");
         assert_eq!(args[pos + 1], "stream-json");

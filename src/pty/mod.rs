@@ -45,6 +45,20 @@ impl PtyHandle {
 
 // ── PtyProcess ────────────────────────────────────────────────────────────────
 
+/// Handle returned from [`PtyProcess::spawn_turn`].
+///
+/// Unlike the full [`PtyHandle`], this is a single-turn handle: stdin is
+/// closed immediately after the prompt is written, and the process exits
+/// after emitting the result event. No `stdin_tx` is provided.
+pub struct TurnHandle {
+    /// Receive parsed [`AgentEvent`]s broadcast by the reader task.
+    pub event_rx: broadcast::Receiver<AgentEvent>,
+    /// Watch the process exit code (`None` = still running).
+    pub exit_rx: watch::Receiver<Option<i32>>,
+}
+
+// ── PtyProcess ────────────────────────────────────────────────────────────────
+
 /// Spawns and manages an agent sub-process.
 pub struct PtyProcess;
 
@@ -257,6 +271,157 @@ impl PtyProcess {
         }
 
         Ok(PtyHandle { stdin_tx, event_rx, exit_rx, kill_tx })
+    }
+
+    /// Spawn a single-turn Claude process.
+    ///
+    /// This is the correct architecture for the Claude Code CLI:
+    /// - `--print --output-format stream-json --verbose` requires a one-shot process
+    /// - The prompt is piped via stdin; stdin is closed immediately after writing
+    /// - The process exits after emitting a `result` event
+    /// - Pass `session_id` from a prior [`AgentEvent::SessionBound`] to continue a thread
+    ///
+    /// Three background tasks are launched:
+    /// 1. **Stdin writer** — writes `prompt + "\n"` and immediately closes stdin.
+    /// 2. **Reader** — reads stdout lines, parses via the adapter, broadcasts events.
+    /// 3. **Exit watcher** — waits for child exit, broadcasts `AgentExited`.
+    ///
+    /// Returns a [`TurnHandle`] with `event_rx` and `exit_rx`. There is no
+    /// `stdin_tx` because stdin is closed after the initial write.
+    pub async fn spawn_turn(
+        adapter: Arc<dyn AgentAdapter>,
+        config: AdapterConfig,
+        prompt: String,
+        session_id: Option<String>,
+    ) -> Result<TurnHandle> {
+        let working_dir = config.working_dir.display().to_string();
+        let adapter_name = adapter.name().to_string();
+        let model = config.model.clone();
+
+        // Build the base command from the adapter (includes --print --output-format stream-json --verbose).
+        let mut cmd = adapter.build_command(&config);
+
+        // Add --resume if we have a prior session id to continue the thread.
+        if let Some(ref sid) = session_id {
+            cmd.arg("--resume");
+            cmd.arg(sid);
+        }
+
+        // Piped I/O — we write the prompt to stdin then close it.
+        cmd.stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+
+        let mut child: Child = cmd.spawn().context("failed to spawn agent process (spawn_turn)")?;
+
+        // Take ownership of I/O handles.
+        let stdout = child.stdout.take().context("no stdout handle (spawn_turn)")?;
+        let stderr = child.stderr.take().context("no stderr handle (spawn_turn)")?;
+        let mut stdin = child.stdin.take().context("no stdin handle (spawn_turn)")?;
+
+        // Channels.
+        let (event_tx, event_rx) = broadcast::channel::<AgentEvent>(1024);
+        let (exit_tx, exit_rx) = watch::channel::<Option<i32>>(None);
+
+        // ── Emit AgentStarted ─────────────────────────────────────────────────
+        let _ = event_tx.send(AgentEvent::AgentStarted {
+            adapter: adapter_name.clone(),
+            working_dir,
+            model,
+        });
+
+        // ── Task 0: stdin writer — write prompt then close stdin ──────────────
+        {
+            let prompt_bytes = format!("{prompt}\n");
+            tokio::spawn(async move {
+                if let Err(e) = stdin.write_all(prompt_bytes.as_bytes()).await {
+                    error!(error = %e, "spawn_turn: failed to write prompt to stdin");
+                }
+                // Drop stdin here → child sees EOF immediately.
+                // (stdin is dropped when this block ends)
+            });
+        }
+
+        // ── Task 1: stdout reader ─────────────────────────────────────────────
+        {
+            let event_tx_r = event_tx.clone();
+            let adapter_r = adapter.clone();
+            let mut reader = BufReader::new(stdout).lines();
+
+            tokio::spawn(async move {
+                loop {
+                    match reader.next_line().await {
+                        Ok(Some(line)) => {
+                            debug!(line = %line, "agent stdout (turn)");
+                            let events = adapter_r.parse_line(&line);
+                            for event in events {
+                                let _ = event_tx_r.send(event);
+                            }
+                        }
+                        Ok(None) => {
+                            debug!("agent stdout EOF (turn)");
+                            break;
+                        }
+                        Err(e) => {
+                            error!(error = %e, "error reading agent stdout (turn)");
+                            let _ = event_tx_r.send(AgentEvent::Error {
+                                message: format!("stdout read error: {e}"),
+                            });
+                            break;
+                        }
+                    }
+                }
+            });
+        }
+
+        // ── Task 1b: stderr reader ────────────────────────────────────────────
+        {
+            let event_tx_e = event_tx.clone();
+            let mut stderr_reader = BufReader::new(stderr).lines();
+
+            tokio::spawn(async move {
+                loop {
+                    match stderr_reader.next_line().await {
+                        Ok(Some(line)) => {
+                            debug!(stderr = %line, "agent stderr (turn)");
+                            if !line.trim().is_empty() {
+                                let _ = event_tx_e.send(AgentEvent::Warning { message: line });
+                            }
+                        }
+                        Ok(None) => break,
+                        Err(e) => {
+                            warn!(error = %e, "error reading agent stderr (turn)");
+                            break;
+                        }
+                    }
+                }
+            });
+        }
+
+        // ── Task 2: exit watcher ──────────────────────────────────────────────
+        {
+            let event_tx_x = event_tx.clone();
+
+            tokio::spawn(async move {
+                let exit_status = child.wait().await;
+
+                let exit_code = match exit_status {
+                    Ok(status) => {
+                        info!(code = ?status.code(), "agent process exited (turn)");
+                        status.code()
+                    }
+                    Err(e) => {
+                        error!(error = %e, "error waiting for agent process (turn)");
+                        None
+                    }
+                };
+
+                let _ = event_tx_x.send(AgentEvent::AgentExited { exit_code });
+                let _ = exit_tx.send(Some(exit_code.unwrap_or(-1)));
+            });
+        }
+
+        Ok(TurnHandle { event_rx, exit_rx })
     }
 }
 
@@ -891,5 +1056,96 @@ mod tests {
         let (kill_tx, _kill_rx) = watch::channel::<bool>(false);
         drop(event_tx);
         let _handle = PtyHandle { stdin_tx, event_rx, exit_rx, kill_tx };
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // spawn_turn tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// spawn_turn: `cat` echoes the prompt back via stdout, then exits on stdin EOF.
+    /// Verify AgentStarted, the Raw event containing the prompt, and AgentExited all arrive.
+    #[tokio::test]
+    async fn spawn_turn_cat_echoes_prompt_and_exits() {
+        let adapter = Arc::new(FakeAdapter::new("cat"));
+        let config = AdapterConfig { working_dir: std::env::temp_dir(), ..Default::default() };
+
+        let handle = PtyProcess::spawn_turn(
+            adapter,
+            config,
+            "hello from spawn_turn".to_string(),
+            None,
+        ).await.unwrap();
+
+        let mut rx = handle.event_rx;
+        let events = drain_until_exit(&mut rx, Duration::from_secs(5)).await;
+
+        // AgentStarted should be first.
+        assert!(
+            events.iter().any(|e| matches!(e, AgentEvent::AgentStarted { .. })),
+            "expected AgentStarted; events: {events:?}",
+        );
+
+        // The prompt text should appear as a Raw event (FakeAdapter maps lines → Raw).
+        assert!(
+            events.iter().any(|e| matches!(e, AgentEvent::Raw { payload } if payload.contains("hello from spawn_turn"))),
+            "expected Raw event with prompt text; events: {events:?}",
+        );
+
+        // AgentExited must arrive (process exits after stdin EOF).
+        assert!(
+            events.iter().any(|e| matches!(e, AgentEvent::AgentExited { .. })),
+            "expected AgentExited; events: {events:?}",
+        );
+    }
+
+    /// spawn_turn: exit_rx is updated after process exits.
+    #[tokio::test]
+    async fn spawn_turn_exit_rx_updated_on_exit() {
+        let adapter = Arc::new(FakeAdapter::new("sh").with_args(vec!["-c".into(), "exit 0".into()]));
+        let config = AdapterConfig { working_dir: std::env::temp_dir(), ..Default::default() };
+
+        let handle = PtyProcess::spawn_turn(adapter, config, "prompt".to_string(), None).await.unwrap();
+        let mut exit_rx = handle.exit_rx;
+
+        tokio::time::timeout(Duration::from_secs(5), exit_rx.changed())
+            .await
+            .expect("timed out waiting for exit_rx")
+            .expect("exit_rx sender dropped");
+
+        assert!(exit_rx.borrow().is_some(), "exit_rx should be Some after process exits");
+    }
+
+    /// spawn_turn: no stdin_tx field on TurnHandle (structural test).
+    #[test]
+    fn turn_handle_has_no_stdin_tx() {
+        // TurnHandle only has event_rx and exit_rx — this is a compile-time check.
+        let (event_tx, event_rx) = broadcast::channel::<AgentEvent>(1);
+        let (_exit_tx, exit_rx) = watch::channel::<Option<i32>>(None);
+        drop(event_tx);
+        let _handle = TurnHandle { event_rx, exit_rx };
+    }
+
+    /// spawn_turn: process receives prompt on stdin (via echo -n piped through sh).
+    #[tokio::test]
+    async fn spawn_turn_prompt_is_received_by_child() {
+        // sh -c "cat" will echo whatever is on stdin. We use this to confirm the
+        // prompt bytes were actually delivered before stdin was closed.
+        let adapter = Arc::new(FakeAdapter::new("sh").with_args(vec!["-c".into(), "cat".into()]));
+        let config = AdapterConfig { working_dir: std::env::temp_dir(), ..Default::default() };
+
+        let handle = PtyProcess::spawn_turn(
+            adapter,
+            config,
+            "unique-prompt-marker".to_string(),
+            None,
+        ).await.unwrap();
+
+        let mut rx = handle.event_rx;
+        let events = drain_until_exit(&mut rx, Duration::from_secs(5)).await;
+
+        assert!(
+            events.iter().any(|e| matches!(e, AgentEvent::Raw { payload } if payload.contains("unique-prompt-marker"))),
+            "spawn_turn must write the prompt to child stdin; events: {events:?}",
+        );
     }
 }

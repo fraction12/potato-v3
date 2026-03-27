@@ -46,6 +46,7 @@ use adapters::generic::GenericAdapter;
 use adapters::{AdapterConfig, AgentAdapter};
 use app::state::{AgentInfo, DashboardState};
 use ui::screens::{dashboard::render_dashboard, session::render_session};
+use crate::pty::TurnHandle;
 
 // ── CLI arguments ─────────────────────────────────────────────────────────────
 
@@ -122,8 +123,13 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
     let mut event_rx = event_stream();
     let tick_duration = Duration::from_millis(50);
 
-    // Active PTY handle (if a session is running).
-    let mut pty_handle: Option<crate::pty::PtyHandle> = None;
+    // Per-turn handle for the current Claude process (None when not processing a turn).
+    // Each user message spawns a new process; this is replaced each turn.
+    let mut turn_handle: Option<TurnHandle> = None;
+
+    // The adapter and config for the active session (set when entering a session).
+    let mut session_adapter: Option<Arc<dyn AgentAdapter>> = None;
+    let mut session_config: Option<AdapterConfig> = None;
 
     loop {
         // ── Render ────────────────────────────────────────────────────────────
@@ -140,7 +146,7 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
         })?;
 
         // ── PTY event drain ───────────────────────────────────────────────────
-        if let Some(ref mut handle) = pty_handle {
+        if let Some(ref mut handle) = turn_handle {
             // Drain any pending PTY events without blocking.
             loop {
                 match handle.event_rx.try_recv() {
@@ -148,11 +154,9 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                     Err(_) => break,
                 }
             }
-            // Check if the process exited.
-            if let Some(code) = *handle.exit_rx.borrow() {
-                if let Some(session) = state.session_mut() {
-                    session.status = app::state::AgentStatus::Exited { code: Some(code) };
-                }
+            // Check if the turn process has exited — clear the handle when done.
+            if handle.exit_rx.borrow().is_some() {
+                turn_handle = None;
             }
         }
 
@@ -163,14 +167,15 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
         };
 
         if let Some(m) = msg {
-            // Intercept Enter on the dashboard to launch a session.
+            // Intercept Enter on the dashboard to transition to session screen.
+            // We do NOT spawn Claude here — we wait for the first user message.
             if let Message::Key(ref key) = m {
                 if key.code == crossterm::event::KeyCode::Enter {
                     if let AppScreen::Dashboard(ref dash) = state.screen {
                         if !dash.available_agents.is_empty() {
                             let agent_info = dash.available_agents[dash.selected_agent].clone();
                             if agent_info.available {
-                                // Launch the selected agent.
+                                // Build adapter and config but don't spawn yet.
                                 let session_id = Uuid::new_v4().to_string();
                                 let adapter: Arc<dyn AgentAdapter> = match agent_info.adapter.as_str() {
                                     "claude" => Arc::new(ClaudeAdapter),
@@ -180,16 +185,13 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                                     model: if state.model.is_empty() { None } else { Some(state.model.clone()) },
                                     ..AdapterConfig::default()
                                 };
-
-                                match crate::pty::PtyProcess::spawn(adapter, config).await {
-                                    Ok(handle) => {
-                                        state.enter_session(session_id, &agent_info.name);
-                                        pty_handle = Some(handle);
-                                    }
-                                    Err(e) => {
-                                        state.set_error(format!("Failed to launch {}: {}", agent_info.name, e), 80);
-                                    }
+                                // Transition to session screen — Claude spawns on first user input.
+                                state.enter_session(session_id, &agent_info.name);
+                                if let Some(session) = state.session_mut() {
+                                    session.status = app::state::AgentStatus::Idle;
                                 }
+                                session_adapter = Some(adapter);
+                                session_config = Some(config);
                                 // Don't process further for this tick.
                                 state.tick_count = state.tick_count.wrapping_add(1);
                                 continue;
@@ -299,15 +301,14 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                             break;
                         }
                         KeyCode::Esc => {
-                            // Return to dashboard — kill the PTY child first.
-                            if let Some(ref handle) = pty_handle {
-                                handle.kill();
-                            }
+                            // Return to dashboard — drop the turn handle (if any) to let process exit.
+                            turn_handle = None;
+                            session_adapter = None;
+                            session_config = None;
                             state.screen = AppScreen::Dashboard(DashboardState {
                                 available_agents: detect_agents(),
                                 ..DashboardState::default()
                             });
-                            pty_handle = None;
                             continue;
                         }
                         // ── Scroll when input buffer is empty ─────────────────
@@ -345,7 +346,7 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                         }
                         // ── Text input ────────────────────────────────────────
                         KeyCode::Enter => {
-                            // Submit the input buffer to the agent.
+                            // Submit the input buffer to the agent via a new per-turn process.
                             let text = std::mem::take(&mut session.input_buffer);
                             session.input_cursor = 0;
                             if !text.is_empty() {
@@ -355,9 +356,30 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                                 session.transcript.push(
                                     app::state::TranscriptEntry::user(&text),
                                 );
-                                if let Some(ref handle) = pty_handle {
-                                    let formatted = ClaudeAdapter.format_user_input(&text);
-                                    let _ = handle.stdin_tx.try_send(formatted);
+                                session.status = app::state::AgentStatus::Thinking;
+
+                                // Get the claude session id for --resume (None on first turn).
+                                let resume_id = session.claude_session_id.clone();
+
+                                // Spawn a new per-turn process.
+                                if let (Some(adapter), Some(config)) =
+                                    (&session_adapter, &session_config)
+                                {
+                                    match crate::pty::PtyProcess::spawn_turn(
+                                        adapter.clone(),
+                                        config.clone(),
+                                        text.clone(),
+                                        resume_id,
+                                    ).await {
+                                        Ok(handle) => {
+                                            turn_handle = Some(handle);
+                                        }
+                                        Err(e) => {
+                                            session.status = app::state::AgentStatus::Error {
+                                                message: format!("spawn_turn failed: {e}"),
+                                            };
+                                        }
+                                    }
                                 }
                             }
                             continue;
@@ -388,12 +410,8 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                                 },
                                 chrono::Utc::now(),
                             );
-                            // Forward formatted approval to PTY stdin.
-                            if let Some(ref handle) = pty_handle {
-                                if let Some(formatted) = ClaudeAdapter.format_approval(true) {
-                                    let _ = handle.stdin_tx.try_send(formatted);
-                                }
-                            }
+                            // Note: approval forwarding to the CLI is a future concern;
+                            // in the per-turn model stdin is closed after the prompt.
                             continue;
                         }
                         KeyCode::Char('n') | KeyCode::Char('N')
@@ -413,12 +431,8 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                                 },
                                 chrono::Utc::now(),
                             );
-                            // Forward formatted denial to PTY stdin.
-                            if let Some(ref handle) = pty_handle {
-                                if let Some(formatted) = ClaudeAdapter.format_approval(false) {
-                                    let _ = handle.stdin_tx.try_send(formatted);
-                                }
-                            }
+                            // Note: approval forwarding to the CLI is a future concern;
+                            // in the per-turn model stdin is closed after the prompt.
                             continue;
                         }
                         KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
