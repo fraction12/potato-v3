@@ -40,7 +40,7 @@ use ratatui::{
 };
 
 use crate::app::state::{AgentStatus, AppScreen, AppState, CockpitFocus, SessionState};
-use crate::ui::theme::{AMBER, BG, BROWN, CHARCOAL, CREAM, RUST_RED, SOIL, SPROUT, TAN};
+use crate::ui::theme::{AMBER, BG, BRASS, CHARCOAL, CREAM, ROSE, SPROUT, STONE, TAN};
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -107,7 +107,7 @@ fn render_left_rail(frame: &mut Frame, area: Rect, session: &SessionState, focus
     let border_style = if focused {
         Style::default().fg(AMBER)
     } else {
-        Style::default().fg(CHARCOAL)
+        Style::default().fg(BRASS)
     };
     let title_style = if focused {
         Style::default().fg(AMBER).add_modifier(Modifier::BOLD)
@@ -134,7 +134,7 @@ fn render_left_rail(frame: &mut Frame, area: Rect, session: &SessionState, focus
                 .border_style(border_style)
                 .title(Span::styled(" Sessions ", title_style)),
         )
-        .style(Style::default().fg(SOIL).bg(BG));
+        .style(Style::default().fg(STONE).bg(BG));
 
     frame.render_widget(list, area);
 }
@@ -146,7 +146,7 @@ fn render_pty_viewport(frame: &mut Frame, area: Rect, state: &mut AppState, focu
     let border_style = if focused {
         Style::default().fg(AMBER)
     } else {
-        Style::default().fg(BROWN)
+        Style::default().fg(BRASS)
     };
     let title_style = if focused {
         Style::default().fg(AMBER).add_modifier(Modifier::BOLD)
@@ -180,7 +180,7 @@ fn render_pty_viewport(frame: &mut Frame, area: Rect, state: &mut AppState, focu
                         .border_style(border_style)
                         .title(" Claude "),
                 )
-                .style(Style::default().fg(SOIL));
+                .style(Style::default().fg(STONE));
             frame.render_widget(busy, area);
         }
     } else {
@@ -191,10 +191,10 @@ fn render_pty_viewport(frame: &mut Frame, area: Rect, state: &mut AppState, focu
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(CHARCOAL))
-                .title(Span::styled(" Claude ", Style::default().fg(SOIL))),
+                .border_style(Style::default().fg(BRASS))
+                .title(Span::styled(" Claude ", Style::default().fg(STONE))),
         )
-        .style(Style::default().fg(SOIL));
+        .style(Style::default().fg(STONE));
         frame.render_widget(placeholder, area);
     }
 
@@ -243,7 +243,7 @@ fn render_input_bar(frame: &mut Frame, area: Rect, session: &SessionState, focus
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(CHARCOAL))
+                    .border_style(Style::default().fg(BRASS))
                     .title(" Input "),
             )
             .style(Style::default().bg(BG));
@@ -252,12 +252,12 @@ fn render_input_bar(frame: &mut Frame, area: Rect, session: &SessionState, focus
         let border_style = if focused {
             Style::default().fg(AMBER)
         } else {
-            Style::default().fg(BROWN)
+            Style::default().fg(BRASS)
         };
         let title_style = if focused {
             Style::default().fg(AMBER).add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(SOIL)
+            Style::default().fg(STONE)
         };
 
         let prompt = "❯ ";
@@ -307,7 +307,7 @@ fn render_input_bar(frame: &mut Frame, area: Rect, session: &SessionState, focus
 
 fn render_right_rail(frame: &mut Frame, area: Rect, state: &AppState, focus: CockpitFocus) {
     let focused = focus == CockpitFocus::Sidebar;
-    let border_color = if focused { AMBER } else { CHARCOAL };
+    let border_color = if focused { AMBER } else { BRASS };
     let title_color = if focused { AMBER } else { TAN };
 
     // Split sidebar vertically: Metrics | Tools | Quick
@@ -322,15 +322,15 @@ fn render_right_rail(frame: &mut Frame, area: Rect, state: &AppState, focus: Coc
     let metrics_text = if let AppScreen::Session(ref s) = state.screen {
         vec![
             Line::from(vec![
-                Span::styled("Model  ", Style::default().fg(BROWN)),
+                Span::styled("Model  ", Style::default().fg(BRASS)),
                 Span::raw(s.agent_name.clone()),
             ]),
             Line::from(vec![
-                Span::styled("Tokens ", Style::default().fg(BROWN)),
+                Span::styled("Tokens ", Style::default().fg(BRASS)),
                 Span::raw(format!("{}", s.tokens_used)),
             ]),
             Line::from(vec![
-                Span::styled("Status ", Style::default().fg(BROWN)),
+                Span::styled("Status ", Style::default().fg(BRASS)),
                 Span::raw(agent_status_label(&s.status)),
             ]),
         ]
@@ -338,7 +338,7 @@ fn render_right_rail(frame: &mut Frame, area: Rect, state: &AppState, focus: Coc
         vec![]
     };
 
-    let metrics_border = if focused { AMBER } else { Color::Rgb(62, 39, 35) };
+    let metrics_border = if focused { AMBER } else { BRASS };
     frame.render_widget(
         Paragraph::new(metrics_text).block(
             Block::default()
@@ -359,7 +359,7 @@ fn render_right_rail(frame: &mut Frame, area: Rect, state: &AppState, focus: Coc
         .map(|e| {
             let icon = match e.success {
                 Some(true) => Span::styled("✓ ", Style::default().fg(SPROUT)),
-                Some(false) => Span::styled("✗ ", Style::default().fg(RUST_RED)),
+                Some(false) => Span::styled("✗ ", Style::default().fg(ROSE)),
                 None => Span::styled("⏳ ", Style::default().fg(AMBER)),
             };
             let max_name = (area.width.saturating_sub(5)) as usize;
@@ -376,7 +376,7 @@ fn render_right_rail(frame: &mut Frame, area: Rect, state: &AppState, focus: Coc
         Paragraph::new(tools_text).block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(if focused { AMBER } else { Color::Rgb(62, 39, 35) }))
+                .border_style(Style::default().fg(if focused { AMBER } else { BRASS }))
                 .title(Span::styled(" Tools ", Style::default().fg(title_color))),
         ),
         tools_area,
@@ -384,15 +384,15 @@ fn render_right_rail(frame: &mut Frame, area: Rect, state: &AppState, focus: Coc
 
     // ── Quick nav / skills ────────────────────────────────────────────────────
     let quick_lines = vec![
-        Line::from(Span::styled("  / skills", Style::default().fg(SOIL))),
-        Line::from(Span::styled("  / context", Style::default().fg(SOIL))),
-        Line::from(Span::styled("  / history", Style::default().fg(SOIL))),
+        Line::from(Span::styled("  / skills", Style::default().fg(STONE))),
+        Line::from(Span::styled("  / context", Style::default().fg(STONE))),
+        Line::from(Span::styled("  / history", Style::default().fg(STONE))),
     ];
     frame.render_widget(
         Paragraph::new(quick_lines).block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(if focused { AMBER } else { Color::Rgb(62, 39, 35) }))
+                .border_style(Style::default().fg(if focused { AMBER } else { BRASS }))
                 .title(Span::styled(" Quick ", Style::default().fg(title_color))),
         ),
         quick_area,
@@ -408,7 +408,7 @@ fn render_status_bar(
     model: &str,
     focus: CockpitFocus,
 ) {
-    let sep = Span::styled(" │ ", Style::default().fg(SOIL).bg(CHARCOAL));
+    let sep = Span::styled(" │ ", Style::default().fg(STONE).bg(CHARCOAL));
 
     let agent_span = Span::styled(
         format!(" {} ", session.agent_name),
@@ -422,7 +422,7 @@ fn render_status_bar(
     let tokens = session.metrics.total_tokens();
     let token_span = Span::styled(
         format!("tok: {}", tokens),
-        Style::default().fg(BROWN).bg(CHARCOAL),
+        Style::default().fg(BRASS).bg(CHARCOAL),
     );
 
     let focus_label = match focus {
@@ -433,12 +433,12 @@ fn render_status_bar(
     };
     let focus_span = Span::styled(
         format!("focus: {}", focus_label),
-        Style::default().fg(SOIL).bg(CHARCOAL),
+        Style::default().fg(STONE).bg(CHARCOAL),
     );
 
     let keys_span = Span::styled(
         " Tab:cycle  Ctrl+J:term  Esc:input  Ctrl+Q:quit ",
-        Style::default().fg(Color::Rgb(70, 50, 40)).bg(CHARCOAL),
+        Style::default().fg(STONE).bg(CHARCOAL),
     );
 
     let line = Line::from(vec![
@@ -482,12 +482,12 @@ fn agent_status_label(status: &AgentStatus) -> String {
 /// Returns `(label, color)` for a given agent status.
 fn agent_status_display(status: &AgentStatus) -> (String, Color) {
     match status {
-        AgentStatus::Starting => ("Starting…".to_string(), SOIL),
+        AgentStatus::Starting => ("Starting…".to_string(), STONE),
         AgentStatus::Idle => ("Idle".to_string(), SPROUT),
         AgentStatus::Thinking => ("Thinking…".to_string(), AMBER),
         AgentStatus::RunningTool { name } => (format!("▶ {}", name), AMBER),
         AgentStatus::WaitingApproval { tool_name } => {
-            (format!("⚠ Approve: {}", tool_name), RUST_RED)
+            (format!("⚠ Approve: {}", tool_name), ROSE)
         }
         AgentStatus::Exited { code } => (format!("Exited ({})", code.unwrap_or(-1)), MUTED),
         AgentStatus::Error { message } => {
@@ -496,7 +496,7 @@ fn agent_status_display(status: &AgentStatus) -> (String, Color) {
             } else {
                 message.clone()
             };
-            (format!("Error: {}", short), RUST_RED)
+            (format!("Error: {}", short), ROSE)
         }
     }
 }
@@ -542,7 +542,7 @@ mod tests {
         let (label, color) =
             agent_status_display(&AgentStatus::Error { message: "boom".to_string() });
         assert!(label.contains("Error"));
-        assert_eq!(color, RUST_RED);
+        assert_eq!(color, ROSE);
     }
 
     #[test]

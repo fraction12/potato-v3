@@ -10,7 +10,7 @@ use ratatui::{
 };
 
 use crate::app::state::AppState;
-use crate::ui::theme::{AMBER, BG, CHARCOAL, CREAM, SOIL};
+use crate::ui::theme::{AMBER, BG, CHARCOAL, CREAM, SOIL, STONE};
 use super::{Panel, PanelAction, PanelId};
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -181,7 +181,7 @@ impl Panel for FilePreviewPanel {
 
             let num_span = Span::styled(
                 num_str,
-                Style::default().fg(SOIL),
+                Style::default().fg(STONE),
             );
             let content_span = Span::styled(
                 line_content.clone(),
@@ -203,7 +203,7 @@ impl Panel for FilePreviewPanel {
         if rendered_lines.is_empty() {
             rendered_lines.push(Line::from(Span::styled(
                 "No file loaded. Use Ctrl+P to open a file.",
-                Style::default().fg(SOIL),
+                Style::default().fg(STONE),
             )));
         }
 

@@ -9,7 +9,7 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Clear, Paragraph, Widget},
 };
 
-use crate::ui::theme::{AMBER, BG, CHARCOAL, CREAM, SOIL};
+use crate::ui::theme::{AMBER, BG, CHARCOAL, CREAM, SOIL, STONE};
 use super::{Overlay, OverlayAction};
 
 /// Modal listing available models; pressing Enter switches the active model.
@@ -95,13 +95,13 @@ impl Overlay for ModelPicker {
             let indicator_style = if is_selected {
                 Style::default().fg(AMBER).bg(bg)
             } else {
-                Style::default().fg(SOIL).bg(bg)
+                Style::default().fg(STONE).bg(bg)
             };
 
             let name_style = if is_selected {
                 Style::default().fg(CREAM).bg(bg).add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(SOIL).bg(bg)
+                Style::default().fg(STONE).bg(bg)
             };
 
             let line = Line::from(vec![

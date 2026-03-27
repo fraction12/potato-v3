@@ -22,7 +22,7 @@ use ratatui::{
 };
 
 use crate::app::state::{AppScreen, AppState, DashboardFocus};
-use crate::ui::theme::{AMBER, BG, BROWN, CHARCOAL, CREAM, SOIL, SPROUT, TAN};
+use crate::ui::theme::{AMBER, BG, BRASS, BROWN, CHARCOAL, CREAM, SOIL, SPROUT, STONE, TAN};
 
 /// Muted gray for unavailable/secondary items.
 const MUTED: Color = Color::Rgb(100, 100, 100);
@@ -62,14 +62,14 @@ fn render_title(frame: &mut Frame, area: Rect) {
         .alignment(Alignment::Center)
         .style(
             Style::default()
-                .fg(BROWN)
+                .fg(BRASS)
                 .bg(BG)
                 .add_modifier(Modifier::BOLD),
         )
         .block(
             Block::default()
                 .borders(Borders::BOTTOM)
-                .border_style(Style::default().fg(SOIL)),
+                .border_style(Style::default().fg(STONE)),
         );
     frame.render_widget(title, area);
 }
@@ -114,7 +114,7 @@ fn render_agent_list(
     let border_style = if focused {
         Style::default().fg(AMBER)
     } else {
-        Style::default().fg(SOIL)
+        Style::default().fg(STONE)
     };
 
     let block = Block::default()
@@ -191,7 +191,7 @@ fn render_session_list(
     let border_style = if focused {
         Style::default().fg(AMBER)
     } else {
-        Style::default().fg(SOIL)
+        Style::default().fg(STONE)
     };
 
     let block = Block::default()
@@ -234,7 +234,7 @@ fn render_session_list(
             let line = Line::from(vec![
                 Span::styled(
                     format!("  [{:<10}] ", s.agent_name),
-                    Style::default().fg(BROWN).bg(bg),
+                    Style::default().fg(BRASS).bg(bg),
                 ),
                 Span::styled(date, row_style),
                 Span::styled(
@@ -262,11 +262,11 @@ fn render_footer(frame: &mut Frame, area: Rect) {
     let line = Line::from(vec![
         Span::styled(
             " ↑↓ navigate  ",
-            Style::default().fg(BROWN),
+            Style::default().fg(BRASS),
         ),
-        Span::styled("Tab switch panel  ", Style::default().fg(BROWN)),
-        Span::styled("Enter launch  ", Style::default().fg(BROWN)),
-        Span::styled("q quit", Style::default().fg(BROWN)),
+        Span::styled("Tab switch panel  ", Style::default().fg(BRASS)),
+        Span::styled("Enter launch  ", Style::default().fg(BRASS)),
+        Span::styled("q quit", Style::default().fg(BRASS)),
     ]);
     let footer = Paragraph::new(line)
         .style(Style::default().bg(BG))

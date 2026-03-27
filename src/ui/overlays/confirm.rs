@@ -9,7 +9,7 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Clear, Paragraph},
 };
 
-use crate::ui::theme::{AMBER, BG, CHARCOAL, CREAM, SOIL};
+use crate::ui::theme::{AMBER, BG, CHARCOAL, CREAM, SOIL, STONE};
 use super::{Overlay, OverlayAction};
 
 /// Compact yes/no confirmation dialog.
@@ -84,11 +84,11 @@ impl Overlay for ConfirmDialog {
         ));
 
         let prompt_line = Line::from(vec![
-            Span::styled("[", Style::default().fg(SOIL)),
+            Span::styled("[", Style::default().fg(STONE)),
             Span::styled("y", Style::default().fg(AMBER).add_modifier(Modifier::BOLD)),
-            Span::styled("] confirm   [", Style::default().fg(SOIL)),
+            Span::styled("] confirm   [", Style::default().fg(STONE)),
             Span::styled("n / Esc", Style::default().fg(AMBER).add_modifier(Modifier::BOLD)),
-            Span::styled("] cancel", Style::default().fg(SOIL)),
+            Span::styled("] cancel", Style::default().fg(STONE)),
         ]);
 
         // Render centered inside inner area.

@@ -16,7 +16,7 @@ use ratatui::{
 };
 
 use crate::app::state::AppState;
-use crate::ui::theme::{AMBER, BG, CHARCOAL, CREAM, SOIL, SPROUT, TAN};
+use crate::ui::theme::{AMBER, BG, CHARCOAL, CREAM, SOIL, SPROUT, STONE, TAN};
 
 use super::{Panel, PanelAction, PanelId};
 
@@ -113,7 +113,7 @@ impl Panel for SessionsPanel {
             use ratatui::widgets::{Paragraph, Widget};
             let hint = Paragraph::new(Span::styled(
                 " No sessions yet. Press `n` to create one.",
-                Style::default().fg(SOIL),
+                Style::default().fg(STONE),
             ))
             .style(Style::default().bg(BG));
             hint.render(inner, frame.buffer_mut());
@@ -133,7 +133,7 @@ impl Panel for SessionsPanel {
                 let marker_style = if is_current {
                     Style::default().fg(SPROUT)
                 } else {
-                    Style::default().fg(SOIL)
+                    Style::default().fg(STONE)
                 };
 
                 let title_style = if is_selected {
@@ -145,7 +145,7 @@ impl Panel for SessionsPanel {
                     Style::default().fg(TAN)
                 };
 
-                let meta_style = Style::default().fg(SOIL);
+                let meta_style = Style::default().fg(STONE);
 
                 let line = Line::from(vec![
                     Span::styled(marker.to_string(), marker_style),

@@ -20,7 +20,7 @@ use crate::app::agent_state::AgentState;
 use crate::app::state::AppState;
 use crate::ui::layout::{LegacyLayoutManager, build_layout};
 use crate::ui::panels::PanelId;
-use crate::ui::theme::{Theme, AMBER, BG, BROWN, CHARCOAL, CREAM, RUST_RED, SOIL, TAN};
+use crate::ui::theme::{AMBER, BG, BRASS, BROWN, CHARCOAL, CREAM, ROSE, RUST_RED, SOIL, STONE, TAN, Theme};
 use crate::ui::widgets::{
     approval_bar::ApprovalBar,
     status_badge::{BadgeVariant, StatusBadge},
@@ -119,9 +119,9 @@ fn render_input(frame: &mut Frame, area: ratatui::layout::Rect, state: &AppState
     let is_busy = state.agent_state != AgentState::Idle;
 
     let border_style = if is_busy {
-        Style::default().fg(SOIL)
+        Style::default().fg(STONE)
     } else {
-        Style::default().fg(BROWN)
+        Style::default().fg(BRASS)
     };
 
     let block = Block::default()
@@ -141,7 +141,7 @@ fn render_input(frame: &mut Frame, area: ratatui::layout::Rect, state: &AppState
         let state_label = agent_state_label(&state.agent_state);
         let line = Line::from(vec![
             Span::styled(format!("{} ", spinner), Style::default().fg(AMBER)),
-            Span::styled(state_label, Style::default().fg(SOIL)),
+            Span::styled(state_label, Style::default().fg(STONE)),
         ]);
         Paragraph::new(line).render(inner, frame.buffer_mut());
     } else {
@@ -212,7 +212,7 @@ fn render_status_bar(
     let tokens = state.token_counts.0 + state.token_counts.1;
     let token_span = Span::styled(
         format!("{} tok", tokens),
-        Style::default().fg(BROWN).bg(CHARCOAL),
+        Style::default().fg(BRASS).bg(CHARCOAL),
     );
 
     // Focus indicator
@@ -226,7 +226,7 @@ fn render_status_bar(
     let right_span = if let Some(ref err) = state.error_message {
         Span::styled(
             format!("⚠ {}", err),
-            Style::default().fg(RUST_RED).bg(CHARCOAL),
+            Style::default().fg(ROSE).bg(CHARCOAL),
         )
     } else {
         let config = if state.config_path.is_empty() {
@@ -240,7 +240,7 @@ fn render_status_bar(
         };
         Span::styled(
             format!("{} ", config),
-            Style::default().fg(SOIL).bg(CHARCOAL),
+            Style::default().fg(STONE).bg(CHARCOAL),
         )
     };
 
@@ -290,6 +290,6 @@ fn agent_state_display(state: &AgentState, _theme: &Theme) -> (String, Style) {
             format!("⚠ {}", tool_name),
             Style::default().fg(AMBER),
         ),
-        AgentState::Error(_) => ("Error".to_string(), Style::default().fg(RUST_RED)),
+        AgentState::Error(_) => ("Error".to_string(), Style::default().fg(ROSE)),
     }
 }

@@ -10,7 +10,7 @@ use ratatui::{
     text::Span,
 };
 
-use crate::ui::theme::{AMBER, BROWN, CHARCOAL, CREAM, SPROUT};
+use crate::ui::theme::{AMBER, BRASS, BROWN, CHARCOAL, CREAM, SPROUT};
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
@@ -30,14 +30,14 @@ pub fn render_markdown_line(line: &str) -> Vec<Span<'static>> {
         let text = line[4..].to_string();
         return vec![Span::styled(
             text,
-            Style::default().fg(BROWN).add_modifier(Modifier::BOLD),
+            Style::default().fg(BRASS).add_modifier(Modifier::BOLD),
         )];
     }
     if line.starts_with("## ") {
         let text = line[3..].to_string();
         return vec![Span::styled(
             text,
-            Style::default().fg(BROWN).add_modifier(Modifier::BOLD),
+            Style::default().fg(BRASS).add_modifier(Modifier::BOLD),
         )];
     }
     if line.starts_with("# ") {
@@ -211,20 +211,20 @@ mod tests {
     }
 
     #[test]
-    fn h2_is_brown_and_bold() {
+    fn h2_is_brass_and_bold() {
         let spans = render_markdown_line("## Sub");
         assert_eq!(spans.len(), 1);
         assert_eq!(spans[0].content, "Sub");
-        assert_eq!(spans[0].style.fg, Some(BROWN));
+        assert_eq!(spans[0].style.fg, Some(BRASS));
         assert!(spans[0].style.add_modifier.contains(Modifier::BOLD));
     }
 
     #[test]
-    fn h3_is_brown_and_bold() {
+    fn h3_is_brass_and_bold() {
         let spans = render_markdown_line("### Sub sub");
         assert_eq!(spans.len(), 1);
         assert_eq!(spans[0].content, "Sub sub");
-        assert_eq!(spans[0].style.fg, Some(BROWN));
+        assert_eq!(spans[0].style.fg, Some(BRASS));
         assert!(spans[0].style.add_modifier.contains(Modifier::BOLD));
     }
 

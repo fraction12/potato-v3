@@ -13,7 +13,7 @@ use ratatui::{
 
 use crate::app::agent_state::AgentState;
 use crate::app::state::AppState;
-use crate::ui::theme::{AMBER, BG, CHARCOAL, CREAM, RUST_RED, SOIL, SPROUT, TAN};
+use crate::ui::theme::{AMBER, BG, CHARCOAL, CREAM, ROSE, RUST_RED, SOIL, SPROUT, STONE, TAN};
 use super::{Panel, PanelAction, PanelId};
 
 // ── Spinner frames ─────────────────────────────────────────────────────────────
@@ -79,7 +79,7 @@ impl StatusPhase {
             Self::Thinking => Style::default().fg(AMBER),
             Self::ToolCall { .. } => Style::default().fg(TAN),
             Self::Approval { .. } => Style::default().fg(AMBER).add_modifier(Modifier::BOLD),
-            Self::Error(_) => Style::default().fg(RUST_RED),
+            Self::Error(_) => Style::default().fg(ROSE),
         }
     }
 
@@ -182,7 +182,7 @@ impl AgentStatusPanel {
         // Spinner / indicator
         match &self.phase {
             StatusPhase::Idle => {
-                spans.push(Span::styled("●  ", Style::default().fg(SOIL)));
+                spans.push(Span::styled("●  ", Style::default().fg(STONE)));
             }
             StatusPhase::Thinking => {
                 spans.push(Span::styled(
@@ -207,7 +207,7 @@ impl AgentStatusPanel {
         // Tool name for ToolCall / Approval
         match &self.phase {
             StatusPhase::ToolCall { tool_name } | StatusPhase::Approval { tool_name } => {
-                spans.push(Span::styled("  →  ", Style::default().fg(SOIL)));
+                spans.push(Span::styled("  →  ", Style::default().fg(STONE)));
                 spans.push(Span::styled(tool_name.clone(), Style::default().fg(CREAM)));
             }
             _ => {}
@@ -218,7 +218,7 @@ impl AgentStatusPanel {
             spans.push(Span::styled("  ", Style::default()));
             spans.push(Span::styled(
                 msg.chars().take(40).collect::<String>(),
-                Style::default().fg(RUST_RED),
+                Style::default().fg(ROSE),
             ));
         }
 
@@ -227,7 +227,7 @@ impl AgentStatusPanel {
             spans.push(Span::styled("  ", Style::default()));
             spans.push(Span::styled(
                 self.elapsed_str(),
-                Style::default().fg(SOIL),
+                Style::default().fg(STONE),
             ));
         }
 

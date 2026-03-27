@@ -9,7 +9,7 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Clear, Paragraph},
 };
 
-use crate::ui::theme::{AMBER, BG, CHARCOAL, CREAM, SOIL};
+use crate::ui::theme::{AMBER, BG, CHARCOAL, CREAM, SOIL, STONE};
 use super::{Overlay, OverlayAction};
 
 // ── Keybind entry ─────────────────────────────────────────────────────────────
@@ -174,7 +174,7 @@ impl Overlay for HelpOverlay {
                 "— end —"
             };
             let hint_line = Paragraph::new(hint)
-                .style(Style::default().fg(SOIL));
+                .style(Style::default().fg(STONE));
             frame.render_widget(hint_line, hint_area);
 
             content

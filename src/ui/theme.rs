@@ -14,6 +14,11 @@ pub const CREAM: Color = Color::Rgb(255, 248, 225);
 pub const CHARCOAL: Color = Color::Rgb(62, 39, 35);
 pub const BG: Color = Color::Rgb(30, 20, 15);
 
+// WCAG-safe foreground variants for text/UI chrome on dark surfaces.
+pub const BRASS: Color = Color::Rgb(171, 145, 77);
+pub const STONE: Color = Color::Rgb(171, 144, 118);
+pub const ROSE: Color = Color::Rgb(220, 119, 110);
+
 // ── Theme struct ────────────────────────────────────────────────────────────
 
 /// Central theme configuration holding color assignments for UI elements.
@@ -37,15 +42,15 @@ impl Default for Theme {
         Self {
             background: BG,
             foreground: CREAM,
-            border: CHARCOAL,
+            border: BRASS,
             border_focused: AMBER,
             user_bubble: SOIL,
             assistant_bubble: BROWN,
             tool_highlight: TAN,
-            error: RUST_RED,
+            error: ROSE,
             warning: AMBER,
             success: SPROUT,
-            muted: CHARCOAL,
+            muted: STONE,
         }
     }
 }
@@ -70,12 +75,12 @@ impl Theme {
 
     /// Style for system / informational messages.
     pub fn system_message(&self) -> Style {
-        Style::default().fg(BROWN)
+        Style::default().fg(BRASS)
     }
 
     /// Style for error messages.
     pub fn error_message(&self) -> Style {
-        Style::default().fg(RUST_RED)
+        Style::default().fg(ROSE)
     }
 
     /// Style for the ❯ input prompt prefix.
@@ -90,7 +95,7 @@ impl Theme {
 
     /// Style for disabled input text (agent is busy).
     pub fn input_disabled(&self) -> Style {
-        Style::default().fg(CHARCOAL)
+        Style::default().fg(STONE)
     }
 
     /// Style for the status bar background.
@@ -100,7 +105,7 @@ impl Theme {
 
     /// Style for the │ separators in the status bar.
     pub fn status_separator(&self) -> Style {
-        Style::default().fg(BROWN).bg(CHARCOAL)
+        Style::default().fg(BRASS).bg(CHARCOAL)
     }
 
     /// Border style for a tool card that is running.
@@ -115,7 +120,7 @@ impl Theme {
 
     /// Border style for a tool card that failed.
     pub fn tool_failed(&self) -> Style {
-        Style::default().fg(RUST_RED)
+        Style::default().fg(ROSE)
     }
 
     /// Style for bold inline markdown text (`**bold**`).
@@ -130,7 +135,7 @@ impl Theme {
 
     /// Style for a section divider line between conversation turns.
     pub fn divider(&self) -> Style {
-        Style::default().fg(CHARCOAL)
+        Style::default().fg(BRASS)
     }
 
     /// Style for the approval bar header.
@@ -145,6 +150,6 @@ impl Theme {
 
     /// Muted / de-emphasised style for timestamps and secondary info.
     pub fn muted(&self) -> Style {
-        Style::default().fg(SOIL)
+        Style::default().fg(STONE)
     }
 }

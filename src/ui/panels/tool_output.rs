@@ -25,7 +25,7 @@ use ratatui::{
 use chrono::{DateTime, Utc};
 
 use crate::app::state::{AppState, ToolCallRecord};
-use crate::ui::theme::{AMBER, BG, CHARCOAL, CREAM, RUST_RED, SOIL, SPROUT, TAN};
+use crate::ui::theme::{AMBER, BG, CHARCOAL, CREAM, ROSE, RUST_RED, SOIL, SPROUT, STONE, TAN};
 
 use super::{Panel, PanelAction, PanelId};
 
@@ -280,7 +280,7 @@ impl Panel for ToolOutputPanel {
         if self.entries.is_empty() {
             let hint = Paragraph::new(Span::styled(
                 " No tool calls yet.",
-                Style::default().fg(SOIL),
+                Style::default().fg(STONE),
             ))
             .style(Style::default().bg(BG));
             hint.render(inner, frame.buffer_mut());
@@ -364,17 +364,17 @@ fn entry_lines(entry: &ToolOutputEntry, selected: bool) -> Vec<Line<'static>> {
     let sel_style = if selected {
         Style::default().fg(AMBER).add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(SOIL)
+        Style::default().fg(STONE)
     };
 
     // Header: `[sel] [collapse] [icon] name  (duration)`
     let header = Line::from(vec![
         Span::styled(sel_marker.to_string(), sel_style),
-        Span::styled(collapse_hint.to_string(), Style::default().fg(SOIL)),
+        Span::styled(collapse_hint.to_string(), Style::default().fg(STONE)),
         Span::styled(format!("{} ", icon), icon_style),
         Span::styled(entry.name.clone(), icon_style),
         Span::raw("  "),
-        Span::styled(entry.duration_str(), Style::default().fg(SOIL)),
+        Span::styled(entry.duration_str(), Style::default().fg(STONE)),
     ]);
 
     if entry.collapsed {
@@ -397,7 +397,7 @@ fn entry_lines(entry: &ToolOutputEntry, selected: bool) -> Vec<Line<'static>> {
     if truncated_input {
         lines.push(Line::from(Span::styled(
             "    …".to_string(),
-            Style::default().fg(SOIL),
+            Style::default().fg(STONE),
         )));
     }
 
@@ -414,7 +414,7 @@ fn entry_lines(entry: &ToolOutputEntry, selected: bool) -> Vec<Line<'static>> {
         if truncated_output {
             lines.push(Line::from(Span::styled(
                 "    …".to_string(),
-                Style::default().fg(SOIL),
+                Style::default().fg(STONE),
             )));
         }
     }
@@ -426,7 +426,7 @@ fn entry_lines(entry: &ToolOutputEntry, selected: bool) -> Vec<Line<'static>> {
 fn status_icon_and_style(entry: &ToolOutputEntry) -> (&'static str, Style) {
     match entry.success {
         Some(true) => ("✓", Style::default().fg(SPROUT)),
-        Some(false) => ("✗", Style::default().fg(RUST_RED)),
+        Some(false) => ("✗", Style::default().fg(ROSE)),
         None => ("⏳", Style::default().fg(AMBER)),
     }
 }

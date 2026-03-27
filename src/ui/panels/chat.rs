@@ -16,7 +16,7 @@ use ratatui::{
 
 use crate::app::state::{AppState, MessageRole, TranscriptEntry};
 use crate::ui::markdown::{extract_lang, is_code_fence, render_markdown_line};
-use crate::ui::theme::{Theme, AMBER, BG, BROWN, CHARCOAL, CREAM, RUST_RED, SOIL, SPROUT, TAN};
+use crate::ui::theme::{AMBER, BG, BRASS, BROWN, CHARCOAL, CREAM, ROSE, RUST_RED, SOIL, SPROUT, STONE, TAN, Theme};
 
 use super::{Panel, PanelAction, PanelId};
 
@@ -231,7 +231,7 @@ impl ChatPanel {
             let ts_span = if self.show_timestamps {
                 Some(Span::styled(
                     format!(" {}", entry.timestamp.format("%H:%M")),
-                    Style::default().fg(SOIL).add_modifier(Modifier::DIM),
+                    Style::default().fg(STONE).add_modifier(Modifier::DIM),
                 ))
             } else {
                 None
@@ -252,7 +252,7 @@ impl ChatPanel {
                     };
                     lines.push(Line::from(Span::styled(
                         fence_label,
-                        Style::default().fg(BROWN),
+                        Style::default().fg(BRASS),
                     )));
                     continue;
                 }
@@ -451,16 +451,16 @@ fn role_prefix(entry: &TranscriptEntry) -> (Span<'static>, Style) {
         MessageRole::System => (
             Span::styled(
                 "\u{2022} ".to_string(),
-                Style::default().fg(BROWN),
+                Style::default().fg(BRASS),
             ),
-            Style::default().fg(BROWN),
+            Style::default().fg(BRASS),
         ),
         MessageRole::Error => (
             Span::styled(
                 "\u{2717} ".to_string(),
-                Style::default().fg(RUST_RED),
+                Style::default().fg(ROSE),
             ),
-            Style::default().fg(RUST_RED),
+            Style::default().fg(ROSE),
         ),
     }
 }

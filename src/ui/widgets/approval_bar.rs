@@ -19,7 +19,7 @@ use ratatui::{
 };
 
 use crate::app::state::PendingApproval;
-use crate::ui::theme::{Theme, AMBER, BG, CHARCOAL, CREAM, RUST_RED};
+use crate::ui::theme::{AMBER, BG, CHARCOAL, CREAM, ROSE, RUST_RED, Theme};
 
 /// Renders the pending-approval prompt over the input area.
 pub struct ApprovalBar<'a> {
@@ -78,7 +78,7 @@ impl<'a> Widget for ApprovalBar<'a> {
                 let style = if preview_line.starts_with('+') {
                     Style::default().fg(crate::ui::theme::SPROUT)
                 } else if preview_line.starts_with('-') {
-                    Style::default().fg(RUST_RED)
+                    Style::default().fg(ROSE)
                 } else {
                     Style::default().fg(CREAM)
                 };
@@ -94,7 +94,7 @@ impl<'a> Widget for ApprovalBar<'a> {
             Span::raw("  "),
             Span::styled("[y]", theme.approval_header()),
             Span::raw(" approve  "),
-            Span::styled("[n]", Style::default().fg(RUST_RED)),
+            Span::styled("[n]", Style::default().fg(ROSE)),
             Span::raw(" deny  "),
             Span::styled("[a]", theme.approval_header()),
             Span::raw(" approve all"),

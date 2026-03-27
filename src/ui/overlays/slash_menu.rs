@@ -16,7 +16,7 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Clear, Paragraph, Widget},
 };
 
-use crate::ui::theme::{AMBER, BG, CHARCOAL, CREAM, SOIL};
+use crate::ui::theme::{AMBER, BG, CHARCOAL, CREAM, SOIL, STONE};
 use super::{Overlay, OverlayAction};
 
 // ── SlashCommand ──────────────────────────────────────────────────────────────
@@ -253,9 +253,9 @@ impl Overlay for SlashMenu {
             let name_style = if is_selected {
                 Style::default().fg(CREAM).bg(bg).add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(SOIL).bg(bg)
+                Style::default().fg(STONE).bg(bg)
             };
-            let desc_style = Style::default().fg(SOIL).bg(bg);
+            let desc_style = Style::default().fg(STONE).bg(bg);
 
             let name_text = format!("/{}", cmd.name);
             let mut spans = vec![

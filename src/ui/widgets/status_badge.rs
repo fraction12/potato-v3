@@ -8,7 +8,7 @@ use ratatui::{
     text::{Line, Span},
 };
 
-use crate::ui::theme::{Theme, AMBER, BG, CHARCOAL, CREAM, RUST_RED, SPROUT, TAN};
+use crate::ui::theme::{AMBER, BG, CHARCOAL, CREAM, ROSE, RUST_RED, SPROUT, TAN, Theme};
 
 /// Colour variant for a [`StatusBadge`].
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -50,7 +50,7 @@ impl StatusBadge {
             BadgeVariant::Neutral => Style::default().fg(TAN),
             BadgeVariant::Success => Style::default().fg(SPROUT),
             BadgeVariant::Warning => Style::default().fg(AMBER).add_modifier(Modifier::BOLD),
-            BadgeVariant::Error => Style::default().fg(RUST_RED).add_modifier(Modifier::BOLD),
+            BadgeVariant::Error => Style::default().fg(ROSE).add_modifier(Modifier::BOLD),
             BadgeVariant::Info => Style::default().fg(CREAM),
         }
     }
