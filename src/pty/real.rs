@@ -174,14 +174,14 @@ impl RealPty {
             .context("failed to resize PTY")?;
         // Also resize the vt100 parser so it tracks the correct screen size.
         if let Ok(mut p) = self.screen.lock() {
-            p.set_size(rows, cols);
+            p.screen_mut().set_size(rows, cols);
         }
         Ok(())
     }
 
     pub fn set_scrollback(&self, rows: usize) -> usize {
         if let Ok(mut p) = self.screen.lock() {
-            p.set_scrollback(rows);
+            p.screen_mut().set_scrollback(rows);
             p.screen().scrollback()
         } else {
             0
