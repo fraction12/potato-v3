@@ -571,7 +571,9 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                 let pty_cols = (term_cols as u32 * 3 / 4).saturating_sub(2) as u16;
                 let pty_rows = term_rows.saturating_sub(10);
 
-                let session_args = ["--resume", "--session-id", resume_id.as_str()];
+                // --resume <id> reopens an existing session by ID.
+                // --session-id is for creating new sessions with a specific UUID.
+                let session_args = ["--resume", resume_id.as_str()];
                 let launch_cwd = std::env::current_dir().ok();
 
                 match crate::pty::RealPty::spawn_in(
