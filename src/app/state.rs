@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use chrono::{DateTime, Utc};
 
 use crate::app::agent_state::AgentState;
+use crate::claude_log::ClaudeSessionLogTracker;
 use crate::metrics::SessionMetrics;
 use crate::pty::RealPty;
 use crate::ui::focus::FocusRing;
@@ -423,6 +424,12 @@ pub struct AppState {
     /// or after the session exits.  Set when the user presses Enter on the
     /// dashboard and a `RealPty::spawn` succeeds.
     pub real_pty: Option<RealPty>,
+
+    /// Claude's own persisted session ledger for the active PTY session.
+    ///
+    /// Potato tails this JSONL file and uses it as the source of truth for the
+    /// sidebar metrics/tool data instead of inferring from terminal text.
+    pub claude_log: Option<ClaudeSessionLogTracker>,
 }
 
 impl Default for AppState {
@@ -453,6 +460,7 @@ impl Default for AppState {
             chat_panel: ChatPanel::new(Vec::new()),
             tool_output_panel: ToolOutputPanel::new(),
             real_pty: None,
+            claude_log: None,
         }
     }
 }

@@ -8,6 +8,7 @@
 
 mod adapters;
 mod app;
+mod claude_log;
 mod config;
 mod events;
 mod legacy;
@@ -161,6 +162,9 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
             }
         }
 
+        // ── Claude session log drain (direct sidebar source-of-truth) ───────
+        sync_claude_log(state);
+
         // ── Input / message wait ──────────────────────────────────────────────
         let msg = tokio::select! {
             Some(m) = event_rx.recv() => Some(m),
@@ -192,9 +196,12 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                                     agent_name, pty_cols, pty_rows,
                                 );
 
+                                let session_id = Uuid::new_v4().to_string();
+                                let session_args = ["--session-id", session_id.as_str()];
+
                                 match crate::pty::RealPty::spawn(
                                     &binary.to_string_lossy(),
-                                    &[],
+                                    &session_args,
                                     pty_cols.max(20),
                                     pty_rows.max(5),
                                 ) {
@@ -204,12 +211,19 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                                         state.real_pty = Some(real_pty);
 
                                         // Transition to session screen.
-                                        let session_id = uuid::Uuid::new_v4().to_string();
                                         state.enter_session(&session_id, &agent_name);
+
+                                        if let Ok(cwd) = std::env::current_dir() {
+                                            if let Some(home) = dirs::home_dir() {
+                                                let path = crate::claude_log::session_log_path(&home, &cwd, &session_id);
+                                                state.claude_log = Some(crate::claude_log::ClaudeSessionLogTracker::new(path));
+                                            }
+                                        }
 
                                         // Mark session as idle (PTY is live).
                                         if let Some(ref mut session) = state.session_mut() {
                                             session.status = crate::app::state::AgentStatus::Idle;
+                                            session.claude_session_id = Some(session_id.clone());
                                         }
                                     }
                                     Err(e) => {
@@ -314,6 +328,7 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                                 session_adapter = None;
                                 session_config = None;
                                 state.real_pty = None;
+                                state.claude_log = None;
                                 state.screen = AppScreen::Dashboard(DashboardState {
                                     available_agents: detect_agents(),
                                     ..DashboardState::default()
@@ -513,6 +528,21 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
 ///
 /// Delegates to the pure [`app::session_reducer::apply_event`] function so all
 /// state-transition logic is unit-testable without a terminal or PTY.
+fn sync_claude_log(state: &mut AppState) {
+    let Some(tracker) = state.claude_log.as_mut() else { return; };
+    let Ok(changed) = tracker.poll() else { return; };
+    if !changed {
+        return;
+    }
+
+    let snapshot = tracker.snapshot();
+    if let Some(session) = state.session_mut() {
+        session.metrics.input_tokens = snapshot.usage.input_tokens;
+        session.metrics.output_tokens = snapshot.usage.output_tokens;
+        session.tokens_used = snapshot.usage.total_tokens();
+    }
+}
+
 fn apply_pty_event(state: &mut AppState, event: crate::events::AgentEvent) {
     use crate::events::AgentEvent;
 
