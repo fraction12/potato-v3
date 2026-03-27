@@ -1,136 +1,274 @@
+# ─── Completed (Phases 1–4) ────────────────────────────────────────────────────
+
 tasks:
-  - id: T-001
-    title: "Terminal setup + panic hook"
+  # Phase 1 — Foundation
+  - id: T-101
+    title: "Terminal setup + panic hook + TerminalGuard"
     status: done
     phase: phase-1-foundation
-    description: |
-      Crossterm backend init, raw mode RAII guard, alternate screen,
-      panic hook that restores terminal before printing backtrace,
-      SIGINT/SIGTERM graceful restore. Smoke test: launch → splash → quit.
-    acceptance:
-      - Raw mode entered on start, restored on any exit path
-      - Alternate screen used
-      - Panic hook restores terminal before printing panic
-      - Ctrl+C exits cleanly
 
-  - id: T-002
-    title: "Async event loop + tick system"
+  - id: T-102
+    title: "Async event loop (tokio + crossterm EventStream)"
     status: done
     phase: phase-1-foundation
-    description: |
-      tokio runtime, crossterm EventStream in dedicated task,
-      central Message enum (Key, Resize, Tick, Agent, Quit),
-      mpsc channels, render loop with tick throttle, graceful shutdown.
-    acceptance:
-      - App runs async event loop
-      - Key events and resize events processed
-      - Tick-based render throttling
-      - Clean shutdown drains events
 
-  - id: T-003
-    title: "Config loading + schema"
+  - id: T-103
+    title: "Config loading (~/.potato/config.toml)"
     status: done
     phase: phase-1-foundation
-    description: |
-      Load ~/.potato/config.toml via serde+toml. Schema includes
-      ollama_url, default_model, theme, keybinds, data_dir.
-      Default impl with sensible fallbacks. Create ~/.potato/ on first run.
-    acceptance:
-      - Config loads from file or falls back to defaults
-      - ~/.potato/ created if missing
-      - Validation errors are user-friendly
 
-  - id: T-004
-    title: "Theme system with earth-tone palette"
+  - id: T-104
+    title: "Earth-tone theme + WCAG contrast pass"
     status: done
     phase: phase-1-foundation
-    description: |
-      Theme struct with Tan, Brown, Soil, Sprout, Rust, Amber, Cream,
-      Charcoal, BG constants. Style helpers for roles, borders, status.
-    acceptance:
-      - All 9 palette colors defined as RGB constants
-      - Style helpers for message roles and UI elements
 
-  - id: T-005
-    title: "Basic chat panel + input box"
-    status: open
+  - id: T-105
+    title: "Dashboard-first launch with agent detection"
+    status: done
     phase: phase-1-foundation
-    description: |
-      ChatPanel rendering Vec<ChatMessage> with role colors and prefixes.
-      Scrollback with j/k or mouse wheel. Input box at bottom with
-      line editing. Submit on Enter. User prompt prefix ❯.
-    acceptance:
-      - Messages render with role-based colors
-      - Scrollback works via keyboard
-      - Input accepts typing, backspace, cursor movement
-      - Enter submits message
-      - User messages show ❯ prefix
 
-  - id: T-006
-    title: "Ollama client + streaming"
-    status: open
-    phase: phase-1-foundation
-    description: |
-      reqwest client with NDJSON streaming to POST /api/chat.
-      Parse chunks, forward via mpsc as AgentChunk messages.
-      Handle done sentinel. Connection error → retry once → surface error.
-      Model list via GET /api/tags.
-    acceptance:
-      - Streaming response appears token-by-token in chat
-      - Connection errors surface as chat messages
-      - Model list endpoint works
+  # Phase 2 — Claude PTY
+  - id: T-201
+    title: "Real PTY embedding (portable-pty + vt100 + tui-term)"
+    status: done
+    phase: phase-2-pty
 
-  - id: T-007
-    title: "Tool trait + registry + builtin tools"
-    status: open
-    phase: phase-1-foundation
-    description: |
-      Tool trait (name, description, parameters, execute). ToolRegistry
-      for register/lookup. Builtin tools: shell, read_file, write_file,
-      edit_file, search (grep), list_dir. Async execution with timeout.
-    acceptance:
-      - Tool trait is generic and extensible
-      - All 6 builtin tools registered
-      - Executor respects timeouts
-      - Tool results flow back to agent loop
+  - id: T-202
+    title: "Launch Claude with --session-id for JSONL binding"
+    status: done
+    phase: phase-2-pty
 
-  - id: T-008
-    title: "Agent loop + state machine"
-    status: open
-    phase: phase-1-foundation
-    description: |
-      Agent loop: receive user message → call LLM → process response →
-      if tool call, execute tool → feed result back → repeat until done.
-      AgentState FSM: Idle → Thinking → ToolCall → Approval → back.
-      StreamAccumulator for token accumulation.
-    acceptance:
-      - Full agent loop with tool calling works
-      - State machine transitions are correct
-      - Streaming tokens accumulate properly
+  - id: T-203
+    title: "PTY cwd set to project directory"
+    status: done
+    phase: phase-2-pty
 
-  - id: T-009
-    title: "Approval gate for tool execution"
-    status: open
-    phase: phase-1-foundation
-    description: |
-      Tool calls require approval before execution (configurable).
-      ApprovalBar shows y/n/a inline. Agent loop pauses at approval.
-      'a' approves all remaining in current turn.
-    acceptance:
-      - Tool calls pause for approval
-      - y approves, n denies, a approves all
-      - Denied tools surface denial to agent
+  - id: T-204
+    title: "Input routing: Potato input bar → Claude PTY stdin"
+    status: done
+    phase: phase-2-pty
 
-  - id: T-010
-    title: "Session persistence (SQLite)"
+  - id: T-205
+    title: "Independent terminal scrollback (PgUp/PgDn/mouse wheel)"
+    status: done
+    phase: phase-2-pty
+
+  # Phase 3 — Cockpit Layout
+  - id: T-301
+    title: "3-column cockpit layout (sessions | terminal+input | sidebar)"
+    status: done
+    phase: phase-3-cockpit
+
+  - id: T-302
+    title: "Focus ring (Tab/Shift+Tab/Ctrl+J/Esc)"
+    status: done
+    phase: phase-3-cockpit
+
+  - id: T-303
+    title: "Status bar (agent, model, status, tokens, focus)"
+    status: done
+    phase: phase-3-cockpit
+
+  - id: T-304
+    title: "PTY viewport resize tracking (every frame)"
+    status: done
+    phase: phase-3-cockpit
+
+  # Phase 4 — Observability
+  - id: T-401
+    title: "Claude JSONL session log tailer (claude_log.rs)"
+    status: done
+    phase: phase-4-observability
+
+  - id: T-402
+    title: "Sidebar: live metrics from Claude artifacts"
+    status: done
+    phase: phase-4-observability
+
+  - id: T-403
+    title: "Sidebar: tool list with status icons"
+    status: done
+    phase: phase-4-observability
+
+  - id: T-404
+    title: "Fix Claude project-dir naming (underscores → dashes)"
+    status: done
+    phase: phase-4-observability
+
+  - id: T-405
+    title: "Sidebar polish: padding, alignment, token formatting"
+    status: done
+    phase: phase-4-observability
+
+  - id: T-406
+    title: "Remove Ollama-era dead code (−6200 lines)"
+    status: done
+    phase: phase-4-observability
+
+  # ─── Phase 5 — Session Recording + Left Rail ─────────────────────────────────
+
+  - id: T-501
+    title: "SQLite session recording from JSONL events"
     status: open
-    phase: phase-1-foundation
+    phase: phase-5-sessions
     description: |
-      SQLite-backed session store with rusqlite. Sessions table,
-      messages table. Save/load conversation history. WAL mode.
-      MessageHistory manages in-memory + persistence.
+      Record Claude JSONL events into Potato's SQLite store as they arrive.
+      Schema: sessions (id, agent, model, cwd, title, created_at, updated_at,
+      total_tokens) + events (session_id, event_type, payload JSON, timestamp).
+      Title derived from first user prompt. Auto-save on each new event.
     acceptance:
-      - Sessions persist across restarts
-      - Messages stored with role, content, timestamp, tokens
-      - WAL mode enabled
-      - Session list/switch works
+      - Events from claude_log tailer are persisted to SQLite
+      - Session metadata (model, cwd, tokens) tracked
+      - Title auto-generated from first user prompt
+      - WAL mode, no write contention with UI reads
+
+  - id: T-502
+    title: "Left rail — session list from Claude history"
+    status: open
+    phase: phase-5-sessions
+    description: |
+      Populate left rail from ~/.claude/projects/ JSONL files + Potato SQLite.
+      Show: truncated title, date, token count, agent name.
+      Navigate with j/k, Enter to select. Active session highlighted.
+    acceptance:
+      - Left rail shows real session history
+      - Sessions sorted by recency
+      - Active session visually distinct
+      - Navigation works when Sessions panel is focused
+
+  - id: T-503
+    title: "Session resume (--session / --continue)"
+    status: open
+    phase: phase-5-sessions
+    description: |
+      potato --session <id> or potato --continue launches Claude with
+      --session-id <id> --continue. Historical events loaded from SQLite
+      into sidebar on resume.
+    acceptance:
+      - --session flag resumes a specific session
+      - --continue resumes last session
+      - Sidebar shows historical metrics on resume
+      - Claude picks up conversation where it left off
+
+  - id: T-504
+    title: "Session export (/export md|json|timeline)"
+    status: open
+    phase: phase-5-sessions
+    description: |
+      Slash commands to export current session. /export md produces a
+      readable markdown transcript. /export json dumps raw events.
+      /export timeline produces a tool-call summary.
+    acceptance:
+      - /export md produces readable markdown
+      - /export json dumps all events
+      - /export timeline shows tool calls with durations
+      - Output written to cwd with session-id filename
+
+  # ─── Phase 6 — Slash Commands + Overlays ──────────────────────────────────────
+
+  - id: T-601
+    title: "Slash command system with autocomplete"
+    status: open
+    phase: phase-6-commands
+    description: |
+      Detect leading / in input bar → enter command mode.
+      Autocomplete dropdown above input. Built-in: /new, /sessions,
+      /export, /help, /agent.
+    acceptance:
+      - / triggers command mode
+      - Autocomplete shows matching commands
+      - Tab to complete, Enter to execute
+      - Esc cancels command mode
+
+  - id: T-602
+    title: "Help overlay (?)"
+    status: open
+    phase: phase-6-commands
+    description: |
+      ? toggles full-screen keybind reference overlay.
+      Sections: Global, Input, Terminal, Navigation.
+      Dismisses with Esc or ?.
+    acceptance:
+      - All keybinds documented
+      - Overlay renders correctly at any terminal size
+      - Keybinds match actual behavior
+
+  - id: T-603
+    title: "Session picker overlay"
+    status: open
+    phase: phase-6-commands
+    description: |
+      /sessions opens modal session picker. Shows all sessions with
+      title, date, tokens. Search/filter, Enter to switch, Esc to cancel.
+    acceptance:
+      - Lists all persisted sessions
+      - Filter by typing
+      - Switching sessions tears down current PTY and launches new one
+
+  # ─── Phase 7 — Multi-Agent Support ────────────────────────────────────────────
+
+  - id: T-701
+    title: "Codex adapter"
+    status: open
+    phase: phase-7-multiagent
+    description: |
+      CodexAdapter: spawn codex CLI, parse output or raw PTY passthrough.
+      Detect structured output format if available.
+
+  - id: T-702
+    title: "Generic adapter (raw PTY passthrough)"
+    status: open
+    phase: phase-7-multiagent
+    description: |
+      GenericAdapter wraps any CLI. No metrics parsing — raw terminal only.
+      Sidebar shows "no metrics" state gracefully.
+
+  - id: T-703
+    title: "Agent picker overlay (Ctrl+P)"
+    status: open
+    phase: phase-7-multiagent
+    description: |
+      Overlay listing detected agents + configured profiles.
+      Enter to launch. Shows binary path and profile name.
+
+  - id: T-704
+    title: "Agent profiles (config + .potato/profile.toml)"
+    status: open
+    phase: phase-7-multiagent
+    description: |
+      Per-agent config: binary path, default args, env vars, cwd.
+      Project-level .potato/profile.toml overrides global config.
+
+  # ─── Phase 8 — Polish + Distribution ──────────────────────────────────────────
+
+  - id: T-801
+    title: "Error handling + resilience"
+    status: open
+    phase: phase-8-release
+    description: |
+      Agent crash recovery, PTY read errors, config validation.
+      Error states visible in UI. Graceful degradation.
+
+  - id: T-802
+    title: "Responsive layouts + compact mode"
+    status: open
+    phase: phase-8-release
+    description: |
+      Compact mode below 80x24. Breakpoints for panel collapse.
+      Resize stress testing.
+
+  - id: T-803
+    title: "Distribution (cargo install + Homebrew + CI)"
+    status: open
+    phase: phase-8-release
+    description: |
+      cargo install potato, Homebrew tap, GitHub Actions CI/CD,
+      cross-compilation for macOS ARM/Intel + Linux x86/ARM.
+
+  - id: T-804
+    title: "README + screenshots + GIFs"
+    status: open
+    phase: phase-8-release
+    description: |
+      README with hero GIF (vhs/asciinema), feature screenshots,
+      install instructions, quickstart guide.

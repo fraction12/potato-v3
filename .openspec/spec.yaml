@@ -1,17 +1,21 @@
 project:
   name: Potato V3
   slug: potato-v3
-  description: Terminal-native AI agent orchestration desktop built in Rust with ratatui
+  description: >
+    Terminal cockpit for coding agents. Spawns Claude Code, Codex, or any CLI agent
+    in a real PTY and wraps it in a unified metrics/session/observability TUI.
+    Potato is not an agent — it's iTerm2 for the agent era.
   language: Rust
-  framework: ratatui + tokio + crossterm
+  framework: ratatui + tokio + crossterm + portable-pty + vt100
   storage: SQLite (rusqlite, WAL mode)
-  current_phase: phase-1-foundation
+  current_phase: phase-5-sessions
 
 metadata:
   version: 0.1.0
   owner: Dushyant Garg
   status: active
   created_at: 2026-03-26
+  updated_at: 2026-03-27
 
 links:
   readme: ./README.md
@@ -23,36 +27,70 @@ links:
     research: ~/Documents/Second Brain/Projects/Potato V3/RESEARCH.md
     plan: ~/Documents/Second Brain/Projects/Potato V3/PLAN.md
 
+key_decisions:
+  - Potato spawns real agents in a PTY — no LLM API calls, no tool execution
+  - Claude is source of truth for conversation; Potato is source of truth for observability
+  - Sidebar metrics driven from Claude's native JSONL session logs, not synthetic estimates
+  - Real embedded terminal viewport, not a rendered transcript
+  - Dashboard-first launch → Enter to start cockpit session
+  - Focus model: Input default → Tab cycles → Ctrl+J terminal → Esc returns
+
 phases:
   - id: phase-1-foundation
-    title: "Foundation: bootable TUI with Ollama streaming"
+    title: "Foundation: terminal setup, event loop, config, theme"
+    status: done
+    goal: Bootable TUI with panic hook, async event loop, config, earth-tone theme.
+
+  - id: phase-2-pty
+    title: "Claude Code PTY integration"
+    status: done
+    goal: >
+      Real PTY embedding via portable-pty + vt100 + tui-term.
+      Claude launched with --session-id. Input routing through Potato.
+      Independent terminal scrollback.
+
+  - id: phase-3-cockpit
+    title: "Cockpit layout + focus system"
+    status: done
+    goal: >
+      3-column layout (sessions rail | terminal + input | sidebar).
+      Focus ring with Tab/Ctrl+J/Esc. Status bar. PTY resize tracking.
+
+  - id: phase-4-observability
+    title: "Native Claude observability from JSONL"
+    status: done
+    goal: >
+      Claude JSONL session log tailer. Sidebar with live metrics, tools,
+      tokens, stop reason. Correct project-dir naming. PTY cwd binding.
+
+  - id: phase-5-sessions
+    title: "Session recording + left rail"
     status: in_progress
-    weeks: "1-2"
-    goal: |
-      Bootable TUI that renders a chat panel, connects to Ollama,
-      streams responses, executes tools with approval, and persists sessions.
-    tickets: [T-001, T-002, T-003, T-004, T-005, T-006, T-007, T-008, T-009, T-010]
+    goal: >
+      SQLite persistence of session events. Left rail populated from
+      Claude session history. Session resume/continue. Export commands.
+    tickets: [T-501, T-502, T-503, T-504]
 
-  - id: phase-2-panels
-    title: "Multi-panel desktop + overlays"
+  - id: phase-6-commands
+    title: "Slash commands + overlays"
     status: planned
-    weeks: "3-4"
-    goal: |
-      Panel system, split views, tool output panel, file preview,
-      slash menu, model picker, help overlay, session sidebar.
+    goal: >
+      /new, /sessions, /export, /help, /agent. Autocomplete dropdown.
+      Help overlay with keybind reference.
+    tickets: [T-601, T-602, T-603]
 
-  - id: phase-3-agent
-    title: "Agent intelligence + cloud support"
+  - id: phase-7-multiagent
+    title: "Multi-agent support"
     status: planned
-    weeks: "5-6"
-    goal: |
-      Cloud Ollama/OpenAI-compat support, multi-turn tool chains,
-      streaming tool output, token dashboard, agent status panel.
+    goal: >
+      Codex adapter, GenericAdapter for arbitrary CLIs, agent picker,
+      agent profiles in config, project-level .potato/profile.toml.
+    tickets: [T-701, T-702, T-703, T-704]
 
-  - id: phase-4-polish
-    title: "Polish, distribution, and hardening"
+  - id: phase-8-release
+    title: "Polish + distribution"
     status: planned
-    weeks: "7-8"
-    goal: |
-      Session export, config hot-reload, compact mode, release builds,
-      Homebrew formula, cargo-dist, CI/CD, documentation.
+    goal: >
+      Error handling, responsive layouts, compact mode, performance,
+      cargo install / Homebrew, README with GIFs, CI/CD, cross-compilation.
+    tickets: [T-801, T-802, T-803, T-804]
