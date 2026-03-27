@@ -41,6 +41,7 @@ use ratatui::{
 
 use crate::app::state::{AgentStatus, AppScreen, AppState, CockpitFocus, SessionState};
 use crate::claude_log::{ClaudeSidebarData, ClaudeToolStatus};
+use crate::session::store::unix_now;
 use crate::ui::theme::{AMBER, BG, BRASS, CHARCOAL, CREAM, ROSE, SPROUT, STONE, TAN};
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -95,7 +96,7 @@ pub fn render_session(frame: &mut Frame, area: Rect, state: &mut AppState) {
     // Now borrow session immutably for the rest.
     let AppScreen::Session(ref session) = state.screen else { return };
 
-    render_left_rail(frame, left_area, session, focus);
+    render_left_rail(frame, left_area, state, focus);
     render_input_bar(frame, input_area, session, focus);
     render_right_rail(frame, right_area, state, focus);
     render_status_bar(frame, status_area, session, &state.model, focus);
@@ -103,7 +104,7 @@ pub fn render_session(frame: &mut Frame, area: Rect, state: &mut AppState) {
 
 // ── Left rail — session list ──────────────────────────────────────────────────
 
-fn render_left_rail(frame: &mut Frame, area: Rect, session: &SessionState, focus: CockpitFocus) {
+fn render_left_rail(frame: &mut Frame, area: Rect, state: &AppState, focus: CockpitFocus) {
     let focused = focus == CockpitFocus::Sessions;
     let border_style = if focused {
         Style::default().fg(AMBER)
@@ -116,17 +117,85 @@ fn render_left_rail(frame: &mut Frame, area: Rect, session: &SessionState, focus
         Style::default().fg(TAN)
     };
 
-    // Build session list items. Currently we only show the active session.
-    let short_id: String = session.session_id.chars().take(10).collect();
-    let items: Vec<ListItem> = vec![ListItem::new(Line::from(vec![
-        Span::styled("● ", Style::default().fg(SPROUT)),
-        Span::styled(short_id, Style::default().fg(CREAM)),
-    ]))
-    .style(Style::default().bg(if focused {
-        Color::Rgb(45, 30, 20)
+    let active_session_id = state
+        .session()
+        .and_then(|s| s.claude_session_id.as_deref())
+        .map(str::to_string);
+
+    let selected_idx = state
+        .session()
+        .map(|s| s.selected_session)
+        .unwrap_or(0);
+
+    let rail = &state.rail_sessions;
+
+    // Inner width for text truncation (border + 2 padding).
+    let inner_w = area.width.saturating_sub(4) as usize;
+
+    let items: Vec<ListItem<'static>> = if rail.is_empty() {
+        vec![ListItem::new(Line::from(Span::styled(
+            " No sessions yet",
+            Style::default().fg(STONE),
+        )))]
     } else {
-        BG
-    }))];
+        rail.iter()
+            .enumerate()
+            .map(|(idx, s)| {
+                let is_active = active_session_id.as_deref() == Some(s.id.as_str());
+                let is_selected = idx == selected_idx;
+
+                let marker = if is_active { "● " } else { "  " };
+                let marker_style = if is_active {
+                    Style::default().fg(SPROUT)
+                } else {
+                    Style::default().fg(STONE)
+                };
+
+                // Title: use stored title, fall back to short id.
+                let title_raw = if s.title.is_empty() {
+                    s.id.chars().take(10).collect::<String>()
+                } else {
+                    s.title.chars().take(inner_w.saturating_sub(2)).collect()
+                };
+
+                let title_style = if is_selected {
+                    Style::default()
+                        .fg(CREAM)
+                        .add_modifier(Modifier::BOLD)
+                        .bg(Color::Rgb(45, 30, 20))
+                } else if is_active {
+                    Style::default().fg(CREAM)
+                } else {
+                    Style::default().fg(TAN)
+                };
+
+                // Relative date + token count on second line (or same line if narrow).
+                let rel_date = relative_date(s.updated_at);
+                let tok = fmt_tokens_small(s.total_tokens());
+                let meta = format!("{} {}", rel_date, tok);
+                let meta_w = inner_w.saturating_sub(2);
+                let meta_truncated: String = meta.chars().take(meta_w).collect();
+
+                let row_bg = if is_selected && focused {
+                    Color::Rgb(45, 30, 20)
+                } else {
+                    BG
+                };
+
+                ListItem::new(vec![
+                    Line::from(vec![
+                        Span::styled(marker.to_string(), marker_style),
+                        Span::styled(title_raw, title_style),
+                    ]),
+                    Line::from(Span::styled(
+                        format!("  {}", meta_truncated),
+                        Style::default().fg(STONE),
+                    )),
+                ])
+                .style(Style::default().bg(row_bg))
+            })
+            .collect()
+    };
 
     let list = List::new(items)
         .block(
@@ -569,6 +638,41 @@ fn agent_status_display(status: &AgentStatus) -> (String, Color) {
     }
 }
 
+// ── Left-rail helpers ─────────────────────────────────────────────────────────
+
+/// Format token count compactly for the narrow left rail.
+fn fmt_tokens_small(n: u64) -> String {
+    if n >= 1_000_000 {
+        format!("{:.1}M", n as f64 / 1_000_000.0)
+    } else if n >= 1_000 {
+        format!("{:.0}k", n as f64 / 1_000.0)
+    } else if n == 0 {
+        String::new()
+    } else {
+        n.to_string()
+    }
+}
+
+/// Convert a Unix timestamp to a human-readable relative string.
+fn relative_date(ts: i64) -> String {
+    let now = unix_now();
+    let secs = now.saturating_sub(ts);
+    if secs < 60 {
+        "just now".to_string()
+    } else if secs < 3600 {
+        format!("{}m ago", secs / 60)
+    } else if secs < 86400 {
+        format!("{}h ago", secs / 3600)
+    } else if secs < 86400 * 2 {
+        "yesterday".to_string()
+    } else {
+        // Format as "Mar 24"-style using chrono.
+        use chrono::{TimeZone, Utc};
+        let dt = Utc.timestamp_opt(ts, 0).single().unwrap_or_else(Utc::now);
+        dt.format("%b %-d").to_string()
+    }
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -681,5 +785,53 @@ mod tests {
             f = f.prev();
         }
         assert_eq!(f, CockpitFocus::Input, "4 Shift+Tabs should wrap back to Input");
+    }
+
+    // ── Left-rail helpers ─────────────────────────────────────────────────────
+
+    #[test]
+    fn fmt_tokens_small_zero() {
+        assert_eq!(fmt_tokens_small(0), "");
+    }
+
+    #[test]
+    fn fmt_tokens_small_small() {
+        assert_eq!(fmt_tokens_small(500), "500");
+    }
+
+    #[test]
+    fn fmt_tokens_small_kilo() {
+        assert_eq!(fmt_tokens_small(12_500), "12k");
+    }
+
+    #[test]
+    fn fmt_tokens_small_mega() {
+        assert!(fmt_tokens_small(1_500_000).contains('M'));
+    }
+
+    #[test]
+    fn relative_date_just_now() {
+        let now = unix_now();
+        assert_eq!(relative_date(now - 5), "just now");
+    }
+
+    #[test]
+    fn relative_date_minutes_ago() {
+        let now = unix_now();
+        let label = relative_date(now - 300); // 5 minutes
+        assert!(label.contains('m') && label.contains("ago"), "got: {label}");
+    }
+
+    #[test]
+    fn relative_date_hours_ago() {
+        let now = unix_now();
+        let label = relative_date(now - 7200); // 2h
+        assert!(label.contains('h') && label.contains("ago"), "got: {label}");
+    }
+
+    #[test]
+    fn relative_date_yesterday() {
+        let now = unix_now();
+        assert_eq!(relative_date(now - 86_500), "yesterday");
     }
 }

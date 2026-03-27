@@ -4,12 +4,14 @@
 //! then transitions to [`AppScreen::Session`] hosting the live PTY session.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 
 use crate::claude_log::ClaudeSessionLogTracker;
 use crate::metrics::SessionMetrics;
 use crate::pty::RealPty;
+use crate::session::store::{SessionInfo, SessionStore};
 use crate::ui::focus::FocusRing;
 use crate::ui::layout::LayoutManager;
 use crate::ui::layout::LayoutPreset as NewLayoutPreset;
@@ -376,6 +378,21 @@ pub struct AppState {
     /// Potato tails this JSONL file and uses it as the source of truth for the
     /// sidebar metrics/tool data instead of inferring from terminal text.
     pub claude_log: Option<ClaudeSessionLogTracker>,
+
+    // ── Session store (cockpit persistence) ───────────────────────────────────
+    /// Shared SQLite session store. `Arc` so it can be passed to async helpers
+    /// without borrowing AppState.
+    pub store: Option<Arc<SessionStore>>,
+
+    /// Cached list of sessions for the left rail (refreshed periodically).
+    pub rail_sessions: Vec<SessionInfo>,
+
+    /// Unix timestamp of the last left-rail refresh (seconds).
+    pub last_rail_refresh: i64,
+
+    /// Number of events already persisted for the active PTY session.
+    /// Used to detect newly written JSONL lines without double-inserting.
+    pub persisted_event_count: u64,
 }
 
 impl Default for AppState {
@@ -394,6 +411,10 @@ impl Default for AppState {
             tool_output_panel: ToolOutputPanel::new(),
             real_pty: None,
             claude_log: None,
+            store: None,
+            rail_sessions: Vec::new(),
+            last_rail_refresh: 0,
+            persisted_event_count: 0,
         }
     }
 }

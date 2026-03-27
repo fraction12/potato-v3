@@ -19,6 +19,7 @@ mod terminal;
 mod ui;
 
 use std::io::{self, Write as _};
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -35,7 +36,7 @@ use app::message::Message;
 use app::state::{AppScreen, AppState, CockpitFocus, DashboardFocus};
 use app::update::update;
 use config::load_config;
-use session::SessionStore;
+use session::{SessionStore, discover_historical_sessions, unix_now};
 use terminal::events::event_stream;
 use terminal::panic_hook::install_panic_hook;
 use adapters::{AgentAdapter, claude::ClaudeAdapter, generic::GenericAdapter};
@@ -216,6 +217,37 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                                         if let Some(ref mut session) = state.session_mut() {
                                             session.status = crate::app::state::AgentStatus::Idle;
                                             session.claude_session_id = Some(session_id.clone());
+                                        }
+
+                                        // Create the session row in SQLite immediately.
+                                        if let Some(ref store) = state.store.clone() {
+                                            let project_dir = launch_cwd
+                                                .as_deref()
+                                                .map(crate::claude_log::project_dir_name)
+                                                .unwrap_or_default();
+                                            let cwd_str = launch_cwd
+                                                .as_deref()
+                                                .and_then(|p| p.to_str())
+                                                .map(str::to_string);
+                                            let now = unix_now();
+                                            if let Err(e) = store.upsert_session(
+                                                &session_id,
+                                                &project_dir,
+                                                "claude",
+                                                None,
+                                                "",
+                                                cwd_str.as_deref(),
+                                                0,
+                                                0,
+                                                0,
+                                                now,
+                                                now,
+                                            ) {
+                                                tracing::warn!("Failed to create session row: {e}");
+                                            }
+                                            // Reset persisted event count for new session.
+                                            state.persisted_event_count = 0;
+                                            refresh_rail(state, store);
                                         }
                                     }
                                     Err(e) => {
@@ -506,6 +538,16 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
             session.tick_count = tc;
         }
 
+        // Periodic left-rail refresh (every 30 s, even without JSONL changes).
+        {
+            let now = unix_now();
+            if now - state.last_rail_refresh >= 30 {
+                if let Some(store) = state.store.clone() {
+                    refresh_rail(state, &store);
+                }
+            }
+        }
+
         if state.should_quit {
             break;
         }
@@ -526,10 +568,78 @@ fn sync_claude_log(state: &mut AppState) {
     }
 
     let snapshot = tracker.snapshot();
+
+    // ── Update live sidebar metrics ───────────────────────────────────────────
     if let Some(session) = state.session_mut() {
         session.metrics.input_tokens = snapshot.usage.input_tokens;
         session.metrics.output_tokens = snapshot.usage.output_tokens;
         session.tokens_used = snapshot.usage.total_tokens();
+    }
+
+    // ── Persist to SQLite ─────────────────────────────────────────────────────
+    let store = match state.store.clone() {
+        Some(s) => s,
+        None => return,
+    };
+
+    let session_id = state
+        .session()
+        .and_then(|s| s.claude_session_id.clone())
+        .unwrap_or_default();
+    if session_id.is_empty() {
+        return;
+    }
+
+    let project_dir = if let Some(home) = dirs::home_dir() {
+        let cwd = std::env::current_dir().ok().unwrap_or_else(|| home.clone());
+        crate::claude_log::project_dir_name(&cwd)
+    } else {
+        String::new()
+    };
+
+    let now = unix_now();
+
+    // Upsert session row with latest totals.
+    let title = state
+        .rail_sessions
+        .iter()
+        .find(|s| s.id == session_id)
+        .map(|s| s.title.clone())
+        .unwrap_or_default();
+
+    if let Err(e) = store.upsert_session(
+        &session_id,
+        &project_dir,
+        "claude",
+        snapshot.model.as_deref(),
+        &title,
+        std::env::current_dir().ok().as_deref().and_then(|p| p.to_str()),
+        snapshot.usage.input_tokens,
+        snapshot.usage.output_tokens,
+        snapshot.turns,
+        now, // created_at — ON CONFLICT keeps the original via MAX
+        now,
+    ) {
+        tracing::warn!("sync_claude_log: upsert_session failed: {e}");
+    }
+
+    // Refresh the rail every 30 s or on any change.
+    let elapsed = now - state.last_rail_refresh;
+    if elapsed >= 30 || state.last_rail_refresh == 0 {
+        refresh_rail(state, &store);
+    }
+}
+
+/// Re-query the session list from SQLite and cache it in `AppState`.
+fn refresh_rail(state: &mut AppState, store: &SessionStore) {
+    match store.list_sessions() {
+        Ok(sessions) => {
+            state.rail_sessions = sessions;
+            state.last_rail_refresh = unix_now();
+        }
+        Err(e) => {
+            tracing::warn!("refresh_rail: list_sessions failed: {e}");
+        }
     }
 }
 
@@ -612,19 +722,31 @@ async fn main() -> Result<()> {
     if let Some(parent) = db_path.parent() {
         std::fs::create_dir_all(parent).ok();
     }
-    let _store = SessionStore::open(&db_path.to_string_lossy())?;
+    let store = Arc::new(SessionStore::open(&db_path.to_string_lossy())?);
+
+    // Scan ~/.claude/projects/ once at startup and upsert all known sessions.
+    if let Some(home) = dirs::home_dir() {
+        discover_historical_sessions(&home, &store);
+    }
 
     // Build initial state with detected agents.
     let agents = detect_agents();
     // The --model flag is stored in AppState directly (Claude picks its own model;
     // this is only used for display purposes in the status bar).
     let model = cli.model.unwrap_or_else(|| cfg.default_agent.clone());
+
+    // Pre-load session list for the left rail.
+    let initial_sessions = store.list_sessions().unwrap_or_default();
+
     let mut state = AppState {
         model,
         screen: AppScreen::Dashboard(DashboardState {
             available_agents: agents,
             ..DashboardState::default()
         }),
+        store: Some(store),
+        rail_sessions: initial_sessions,
+        last_rail_refresh: unix_now(),
         ..AppState::default()
     };
 
