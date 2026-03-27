@@ -1,11 +1,10 @@
 project:
   name: Potato V3
   slug: potato-v3
-  description: Terminal-native AI agent orchestration desktop
-  repository: https://github.com/pземлянka/potato
+  description: Terminal-native AI agent orchestration desktop built in Rust with ratatui
   language: Rust
-  ui: terminal
-  storage: SQLite
+  framework: ratatui + tokio + crossterm
+  storage: SQLite (rusqlite, WAL mode)
   current_phase: phase-1-foundation
 
 metadata:
@@ -18,23 +17,42 @@ links:
   readme: ./README.md
   backlog: ./.openspec/backlog.yaml
   design_docs:
-    - ./README.md
-    - ./config/default.toml
+    prd: ~/Documents/Second Brain/Projects/Potato V3/PRD.md
+    architecture: ~/Documents/Second Brain/Projects/Potato V3/ARCHITECTURE.md
+    tui_design: ~/Documents/Second Brain/Projects/Potato V3/TUI-DESIGN.md
+    research: ~/Documents/Second Brain/Projects/Potato V3/RESEARCH.md
+    plan: ~/Documents/Second Brain/Projects/Potato V3/PLAN.md
 
 phases:
   - id: phase-1-foundation
-    title: Foundation scaffold
+    title: "Foundation: bootable TUI with Ollama streaming"
     status: in_progress
-    goal: Establish compile-clean app skeleton, module structure, config, persistence, and terminal runtime.
-  - id: phase-2-interaction
-    title: Interactive UI + event loop
+    weeks: "1-2"
+    goal: |
+      Bootable TUI that renders a chat panel, connects to Ollama,
+      streams responses, executes tools with approval, and persists sessions.
+    tickets: [T-001, T-002, T-003, T-004, T-005, T-006, T-007, T-008, T-009, T-010]
+
+  - id: phase-2-panels
+    title: "Multi-panel desktop + overlays"
     status: planned
-    goal: Wire up panels, overlays, terminal events, and core input handling.
-  - id: phase-3-agent-runtime
-    title: Agent loop + tools
+    weeks: "3-4"
+    goal: |
+      Panel system, split views, tool output panel, file preview,
+      slash menu, model picker, help overlay, session sidebar.
+
+  - id: phase-3-agent
+    title: "Agent intelligence + cloud support"
     status: planned
-    goal: Connect LLM clients, tool registry, approvals, and streaming responses.
+    weeks: "5-6"
+    goal: |
+      Cloud Ollama/OpenAI-compat support, multi-turn tool chains,
+      streaming tool output, token dashboard, agent status panel.
+
   - id: phase-4-polish
-    title: Persistence, exports, and UX polish
+    title: "Polish, distribution, and hardening"
     status: planned
-    goal: Session management, exports, themes, shortcuts, and performance improvements.
+    weeks: "7-8"
+    goal: |
+      Session export, config hot-reload, compact mode, release builds,
+      Homebrew formula, cargo-dist, CI/CD, documentation.
