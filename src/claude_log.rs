@@ -302,7 +302,16 @@ pub fn claude_projects_dir(home: &Path) -> PathBuf {
 }
 
 pub fn project_dir_name(cwd: &Path) -> String {
-    cwd.to_string_lossy().replace('/', "-")
+    let raw = cwd.to_string_lossy();
+    let mut result = String::with_capacity(raw.len());
+    for c in raw.chars() {
+        if c.is_ascii_alphanumeric() || c == '-' {
+            result.push(c);
+        } else {
+            result.push('-');
+        }
+    }
+    result
 }
 
 pub fn session_log_path(home: &Path, cwd: &Path, session_id: &str) -> PathBuf {
@@ -386,6 +395,21 @@ mod tests {
             path,
             PathBuf::from("/Users/tester/.claude/projects/-Users-tester-Documents-Projects-potato-v3/abc-123.jsonl")
         );
+    }
+
+    #[test]
+    fn project_dir_name_replaces_underscores_and_slashes() {
+        let cwd = Path::new("/Users/dushyant_jarvis/Documents/Projects/potato-v3");
+        assert_eq!(
+            project_dir_name(cwd),
+            "-Users-dushyant-jarvis-Documents-Projects-potato-v3"
+        );
+    }
+
+    #[test]
+    fn project_dir_name_preserves_existing_dashes() {
+        let cwd = Path::new("/home/user/my-project");
+        assert_eq!(project_dir_name(cwd), "-home-user-my-project");
     }
 
     #[test]

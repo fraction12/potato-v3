@@ -216,6 +216,7 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                                         if let Ok(cwd) = std::env::current_dir() {
                                             if let Some(home) = dirs::home_dir() {
                                                 let path = crate::claude_log::session_log_path(&home, &cwd, &session_id);
+                                                tracing::info!("Claude log path: {}", path.display());
                                                 state.claude_log = Some(crate::claude_log::ClaudeSessionLogTracker::new(path));
                                             }
                                         }
