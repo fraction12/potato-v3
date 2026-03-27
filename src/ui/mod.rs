@@ -1,6 +1,8 @@
 //! User interface — layout, theme, panels, widgets, overlays, and screens.
 
+pub mod focus;
 pub mod layout;
+pub mod markdown;
 pub mod overlays;
 pub mod panels;
 pub mod screens;
@@ -16,8 +18,7 @@ use ratatui::{
 
 use crate::app::agent_state::AgentState;
 use crate::app::state::AppState;
-use crate::ui::layout::{LayoutManager, build_layout};
-use crate::ui::panels::chat::render_chat;
+use crate::ui::layout::{LegacyLayoutManager, build_layout};
 use crate::ui::panels::PanelId;
 use crate::ui::theme::{Theme, AMBER, BG, BROWN, CHARCOAL, CREAM, RUST_RED, SOIL, TAN};
 use crate::ui::widgets::{
@@ -34,7 +35,7 @@ pub fn view(frame: &mut Frame, state: &AppState) {
     let theme = Theme::default();
 
     // Build layout using LayoutManager driven by state.
-    let mut mgr = LayoutManager::new();
+    let mut mgr = LegacyLayoutManager::new();
     mgr.preset = state.layout_preset;
     mgr.visible_panels_from_state(state);
 
@@ -82,7 +83,7 @@ fn render_chat_with_focus(
         .style(Style::default().bg(BG));
 
     frame.render_widget(block, area);
-    render_chat(frame, area, state, theme);
+    // Legacy chat rendering stub — new panels use ChatPanel::render() directly.
 }
 
 // ── Side panel ────────────────────────────────────────────────────────────────
@@ -94,7 +95,7 @@ fn render_side_panel(
     _theme: &Theme,
 ) {
     // Show the side panel appropriate for the focused panel or default to ToolOutput.
-    let focused = state.focused_panel;
+    let focused = state.focused_panel.clone();
     let border_style = if focused == PanelId::ToolOutput || focused == PanelId::Sessions {
         Style::default().fg(AMBER)
     } else {

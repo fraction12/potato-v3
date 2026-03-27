@@ -28,6 +28,8 @@ use ratatui::{
 use crate::app::state::{
     AgentStatus, AppScreen, AppState, MessageRole, SessionState, ToolCallRecord, TranscriptEntry,
 };
+use crate::ui::layout::{LayoutManager, LayoutPreset};
+use crate::ui::panels::Panel;
 use crate::ui::theme::{AMBER, BG, BROWN, CHARCOAL, CREAM, RUST_RED, SOIL, SPROUT, TAN};
 
 // ── Muted gray for "exited / unavailable" text ───────────────────────────────
@@ -36,6 +38,10 @@ const MUTED: Color = Color::Rgb(100, 100, 100);
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 /// Render the full session cockpit screen.
+///
+/// Uses [`LayoutManager`] with the Sidebar preset to split the main area into
+/// a 70% chat column and a 30% tool timeline column.  Status bar and input bar
+/// are hardcoded at the bottom.
 pub fn render_session(frame: &mut Frame, area: Rect, state: &AppState) {
     let AppScreen::Session(ref session) = state.screen else { return };
 
@@ -50,13 +56,32 @@ pub fn render_session(frame: &mut Frame, area: Rect, state: &AppState) {
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Min(0),    // main area (transcript + tool timeline)
+            Constraint::Min(0),    // main area (chat + tool timeline)
             Constraint::Length(1), // status bar
             Constraint::Length(if has_approval { 5 } else { 1 }), // approval or input
         ])
         .split(area);
 
-    render_main_area(frame, rows[0], session);
+    // Use LayoutManager (Sidebar preset) to split the main area.
+    let layout_mgr = LayoutManager::new(LayoutPreset::Sidebar);
+    let panel_areas = layout_mgr.compute_areas(rows[0]);
+
+    // Chat / transcript area.
+    use crate::ui::panels::PanelId;
+    let chat_area = panel_areas.get(&PanelId::Chat).copied().unwrap_or(rows[0]);
+    let tool_area = panel_areas.get(&PanelId::ToolOutput).copied();
+
+    let chat_focused = state.focus_ring.focused() == &PanelId::Chat;
+    let tool_focused = state.focus_ring.focused() == &PanelId::ToolOutput;
+
+    // Render ChatPanel if we have one; fall back to the legacy transcript renderer.
+    state.chat_panel.render(frame, chat_area, chat_focused, state);
+
+    // Render ToolOutputPanel in the tool area (if visible).
+    if let Some(tool_rect) = tool_area {
+        state.tool_output_panel.render(frame, tool_rect, tool_focused, state);
+    }
+
     render_status_bar(frame, rows[1], session, &state.model);
 
     if has_approval {
@@ -66,8 +91,9 @@ pub fn render_session(frame: &mut Frame, area: Rect, state: &AppState) {
     }
 }
 
-// ── Main area ─────────────────────────────────────────────────────────────────
+// ── Main area (legacy — kept for tests) ──────────────────────────────────────
 
+#[allow(dead_code)]
 fn render_main_area(frame: &mut Frame, area: Rect, session: &SessionState) {
     let cols = Layout::default()
         .direction(Direction::Horizontal)

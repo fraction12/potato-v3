@@ -35,6 +35,8 @@ use uuid::Uuid;
 use app::message::Message;
 use app::state::{AppScreen, AppState, DashboardFocus};
 use app::update::update;
+use ui::layout::LayoutPreset as NewLayoutPreset;
+use ui::panels::PanelId;
 use config::load_config;
 use session::SessionStore;
 use terminal::events::event_stream;
@@ -240,6 +242,56 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                 }
 
                 // Session key handling — send input to PTY.
+                if matches!(state.screen, AppScreen::Session(_)) {
+                    // ── Global panel/layout keybinds (checked before text input) ──
+                    if key.modifiers.contains(KeyModifiers::CONTROL) {
+                        match key.code {
+                            // Ctrl+1 → toggle Chat panel
+                            KeyCode::Char('1') => {
+                                state.layout_manager.toggle_panel(&PanelId::Chat);
+                                state.focus_ring.update_panels(
+                                    vec![PanelId::Chat, PanelId::ToolOutput]
+                                        .into_iter()
+                                        .filter(|id| state.layout_manager.is_visible(id))
+                                        .collect(),
+                                );
+                                continue;
+                            }
+                            // Ctrl+2 → toggle ToolOutput panel
+                            KeyCode::Char('2') => {
+                                state.layout_manager.toggle_panel(&PanelId::ToolOutput);
+                                state.focus_ring.update_panels(
+                                    vec![PanelId::Chat, PanelId::ToolOutput]
+                                        .into_iter()
+                                        .filter(|id| state.layout_manager.is_visible(id))
+                                        .collect(),
+                                );
+                                continue;
+                            }
+                            // Ctrl+L → cycle layout preset (Sidebar → Wide → Minimal → Sidebar)
+                            KeyCode::Char('l') => {
+                                let next = match state.layout_manager.preset() {
+                                    NewLayoutPreset::Sidebar => NewLayoutPreset::Wide,
+                                    NewLayoutPreset::Wide   => NewLayoutPreset::Minimal,
+                                    NewLayoutPreset::Minimal => NewLayoutPreset::Sidebar,
+                                };
+                                state.layout_manager.set_preset(next);
+                                continue;
+                            }
+                            _ => {}
+                        }
+                    }
+                    // Tab → focus next; Shift+Tab → focus prev
+                    if key.code == KeyCode::Tab {
+                        if key.modifiers.contains(KeyModifiers::SHIFT) {
+                            state.focus_ring.prev();
+                        } else {
+                            state.focus_ring.next();
+                        }
+                        continue;
+                    }
+                }
+
                 if let AppScreen::Session(ref mut session) = state.screen {
                     match key.code {
                         KeyCode::Char('q') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -426,6 +478,36 @@ fn apply_pty_event(state: &mut AppState, event: crate::events::AgentEvent) {
                 app::session_reducer::apply_event(session, text_event, chrono::Utc::now());
             }
             return;
+        }
+        _ => {}
+    }
+
+    // ── Panel routing (Phase-3) ───────────────────────────────────────────────
+    // Mirror ToolStart/ToolDone/ToolError into the ToolOutputPanel so the
+    // timeline stays in sync with the session state.
+    match &event {
+        AgentEvent::ToolStart { id, name, input } => {
+            let record = app::state::ToolCallRecord {
+                id: id.clone(),
+                name: name.clone(),
+                input: input.clone(),
+                output: None,
+                started_at: chrono::Utc::now(),
+                duration_ms: None,
+                success: None,
+            };
+            state.tool_output_panel.add_entry(&record);
+        }
+        AgentEvent::ToolDone { id, output, duration_ms, success } => {
+            state.tool_output_panel.update_entry(
+                id,
+                Some(output.clone()),
+                Some(*duration_ms),
+                Some(*success),
+            );
+        }
+        AgentEvent::ToolError { id, error } => {
+            state.tool_output_panel.update_entry(id, Some(error.clone()), Some(0), Some(false));
         }
         _ => {}
     }

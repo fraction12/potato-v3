@@ -9,7 +9,12 @@ use chrono::{DateTime, Utc};
 
 use crate::app::agent_state::AgentState;
 use crate::metrics::SessionMetrics;
+use crate::ui::focus::FocusRing;
+use crate::ui::layout::LayoutManager;
+use crate::ui::layout::LayoutPreset as NewLayoutPreset;
 use crate::ui::panels::PanelId;
+use crate::ui::panels::chat::ChatPanel;
+use crate::ui::panels::tool_output::ToolOutputPanel;
 
 // ── LayoutPreset (kept for existing UI compatibility) ─────────────────────────
 
@@ -314,6 +319,18 @@ pub struct AppState {
     pub focused_panel: PanelId,
     pub visible_panels: Vec<PanelId>,
     pub layout_preset: LayoutPreset,
+
+    // ── Phase-3 panel system ──────────────────────────────────────────────────
+    /// Composable layout manager (Phase-3).
+    pub layout_manager: LayoutManager,
+    /// Focus ring for the session panel system (Phase-3).
+    pub focus_ring: FocusRing,
+
+    // ── Phase-3 panels ────────────────────────────────────────────────────────
+    /// Chat panel — owns transcript scroll and search state.
+    pub chat_panel: ChatPanel,
+    /// Tool output panel — owns the collapsible tool execution timeline.
+    pub tool_output_panel: ToolOutputPanel,
 }
 
 impl Default for AppState {
@@ -339,6 +356,10 @@ impl Default for AppState {
             focused_panel: PanelId::Chat,
             visible_panels: vec![PanelId::Chat],
             layout_preset: LayoutPreset::Wide,
+            layout_manager: LayoutManager::new(NewLayoutPreset::Sidebar),
+            focus_ring: FocusRing::new(vec![PanelId::Chat, PanelId::ToolOutput]),
+            chat_panel: ChatPanel::new(Vec::new()),
+            tool_output_panel: ToolOutputPanel::new(),
         }
     }
 }
