@@ -1,0 +1,102 @@
+phase: phase-1-foundation
+status: active
+
+tickets:
+  - id: T-001
+    title: Bootstrap Cargo application and manifest
+    status: open
+    description: Initialize the Rust binary project and define the base Cargo manifest with all required dependencies and release profile settings.
+    acceptance_criteria:
+      - Cargo project exists at the repository root
+      - Cargo.toml includes package metadata and required dependencies
+      - Release profile enables LTO, strip, and single codegen unit
+
+  - id: T-002
+    title: Establish application state and message architecture
+    status: open
+    description: Create the app module with AppState, Message, Action, and update loop primitives.
+    acceptance_criteria:
+      - src/app module tree exists
+      - AppState compiles with sensible defaults
+      - Message and Action enums cover the initial interaction model
+      - update() compiles and handles basic inputs
+
+  - id: T-003
+    title: Scaffold UI layout, panels, widgets, and overlays
+    status: open
+    description: Create all UI modules and trait surfaces for layout regions, panels, reusable widgets, and modal overlays.
+    acceptance_criteria:
+      - src/ui module tree exists in full
+      - Panel and Overlay traits compile
+      - All requested panel, widget, and overlay files exist
+      - Theme module includes the earth-tone palette constants
+
+  - id: T-004
+    title: Add terminal runtime and panic recovery
+    status: open
+    description: Implement terminal setup, raw mode, alternate screen entry, and a panic hook that restores the terminal safely.
+    acceptance_criteria:
+      - main.rs enters raw mode and alternate screen
+      - Terminal restoration is handled via RAII or equivalent safe cleanup
+      - Panic hook restores the terminal before printing panic output
+      - Application can launch and exit cleanly
+
+  - id: T-005
+    title: Define agent loop state machine and streaming primitives
+    status: open
+    description: Create the agent module structure for state transitions, token streaming, approval gating, and background agent loop orchestration.
+    acceptance_criteria:
+      - src/agent module tree exists
+      - AgentState enum compiles with requested states
+      - StreamAccumulator and ApprovalGate compile
+      - agent_loop async entry point exists
+
+  - id: T-006
+    title: Define Ollama client abstractions
+    status: open
+    description: Create shared chat request/response types, the LlmClient trait, and local/cloud client stubs plus a connection pool.
+    acceptance_criteria:
+      - src/ollama module tree exists
+      - LlmClient trait compiles and is Send + Sync
+      - Local and cloud client stubs compile
+      - Shared types serialize and deserialize with serde
+
+  - id: T-007
+    title: Build tool system scaffolding and built-ins
+    status: open
+    description: Create the tool trait, registry, executor, and built-in tool stubs for shell, file operations, search, and directory listing.
+    acceptance_criteria:
+      - src/tools module tree exists
+      - Tool trait compiles and is Send + Sync
+      - ToolRegistry and execute_tool compile
+      - All requested built-in tool files exist and compile
+
+  - id: T-008
+    title: Add session persistence and export infrastructure
+    status: open
+    description: Create session storage, in-memory history representation, and export helpers for Markdown and JSON.
+    acceptance_criteria:
+      - src/session module tree exists
+      - SessionStore opens SQLite and applies schema migration
+      - MessageHistory compiles with basic operations
+      - export_markdown and export_json compile
+
+  - id: T-009
+    title: Add configuration schema and default config files
+    status: open
+    description: Define serializable configuration structures and provide a default TOML configuration file with model, keybinds, and theme sections.
+    acceptance_criteria:
+      - src/config module tree exists
+      - Config and KeybindConfig have defaults
+      - config/default.toml exists and is valid TOML
+      - Theme and keybind options are documented in config
+
+  - id: T-010
+    title: Verify compile-clean scaffold and create initial commit
+    status: open
+    description: Run cargo check and cargo build with zero warnings or errors, then initialize git and commit the scaffold.
+    acceptance_criteria:
+      - cargo check succeeds with zero warnings
+      - cargo build succeeds with zero warnings
+      - Repository is initialized with git
+      - Initial scaffold commit exists with the requested commit message

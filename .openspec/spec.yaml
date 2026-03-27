@@ -1,0 +1,40 @@
+project:
+  name: Potato V3
+  slug: potato-v3
+  description: Terminal-native AI agent orchestration desktop
+  repository: https://github.com/pземлянka/potato
+  language: Rust
+  ui: terminal
+  storage: SQLite
+  current_phase: phase-1-foundation
+
+metadata:
+  version: 0.1.0
+  owner: Dushyant Garg
+  status: active
+  created_at: 2026-03-26
+
+links:
+  readme: ./README.md
+  backlog: ./.openspec/backlog.yaml
+  design_docs:
+    - ./README.md
+    - ./config/default.toml
+
+phases:
+  - id: phase-1-foundation
+    title: Foundation scaffold
+    status: in_progress
+    goal: Establish compile-clean app skeleton, module structure, config, persistence, and terminal runtime.
+  - id: phase-2-interaction
+    title: Interactive UI + event loop
+    status: planned
+    goal: Wire up panels, overlays, terminal events, and core input handling.
+  - id: phase-3-agent-runtime
+    title: Agent loop + tools
+    status: planned
+    goal: Connect LLM clients, tool registry, approvals, and streaming responses.
+  - id: phase-4-polish
+    title: Persistence, exports, and UX polish
+    status: planned
+    goal: Session management, exports, themes, shortcuts, and performance improvements.

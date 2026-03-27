@@ -1,0 +1,45 @@
+# Potato default configuration
+# Copy to ~/.potato/config.toml and adjust as needed.
+
+# ── Model ─────────────────────────────────────────────────────────────────────
+
+# Default model to use for chat requests.
+model = "llama3"
+
+# Base URL of the Ollama instance.
+ollama_url = "http://localhost:11434"
+
+# Whether to require manual approval before executing any tool call.
+require_approval = true
+
+# Maximum messages to retain in memory per session (0 = unlimited).
+max_history = 0
+
+# Path to the SQLite session database.
+db_path = "~/.potato/sessions.db"
+
+# Tick rate in milliseconds (controls animation and polling speed).
+tick_rate_ms = 250
+
+# Active theme name.
+theme = "earth"
+
+# ── Keybinds ──────────────────────────────────────────────────────────────────
+
+[keybinds]
+quit         = "ctrl+q"
+submit       = "enter"
+slash_menu   = "/"
+model_picker = "ctrl+m"
+help         = "?"
+approve      = "y"
+deny         = "n"
+new_session  = "ctrl+n"
+
+# ── Theme overrides ───────────────────────────────────────────────────────────
+# Uncomment and adjust to override individual theme colours (RGB values).
+
+# [theme_overrides]
+# background = [30, 20, 15]
+# foreground = [255, 248, 225]
+# border_focused = [249, 168, 37]
