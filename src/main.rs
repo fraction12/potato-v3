@@ -163,6 +163,7 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
         };
 
         let mut pending_session_resume: Option<String> = None;
+        let mut pending_new_session = false;
 
         if let Some(m) = msg {
             // Intercept Enter on the dashboard to spawn a RealPty session.
@@ -461,6 +462,20 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                         }
                     }
 
+                    // ── Agents focus — agent picker ───────────────────────────
+                    if current_focus == CockpitFocus::Agents {
+                        if let AppScreen::Session(ref mut _session) = state.screen {
+                            match key.code {
+                                KeyCode::Enter => {
+                                    // Spawn a new Claude session.
+                                    pending_new_session = true;
+                                    // Fall through so the deferred handler runs.
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+
                     // ── Sessions focus — navigate the session list ────────────
                     if current_focus == CockpitFocus::Sessions {
                         if let AppScreen::Session(ref mut session) = state.screen {
@@ -619,6 +634,66 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                     Err(e) => {
                         tracing::error!("RealPty resume failed: {e}");
                         state.set_error(format!("Failed to resume session: {}", e), 100);
+                    }
+                }
+            } else {
+                state.set_error("Claude binary not found", 100);
+            }
+        }
+
+        // ── Spawn a new Claude session (deferred from Agents Enter) ─────────
+        if pending_new_session {
+            // Tear down any existing PTY.
+            drop(state.real_pty.take());
+            turn_handle = None;
+            state.claude_log = None;
+
+            let agent_name = "claude";
+            if let Ok(binary) = which::which("claude") {
+                let (term_cols, term_rows) =
+                    crossterm::terminal::size().unwrap_or((120, 40));
+                let pty_cols = (term_cols as u32 * 3 / 4).saturating_sub(2) as u16;
+                let pty_rows = term_rows.saturating_sub(10);
+
+                let session_id = uuid::Uuid::new_v4().to_string();
+                let session_args = ["--session-id", session_id.as_str()];
+                let launch_cwd = std::env::current_dir().ok();
+
+                match crate::pty::RealPty::spawn_in(
+                    binary.to_str().unwrap_or("claude"),
+                    &session_args,
+                    pty_cols.max(20),
+                    pty_rows.max(5),
+                    launch_cwd.as_deref(),
+                ) {
+                    Ok(real_pty) => {
+                        let mut _dirty_rx = real_pty.dirty_tx.subscribe();
+                        state.real_pty = Some(real_pty);
+
+                        state.enter_session(&session_id, agent_name);
+
+                        if let Some(home) = dirs::home_dir() {
+                            let cwd = launch_cwd.as_deref().unwrap_or(&home);
+                            let path = crate::claude_log::session_log_path(&home, cwd, &session_id);
+                            tracing::info!("New Claude session log: {}", path.display());
+                            state.claude_log = Some(crate::claude_log::ClaudeSessionLogTracker::new(path));
+                        }
+
+                        if let Some(ref mut session) = state.session_mut() {
+                            session.status = crate::app::state::AgentStatus::Idle;
+                            session.claude_session_id = Some(session_id.clone());
+                        }
+
+                        state.persisted_event_count = 0;
+                        if let Some(ref store) = state.store.clone() {
+                            refresh_rail(state, store);
+                        }
+
+                        tracing::info!("Spawned new Claude session: {}", session_id);
+                    }
+                    Err(e) => {
+                        tracing::error!("RealPty spawn failed: {e}");
+                        state.set_error(format!("Failed to spawn Claude: {}", e), 100);
                     }
                 }
             } else {

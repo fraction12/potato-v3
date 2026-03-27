@@ -33,7 +33,7 @@
 
 use ratatui::{
     Frame,
-    layout::{Constraint, Layout, Rect},
+    layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
@@ -102,9 +102,82 @@ pub fn render_session(frame: &mut Frame, area: Rect, state: &mut AppState) {
     render_status_bar(frame, status_area, session, &state.model, focus);
 }
 
-// ── Left rail — session list ──────────────────────────────────────────────────
+// ── Left rail — agents + sessions ─────────────────────────────────────────────
 
 fn render_left_rail(frame: &mut Frame, area: Rect, state: &AppState, focus: CockpitFocus) {
+    // Split the rail into Agents (top, fixed height) and Sessions (bottom, fill).
+    // Agents section: border (2) + 1 item row = 3 lines minimum.
+    let agents_height = 3u16;
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(agents_height),
+            Constraint::Min(4),
+        ])
+        .split(area);
+    let agents_area = chunks[0];
+    let sessions_area = chunks[1];
+
+    render_agents_section(frame, agents_area, state, focus);
+    render_sessions_section(frame, sessions_area, state, focus);
+}
+
+/// Top part of the left rail — agent picker.
+fn render_agents_section(frame: &mut Frame, area: Rect, state: &AppState, focus: CockpitFocus) {
+    let focused = focus == CockpitFocus::Agents;
+    let border_style = if focused {
+        Style::default().fg(AMBER)
+    } else {
+        Style::default().fg(BRASS)
+    };
+    let title_style = if focused {
+        Style::default().fg(AMBER).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(TAN)
+    };
+
+    // For now we only have Claude. This will expand later.
+    let agents = vec!["Claude"];
+
+    let selected_idx = state
+        .session()
+        .map(|s| s.selected_agent)
+        .unwrap_or(0);
+
+    let items: Vec<ListItem<'static>> = agents
+        .iter()
+        .enumerate()
+        .map(|(idx, name)| {
+            let is_selected = idx == selected_idx && focused;
+            let style = if is_selected {
+                Style::default()
+                    .fg(CREAM)
+                    .add_modifier(Modifier::BOLD)
+                    .bg(Color::Rgb(45, 30, 20))
+            } else {
+                Style::default().fg(TAN)
+            };
+            ListItem::new(Line::from(Span::styled(
+                format!(" + {}", name),
+                style,
+            )))
+        })
+        .collect();
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(border_style)
+        .title(Span::styled(" Agents ", title_style));
+
+    let list = List::new(items)
+        .block(block)
+        .style(Style::default().fg(STONE).bg(BG));
+
+    frame.render_widget(list, area);
+}
+
+/// Bottom part of the left rail — historical session list.
+fn render_sessions_section(frame: &mut Frame, area: Rect, state: &AppState, focus: CockpitFocus) {
     let focused = focus == CockpitFocus::Sessions;
     let border_style = if focused {
         Style::default().fg(AMBER)
@@ -586,6 +659,7 @@ fn render_status_bar(
     );
 
     let focus_label = match focus {
+        CockpitFocus::Agents   => "Agents",
         CockpitFocus::Sessions => "Sessions",
         CockpitFocus::Input    => "Input",
         CockpitFocus::Terminal => "Terminal",
@@ -829,15 +903,17 @@ mod tests {
 
     #[test]
     fn cockpit_focus_tab_cycle() {
+        assert_eq!(CockpitFocus::Agents.next(),   CockpitFocus::Sessions);
         assert_eq!(CockpitFocus::Sessions.next(), CockpitFocus::Input);
         assert_eq!(CockpitFocus::Input.next(),    CockpitFocus::Terminal);
         assert_eq!(CockpitFocus::Terminal.next(), CockpitFocus::Sidebar);
-        assert_eq!(CockpitFocus::Sidebar.next(),  CockpitFocus::Sessions);
+        assert_eq!(CockpitFocus::Sidebar.next(),  CockpitFocus::Agents);
     }
 
     #[test]
     fn cockpit_focus_shift_tab_cycle() {
-        assert_eq!(CockpitFocus::Sessions.prev(), CockpitFocus::Sidebar);
+        assert_eq!(CockpitFocus::Agents.prev(),   CockpitFocus::Sidebar);
+        assert_eq!(CockpitFocus::Sessions.prev(), CockpitFocus::Agents);
         assert_eq!(CockpitFocus::Input.prev(),    CockpitFocus::Sessions);
         assert_eq!(CockpitFocus::Terminal.prev(), CockpitFocus::Input);
         assert_eq!(CockpitFocus::Sidebar.prev(),  CockpitFocus::Terminal);
@@ -846,19 +922,19 @@ mod tests {
     #[test]
     fn cockpit_focus_full_tab_round_trip() {
         let mut f = CockpitFocus::Input;
-        for _ in 0..4 {
+        for _ in 0..5 {
             f = f.next();
         }
-        assert_eq!(f, CockpitFocus::Input, "4 Tabs should wrap back to Input");
+        assert_eq!(f, CockpitFocus::Input, "5 Tabs should wrap back to Input");
     }
 
     #[test]
     fn cockpit_focus_full_shift_tab_round_trip() {
         let mut f = CockpitFocus::Input;
-        for _ in 0..4 {
+        for _ in 0..5 {
             f = f.prev();
         }
-        assert_eq!(f, CockpitFocus::Input, "4 Shift+Tabs should wrap back to Input");
+        assert_eq!(f, CockpitFocus::Input, "5 Shift+Tabs should wrap back to Input");
     }
 
     // ── Left-rail helpers ─────────────────────────────────────────────────────

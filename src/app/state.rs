@@ -132,7 +132,9 @@ pub struct DashboardState {
 /// Tab order: Sessions → Input → Terminal → Sidebar → (wrap).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CockpitFocus {
-    /// Left rail — Claude session list.
+    /// Left rail top — agent picker (e.g. "Claude").
+    Agents,
+    /// Left rail bottom — historical session list.
     Sessions,
     /// Bottom-center — Potato-owned text input bar.
     #[default]
@@ -147,17 +149,19 @@ impl CockpitFocus {
     /// Advance to the next focus in the ring (Tab).
     pub fn next(self) -> Self {
         match self {
+            Self::Agents   => Self::Sessions,
             Self::Sessions => Self::Input,
             Self::Input    => Self::Terminal,
             Self::Terminal => Self::Sidebar,
-            Self::Sidebar  => Self::Sessions,
+            Self::Sidebar  => Self::Agents,
         }
     }
 
     /// Retreat to the previous focus in the ring (Shift+Tab).
     pub fn prev(self) -> Self {
         match self {
-            Self::Sessions => Self::Sidebar,
+            Self::Agents   => Self::Sidebar,
+            Self::Sessions => Self::Agents,
             Self::Input    => Self::Sessions,
             Self::Terminal => Self::Input,
             Self::Sidebar  => Self::Terminal,
@@ -264,6 +268,9 @@ pub struct SessionState {
     /// Default: `Input` — the user can start typing immediately.
     pub cockpit_focus: CockpitFocus,
 
+    /// Index of the selected agent in the left-rail agents picker.
+    pub selected_agent: usize,
+
     /// Index of the selected session in the left-rail sessions list.
     pub selected_session: usize,
 
@@ -292,6 +299,7 @@ impl SessionState {
             claude_session_id: None,
             tokens_used: 0,
             cockpit_focus: CockpitFocus::Input,
+            selected_agent: 0,
             selected_session: 0,
             terminal_scroll: 0,
         }
