@@ -198,12 +198,14 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
 
                                 let session_id = Uuid::new_v4().to_string();
                                 let session_args = ["--session-id", session_id.as_str()];
+                                let launch_cwd = std::env::current_dir().ok();
 
-                                match crate::pty::RealPty::spawn(
+                                match crate::pty::RealPty::spawn_in(
                                     &binary.to_string_lossy(),
                                     &session_args,
                                     pty_cols.max(20),
                                     pty_rows.max(5),
+                                    launch_cwd.as_deref(),
                                 ) {
                                     Ok(real_pty) => {
                                         // Subscribe to dirty notifications for re-render.
@@ -213,12 +215,11 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                                         // Transition to session screen.
                                         state.enter_session(&session_id, &agent_name);
 
-                                        if let Ok(cwd) = std::env::current_dir() {
-                                            if let Some(home) = dirs::home_dir() {
-                                                let path = crate::claude_log::session_log_path(&home, &cwd, &session_id);
-                                                tracing::info!("Claude log path: {}", path.display());
-                                                state.claude_log = Some(crate::claude_log::ClaudeSessionLogTracker::new(path));
-                                            }
+                                        if let Some(home) = dirs::home_dir() {
+                                            let cwd = launch_cwd.as_deref().unwrap_or(&home);
+                                            let path = crate::claude_log::session_log_path(&home, cwd, &session_id);
+                                            tracing::info!("Claude log path: {}", path.display());
+                                            state.claude_log = Some(crate::claude_log::ClaudeSessionLogTracker::new(path));
                                         }
 
                                         // Mark session as idle (PTY is live).

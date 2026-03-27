@@ -87,6 +87,10 @@ impl RealPty {
     /// Returns an error if the PTY cannot be opened, the writer cannot be
     /// taken, or the reader cannot be cloned (all OS-level operations).
     pub fn spawn(binary: &str, args: &[&str], cols: u16, rows: u16) -> Result<Self> {
+        Self::spawn_in(binary, args, cols, rows, None)
+    }
+
+    pub fn spawn_in(binary: &str, args: &[&str], cols: u16, rows: u16, cwd: Option<&std::path::Path>) -> Result<Self> {
         let pty_system = native_pty_system();
 
         // Open the PTY pair at the requested size.
@@ -98,6 +102,9 @@ impl RealPty {
         let mut cmd = CommandBuilder::new(binary);
         for arg in args {
             cmd.arg(arg);
+        }
+        if let Some(dir) = cwd {
+            cmd.cwd(dir);
         }
 
         // Spawn the child on the slave side.
