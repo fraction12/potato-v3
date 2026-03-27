@@ -3,8 +3,7 @@
 use crossterm::event::KeyEvent;
 use ratatui::{Frame, layout::Rect};
 
-use crate::app::action::Action;
-use super::Overlay;
+use super::{Overlay, OverlayAction};
 
 /// Compact yes/no confirmation dialog.
 #[derive(Debug, Default)]
@@ -13,23 +12,16 @@ pub struct ConfirmDialog {
     pub open: bool,
     /// The question to present to the user.
     pub message: String,
-    /// Action to emit when confirmed.
-    pub on_confirm: Option<Action>,
 }
 
 impl Overlay for ConfirmDialog {
+    fn title(&self) -> &str {
+        "Confirm"
+    }
+
     fn render(&self, _frame: &mut Frame, _area: Rect) {}
 
-    fn handle_key(&mut self, _key: KeyEvent) -> Action {
-        Action::Noop
-    }
-
-    fn is_open(&self) -> bool {
-        self.open
-    }
-
-    fn close(&mut self) {
-        self.open = false;
-        self.on_confirm = None;
+    fn handle_key(&mut self, _key: KeyEvent) -> OverlayAction {
+        OverlayAction::Close
     }
 }

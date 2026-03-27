@@ -2,6 +2,24 @@
 
 use chrono::{DateTime, Utc};
 use crate::agent::state_machine::AgentState;
+use crate::ui::panels::PanelId;
+
+// ── LayoutPreset (owned here to avoid circular imports) ───────────────────────
+
+/// High-level layout modes.
+///
+/// The canonical enum is defined here in `app::state` so that `ui::layout`
+/// can import it without creating a cyclic module dependency.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LayoutPreset {
+    /// Chat fills the full width; no side panels.
+    #[default]
+    Wide,
+    /// Chat on the left (~70%), tool output on the right (~30%).
+    Sidebar,
+    /// Chat only, no chrome — maximum focus.
+    Minimal,
+}
 
 // ── Chat message types ────────────────────────────────────────────────────────
 
@@ -177,6 +195,15 @@ pub struct AppState {
     pub error_dismiss_ticks: u32,
     /// Tick counter used for spinner animation frames.
     pub tick_count: u64,
+
+    // ── Panel system ──────────────────────────────────────────────────────────
+
+    /// The panel that currently holds keyboard focus.
+    pub focused_panel: PanelId,
+    /// Which panels are currently visible.
+    pub visible_panels: Vec<PanelId>,
+    /// The active layout preset.
+    pub layout_preset: LayoutPreset,
 }
 
 impl Default for AppState {
@@ -198,6 +225,9 @@ impl Default for AppState {
             error_message: None,
             error_dismiss_ticks: 0,
             tick_count: 0,
+            focused_panel: PanelId::Chat,
+            visible_panels: vec![PanelId::Chat],
+            layout_preset: LayoutPreset::Wide,
         }
     }
 }

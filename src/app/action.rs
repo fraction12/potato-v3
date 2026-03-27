@@ -1,5 +1,7 @@
 //! Actions are the output of the update function — side effects to be executed.
 
+use crate::ui::panels::PanelId;
+
 /// All possible actions that the update function can emit.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
@@ -9,8 +11,14 @@ pub enum Action {
     Quit,
     /// Send the current input buffer as a message to the agent.
     SendMessage(String),
-    /// Focus a specific panel by index.
+    /// Focus a specific panel by index (legacy — prefer FocusPanelById).
     FocusPanel(usize),
+    /// Move focus to the next panel in the focus ring.
+    FocusNextPanel,
+    /// Move focus to the previous panel in the focus ring.
+    FocusPreviousPanel,
+    /// Toggle visibility of a panel by id.
+    TogglePanel(PanelId),
     /// Open the slash command overlay.
     OpenSlashMenu,
     /// Open the model picker overlay.

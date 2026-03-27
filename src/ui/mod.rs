@@ -15,8 +15,9 @@ use ratatui::{
 
 use crate::agent::state_machine::AgentState;
 use crate::app::state::AppState;
-use crate::ui::layout::build_layout;
+use crate::ui::layout::{LayoutManager, build_layout};
 use crate::ui::panels::chat::render_chat;
+use crate::ui::panels::PanelId;
 use crate::ui::theme::{Theme, AMBER, BG, BROWN, CHARCOAL, CREAM, RUST_RED, SOIL, TAN};
 use crate::ui::widgets::{
     approval_bar::ApprovalBar,
@@ -30,22 +31,82 @@ use crate::ui::widgets::{
 /// This is the single entry point called from the main event loop.
 pub fn view(frame: &mut Frame, state: &AppState) {
     let theme = Theme::default();
-    let areas = build_layout(frame.area(), state);
+
+    // Build layout using LayoutManager driven by state.
+    let mut mgr = LayoutManager::new();
+    mgr.preset = state.layout_preset;
+    mgr.visible_panels_from_state(state);
+
+    let areas = mgr.build(frame.area(), state);
 
     // 1. Chat / conversation panel
-    render_chat(frame, areas.chat, state, &theme);
+    let chat_focused = state.focused_panel == PanelId::Chat;
+    render_chat_with_focus(frame, areas.chat, state, &theme, chat_focused);
 
-    // 2. Input area — or approval bar if waiting for approval
+    // 2. Optional side panel
+    if let Some(side_area) = areas.side {
+        render_side_panel(frame, side_area, state, &theme);
+    }
+
+    // 3. Input area — or approval bar if waiting for approval
     if let Some(ref approval) = state.pending_approval {
-        // Render the approval bar instead of the text input
         let bar = ApprovalBar::new(approval, &theme);
         frame.render_widget(bar, areas.input);
     } else {
         render_input(frame, areas.input, state, &theme);
     }
 
-    // 3. Status bar
+    // 4. Status bar
     render_status_bar(frame, areas.status_bar, state, &theme);
+}
+
+// ── Chat with focus border ────────────────────────────────────────────────────
+
+fn render_chat_with_focus(
+    frame: &mut Frame,
+    area: ratatui::layout::Rect,
+    state: &AppState,
+    theme: &Theme,
+    focused: bool,
+) {
+    let border_style = if focused {
+        Style::default().fg(AMBER)
+    } else {
+        Style::default().fg(CHARCOAL)
+    };
+
+    let block = Block::default()
+        .borders(Borders::NONE)
+        .border_style(border_style)
+        .style(Style::default().bg(BG));
+
+    frame.render_widget(block, area);
+    render_chat(frame, area, state, theme);
+}
+
+// ── Side panel ────────────────────────────────────────────────────────────────
+
+fn render_side_panel(
+    frame: &mut Frame,
+    area: ratatui::layout::Rect,
+    state: &AppState,
+    _theme: &Theme,
+) {
+    // Show the side panel appropriate for the focused panel or default to ToolOutput.
+    let focused = state.focused_panel;
+    let border_style = if focused == PanelId::ToolOutput || focused == PanelId::Sessions {
+        Style::default().fg(AMBER)
+    } else {
+        Style::default().fg(CHARCOAL)
+    };
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(border_style)
+        .title(Span::styled(" Side Panel ", Style::default().fg(TAN)))
+        .style(Style::default().bg(BG));
+
+    frame.render_widget(block, area);
 }
 
 // ── Input area ────────────────────────────────────────────────────────────────
@@ -152,6 +213,13 @@ fn render_status_bar(
         Style::default().fg(BROWN).bg(CHARCOAL),
     );
 
+    // Focus indicator
+    let focus_label = format!("{:?}", state.focused_panel);
+    let focus_span = Span::styled(
+        format!("focus:{}", focus_label),
+        Style::default().fg(AMBER).bg(CHARCOAL),
+    );
+
     // Error message overrides the right side if present
     let right_span = if let Some(ref err) = state.error_message {
         Span::styled(
@@ -159,11 +227,9 @@ fn render_status_bar(
             Style::default().fg(RUST_RED).bg(CHARCOAL),
         )
     } else {
-        // Session / config info
         let config = if state.config_path.is_empty() {
             "default config".to_string()
         } else {
-            // Show just the filename
             std::path::Path::new(&state.config_path)
                 .file_name()
                 .and_then(|n| n.to_str())
@@ -182,6 +248,8 @@ fn render_status_bar(
         state_span,
         sep.clone(),
         token_span,
+        sep.clone(),
+        focus_span,
         sep,
         right_span,
     ]);

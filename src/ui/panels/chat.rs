@@ -6,48 +6,121 @@
 //! - Tool cards inline within assistant messages
 //! - Auto-scrolls to bottom on new messages unless the user has scrolled up
 
-use crossterm::event::KeyEvent;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     Frame,
     buffer::Buffer,
     layout::Rect,
     style::Style,
     text::{Line, Span},
-    widgets::{Paragraph, Widget},
+    widgets::{Block, Borders, Paragraph, Widget},
 };
 use chrono::Utc;
 
 use crate::app::{
-    action::Action,
     state::{AppState, MessageRole, ToolCallStatus, UiPhase},
 };
 use crate::ui::theme::{Theme, AMBER, BG, CHARCOAL, CREAM, RUST_RED, SOIL, SPROUT, TAN};
 use crate::ui::widgets::message_bubble::{bubble_height, MessageBubble};
 
-use super::Panel;
+use super::{Panel, PanelAction, PanelId};
 
 // ── ChatPanel struct ──────────────────────────────────────────────────────────
 
 /// The primary chat panel — conversation history.
-///
-/// Actual rendering is done via [`render_chat`] which takes the full
-/// [`AppState`]; the struct is kept minimal.
 #[derive(Debug, Default)]
 pub struct ChatPanel {
     /// Vertical scroll offset (lines from the bottom).
     pub scroll: usize,
+    /// Whether this panel is visible.
+    visible: bool,
+}
+
+impl ChatPanel {
+    pub fn new() -> Self {
+        Self {
+            scroll: 0,
+            visible: true,
+        }
+    }
 }
 
 impl Panel for ChatPanel {
-    /// Stub — use [`render_chat`] for real rendering.
-    fn render(&self, _frame: &mut Frame, _area: Rect) {}
-
-    fn handle_key(&mut self, _key: KeyEvent) -> Action {
-        Action::Noop
+    fn id(&self) -> PanelId {
+        PanelId::Chat
     }
 
-    fn name(&self) -> &str {
+    fn title(&self) -> &str {
         "Chat"
+    }
+
+    fn render(&self, frame: &mut Frame, area: Rect, focused: bool, state: &AppState) {
+        let theme = Theme::default();
+        let border_style = if focused {
+            Style::default().fg(AMBER)
+        } else {
+            Style::default().fg(CHARCOAL)
+        };
+
+        // Draw border block.
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(border_style)
+            .title(Span::styled(" Chat ", Style::default().fg(TAN)))
+            .style(Style::default().bg(BG));
+
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+
+        // Delegate message rendering to the shared draw function.
+        let buf = frame.buffer_mut();
+        draw_chat(buf, inner, state, &theme);
+    }
+
+    fn handle_key(&mut self, key: KeyEvent, state: &mut AppState) -> PanelAction {
+        // Ctrl+C / Ctrl+Q are handled globally; don't intercept here.
+        if key.modifiers.contains(KeyModifiers::CONTROL) {
+            return PanelAction::None;
+        }
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                state.scroll_offset = state.scroll_offset.saturating_add(1);
+                state.user_scrolled = true;
+                PanelAction::None
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if state.scroll_offset > 0 {
+                    state.scroll_offset -= 1;
+                    if state.scroll_offset == 0 {
+                        state.user_scrolled = false;
+                    }
+                }
+                PanelAction::None
+            }
+            KeyCode::PageUp => {
+                state.scroll_offset = state.scroll_offset.saturating_add(10);
+                state.user_scrolled = true;
+                PanelAction::None
+            }
+            KeyCode::PageDown => {
+                if state.scroll_offset >= 10 {
+                    state.scroll_offset -= 10;
+                } else {
+                    state.scroll_offset = 0;
+                    state.user_scrolled = false;
+                }
+                PanelAction::None
+            }
+            _ => PanelAction::None,
+        }
+    }
+
+    fn is_visible(&self) -> bool {
+        self.visible
+    }
+
+    fn set_visible(&mut self, visible: bool) {
+        self.visible = visible;
     }
 }
 

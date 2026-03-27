@@ -8,6 +8,7 @@ use super::{
     state::{AppState, ChatMessage, PendingApproval, ToolCallInfo, ToolCallStatus},
 };
 use crate::agent::state_machine::AgentState;
+use crate::ui::panels::PanelId;
 
 /// Number of ticks before an error message is auto-dismissed.
 const ERROR_DISMISS_TICKS: u32 = 40;
@@ -56,15 +57,28 @@ pub fn update(state: &mut AppState, msg: Message) -> Action {
 
 /// Dispatch a key event to the correct sub-handler based on app phase.
 fn handle_key(state: &mut AppState, key: KeyEvent) -> Action {
-    // Global quit bindings: Ctrl+Q or Ctrl+C.
+    // ── Global quit bindings: Ctrl+Q or Ctrl+C ────────────────────────────────
     if key.modifiers.contains(KeyModifiers::CONTROL) {
         match key.code {
             KeyCode::Char('q') | KeyCode::Char('c') => {
                 state.should_quit = true;
                 return Action::Quit;
             }
+            // ── Panel toggle: Ctrl+1/2/3/4 ────────────────────────────────────
+            KeyCode::Char('1') => return Action::TogglePanel(PanelId::Chat),
+            KeyCode::Char('2') => return Action::TogglePanel(PanelId::ToolOutput),
+            KeyCode::Char('3') => return Action::TogglePanel(PanelId::FilePreview),
+            KeyCode::Char('4') => return Action::TogglePanel(PanelId::Sessions),
             _ => {}
         }
+    }
+
+    // ── Focus cycling: Tab / Shift+Tab ────────────────────────────────────────
+    if key.code == KeyCode::Tab {
+        if key.modifiers.contains(KeyModifiers::SHIFT) {
+            return Action::FocusPreviousPanel;
+        }
+        return Action::FocusNextPanel;
     }
 
     // If an approval is pending, only route approval keys.
@@ -248,5 +262,69 @@ fn handle_agent_event(state: &mut AppState, event: AgentEvent) -> Action {
             state.set_error(e, ERROR_DISMISS_TICKS);
             Action::Noop
         }
+    }
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::message::Message;
+
+    /// Tab emits FocusNextPanel.
+    #[test]
+    fn test_tab_emits_focus_next() {
+        let mut state = AppState::default();
+        let key = KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE);
+        let action = update(&mut state, Message::Key(key));
+        assert_eq!(action, Action::FocusNextPanel);
+    }
+
+    /// Shift+Tab emits FocusPreviousPanel.
+    #[test]
+    fn test_shift_tab_emits_focus_prev() {
+        let mut state = AppState::default();
+        let key = KeyEvent::new(KeyCode::Tab, KeyModifiers::SHIFT);
+        let action = update(&mut state, Message::Key(key));
+        assert_eq!(action, Action::FocusPreviousPanel);
+    }
+
+    /// Ctrl+2 emits TogglePanel(ToolOutput).
+    #[test]
+    fn test_ctrl2_toggles_tool_output() {
+        let mut state = AppState::default();
+        let key = KeyEvent::new(KeyCode::Char('2'), KeyModifiers::CONTROL);
+        let action = update(&mut state, Message::Key(key));
+        assert_eq!(action, Action::TogglePanel(PanelId::ToolOutput));
+    }
+
+    /// Ctrl+1 emits TogglePanel(Chat).
+    #[test]
+    fn test_ctrl1_toggles_chat() {
+        let mut state = AppState::default();
+        let key = KeyEvent::new(KeyCode::Char('1'), KeyModifiers::CONTROL);
+        let action = update(&mut state, Message::Key(key));
+        assert_eq!(action, Action::TogglePanel(PanelId::Chat));
+    }
+
+    /// Ctrl+4 emits TogglePanel(Sessions).
+    #[test]
+    fn test_ctrl4_toggles_sessions() {
+        let mut state = AppState::default();
+        let key = KeyEvent::new(KeyCode::Char('4'), KeyModifiers::CONTROL);
+        let action = update(&mut state, Message::Key(key));
+        assert_eq!(action, Action::TogglePanel(PanelId::Sessions));
+    }
+
+    /// Panel-local keys (j/k) fire when the global handler routes them.
+    /// This test verifies the action routing (j scrolls down in global handler).
+    #[test]
+    fn test_panel_action_routing() {
+        let mut state = AppState::default();
+        // j in global context scrolls down in chat
+        let key = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE);
+        let action = update(&mut state, Message::Key(key));
+        assert_eq!(action, Action::ScrollDown);
     }
 }
