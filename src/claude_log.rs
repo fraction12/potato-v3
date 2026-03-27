@@ -328,7 +328,12 @@ fn compact_json(value: Option<&Value>) -> String {
     };
     let compact = raw.replace('\n', " ").split_whitespace().collect::<Vec<_>>().join(" ");
     if compact.len() > 120 {
-        format!("{}…", &compact[..119])
+        // Find a char boundary at or before byte 119.
+        let mut end = 119;
+        while end > 0 && !compact.is_char_boundary(end) {
+            end -= 1;
+        }
+        format!("{}…", &compact[..end])
     } else {
         compact
     }
