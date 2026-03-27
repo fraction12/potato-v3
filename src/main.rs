@@ -47,6 +47,7 @@ use adapters::{AdapterConfig, AgentAdapter};
 use app::state::{AgentInfo, DashboardState};
 use ui::screens::{dashboard::render_dashboard, session::render_session};
 use crate::pty::TurnHandle;
+use crate::pty::{RealPty, key_event_to_bytes};
 
 // ── CLI arguments ─────────────────────────────────────────────────────────────
 
@@ -131,6 +132,10 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
     let mut session_adapter: Option<Arc<dyn AgentAdapter>> = None;
     let mut session_config: Option<AdapterConfig> = None;
 
+    // Dirty-signal subscriber from the real PTY reader thread.
+    // When Some, receiving on this triggers an immediate re-render.
+    let mut pty_dirty_rx: Option<tokio::sync::broadcast::Receiver<()>> = None;
+
     loop {
         // ── Render ────────────────────────────────────────────────────────────
         terminal.draw(|frame| {
@@ -161,9 +166,21 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
         }
 
         // ── Input / message wait ──────────────────────────────────────────────
-        let msg = tokio::select! {
-            Some(m) = event_rx.recv() => Some(m),
-            _ = tokio::time::sleep(tick_duration) => Some(Message::Tick),
+        // When a real PTY is active, also wake on dirty signals (new PTY
+        // output) so the screen is re-rendered without waiting for the next
+        // tick.
+        let msg = if let Some(ref mut dirty_rx) = pty_dirty_rx {
+            tokio::select! {
+                Some(m) = event_rx.recv() => Some(m),
+                _ = tokio::time::sleep(tick_duration) => Some(Message::Tick),
+                // PTY has new output — fire a Tick so the renderer picks it up.
+                _ = async { let _ = dirty_rx.recv().await; } => Some(Message::Tick),
+            }
+        } else {
+            tokio::select! {
+                Some(m) = event_rx.recv() => Some(m),
+                _ = tokio::time::sleep(tick_duration) => Some(Message::Tick),
+            }
         };
 
         if let Some(m) = msg {
@@ -175,7 +192,6 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                         if !dash.available_agents.is_empty() {
                             let agent_info = dash.available_agents[dash.selected_agent].clone();
                             if agent_info.available {
-                                // Build adapter and config but don't spawn yet.
                                 let session_id = Uuid::new_v4().to_string();
                                 let adapter: Arc<dyn AgentAdapter> = match agent_info.adapter.as_str() {
                                     "claude" => Arc::new(ClaudeAdapter),
@@ -185,13 +201,52 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                                     model: if state.model.is_empty() { None } else { Some(state.model.clone()) },
                                     ..AdapterConfig::default()
                                 };
-                                // Transition to session screen — Claude spawns on first user input.
+
+                                // ── Real PTY launch (Claude interactive mode) ──────────
+                                // For Claude (and any agent with a binary path), spawn a
+                                // real PTY so the agent's native TUI renders inside
+                                // Potato.  Fall back to the per-turn --print model if the
+                                // PTY cannot be opened (e.g. no TTY available in CI).
+                                let binary_path = agent_info.binary_path.clone();
+                                let binary_str_owned;
+                                let binary_str: Option<&str> = if let Some(ref bp) = binary_path {
+                                    binary_str_owned = bp.to_string_lossy().into_owned();
+                                    Some(&binary_str_owned)
+                                } else {
+                                    None
+                                };
+
+                                // Use a conservative terminal size for the initial PTY;
+                                // it will be resized on the first render pass.
+                                let (pty_cols, pty_rows) = (220u16, 50u16);
+
+                                let maybe_real_pty = if let Some(bin) = binary_str {
+                                    match RealPty::spawn(bin, &[], pty_cols, pty_rows) {
+                                        Ok(pty) => {
+                                            let dirty_rx = pty.subscribe_dirty();
+                                            pty_dirty_rx = Some(dirty_rx);
+                                            Some(pty)
+                                        }
+                                        Err(e) => {
+                                            tracing::warn!(
+                                                "RealPty::spawn failed (falling back to --print mode): {e}"
+                                            );
+                                            None
+                                        }
+                                    }
+                                } else {
+                                    None
+                                };
+
+                                // Transition to session screen.
                                 state.enter_session(session_id, &agent_info.name);
                                 if let Some(session) = state.session_mut() {
                                     session.status = app::state::AgentStatus::Idle;
                                 }
+                                state.real_pty = maybe_real_pty;
                                 session_adapter = Some(adapter);
                                 session_config = Some(config);
+
                                 // Don't process further for this tick.
                                 state.tick_count = state.tick_count.wrapping_add(1);
                                 continue;
@@ -240,6 +295,43 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                             break;
                         }
                         _ => {}
+                    }
+                }
+
+                // ── Real PTY input forwarding ──────────────────────────────────
+                // When a real PTY session is active, ALL key events are
+                // forwarded directly to the child process — except for a
+                // handful of Potato-level escape hatches (Ctrl+Q to quit,
+                // Ctrl+Shift+Esc to return to dashboard).
+                if matches!(state.screen, AppScreen::Session(_)) {
+                    if let Some(ref mut real_pty) = state.real_pty {
+                        // Ctrl+Q → quit Potato entirely.
+                        if key.code == KeyCode::Char('q')
+                            && key.modifiers.contains(KeyModifiers::CONTROL)
+                        {
+                            state.should_quit = true;
+                            break;
+                        }
+                        // Ctrl+\ → return to dashboard (kill PTY).
+                        if key.code == KeyCode::Char('\\')
+                            && key.modifiers.contains(KeyModifiers::CONTROL)
+                        {
+                            state.real_pty = None;
+                            pty_dirty_rx = None;
+                            session_adapter = None;
+                            session_config = None;
+                            state.screen = AppScreen::Dashboard(DashboardState {
+                                available_agents: detect_agents(),
+                                ..DashboardState::default()
+                            });
+                            continue;
+                        }
+                        // Forward all other keys to the PTY.
+                        let bytes = key_event_to_bytes(*key);
+                        if !bytes.is_empty() {
+                            let _ = real_pty.write_input(&bytes);
+                        }
+                        continue;
                     }
                 }
 
@@ -301,8 +393,11 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                             break;
                         }
                         KeyCode::Esc => {
-                            // Return to dashboard — drop the turn handle (if any) to let process exit.
+                            // Return to dashboard — drop the turn handle and real PTY
+                            // (if any) to let processes exit.
                             turn_handle = None;
+                            state.real_pty = None;
+                            pty_dirty_rx = None;
                             session_adapter = None;
                             session_config = None;
                             state.screen = AppScreen::Dashboard(DashboardState {

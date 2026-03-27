@@ -30,6 +30,9 @@ tokio-stream = "0.1"
 async-trait = "0.1"
 which = "6"
 uuid = { version = "1", features = ["v4"] }
+portable-pty = "0.9.0"
+vt100 = "=0.15.2"
+tui-term = "0.2.0"
 
 [profile.release]
 lto = true

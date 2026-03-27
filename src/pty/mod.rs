@@ -1,7 +1,15 @@
 //! Process management — spawns agent CLI processes and bridges their I/O
 //! with Potato's canonical event system.
 //!
-//! Uses `tokio::process` with piped I/O (not portable-pty).
+//! # Modules
+//!
+//! - This file: [`PtyProcess`] — the original per-turn `--print` model using
+//!   `tokio::process` with piped I/O.  Kept for headless/test modes.
+//! - [`real`]: [`RealPty`] — interactive PTY using `portable-pty` + `vt100`.
+//!   Claude Code's native TUI renders inside Potato via `tui-term`.
+
+pub mod real;
+pub use real::{RealPty, key_event_to_bytes};
 
 use std::sync::Arc;
 
