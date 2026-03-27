@@ -375,15 +375,6 @@ impl LegacyLayoutManager {
         }
     }
 
-    // ── State sync ────────────────────────────────────────────────────────────
-
-    /// Synchronise visible panels from [`AppState`].
-    pub fn visible_panels_from_state(&mut self, state: &AppState) {
-        self.visible = state.visible_panels.clone();
-        self.focused = state.focused_panel.clone();
-        self.preset = state.layout_preset;
-    }
-
     // ── Layout computation ────────────────────────────────────────────────────
 
     /// Compute [`PanelAreas`] given the full terminal [`Rect`] and current state.

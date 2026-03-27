@@ -11,9 +11,8 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Widget},
 };
 
-use crate::app::agent_state::AgentState;
 use crate::app::state::AppState;
-use crate::ui::theme::{AMBER, BG, CHARCOAL, CREAM, ROSE, RUST_RED, SOIL, SPROUT, STONE, TAN};
+use crate::ui::theme::{AMBER, BG, CHARCOAL, CREAM, ROSE, SPROUT, STONE, TAN};
 use super::{Panel, PanelAction, PanelId};
 
 // ── Spinner frames ─────────────────────────────────────────────────────────────
@@ -24,7 +23,7 @@ const SPINNER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧
 
 /// The UI-side representation of the agent's current phase.
 ///
-/// Mirrors [`AgentState`] but adds elapsed-time tracking and queue counts.
+/// Tracks the current activity state with elapsed-time tracking and queue counts.
 #[derive(Debug, Clone)]
 pub enum StatusPhase {
     /// Agent is idle — waiting for user input.
@@ -46,21 +45,6 @@ pub enum StatusPhase {
 }
 
 impl StatusPhase {
-    /// Convert from the core [`AgentState`].
-    pub fn from_agent_state(state: &AgentState) -> Self {
-        match state {
-            AgentState::Idle => Self::Idle,
-            AgentState::Thinking => Self::Thinking,
-            AgentState::ToolCall { tool_name } => Self::ToolCall {
-                tool_name: tool_name.clone(),
-            },
-            AgentState::Approval { tool_name, .. } => Self::Approval {
-                tool_name: tool_name.clone(),
-            },
-            AgentState::Error(msg) => Self::Error(msg.clone()),
-        }
-    }
-
     /// Short label for the phase (shown in the status bar).
     pub fn label(&self) -> &str {
         match self {
@@ -134,21 +118,8 @@ impl AgentStatusPanel {
         self.phase_entered_at = Instant::now();
     }
 
-    /// Synchronise from the core [`AgentState`] and current model name.
+    /// Synchronise model and tick from app state.
     pub fn sync_from_state(&mut self, state: &AppState) {
-        let new_phase = StatusPhase::from_agent_state(&state.agent_state);
-        // Only reset timer when the phase *variant* changes.
-        let changed = !matches!(
-            (&self.phase, &new_phase),
-            (StatusPhase::Idle, StatusPhase::Idle)
-                | (StatusPhase::Thinking, StatusPhase::Thinking)
-                | (StatusPhase::Error(_), StatusPhase::Error(_))
-        ) || self.phase.label() != new_phase.label();
-
-        if changed {
-            self.phase_entered_at = Instant::now();
-        }
-        self.phase = new_phase;
         self.model = state.model.clone();
         self.tick = state.tick_count;
     }
@@ -330,50 +301,6 @@ mod tests {
     }
 
     #[test]
-    fn test_from_agent_state_idle() {
-        let s = StatusPhase::from_agent_state(&AgentState::Idle);
-        assert!(matches!(s, StatusPhase::Idle));
-    }
-
-    #[test]
-    fn test_from_agent_state_thinking() {
-        let s = StatusPhase::from_agent_state(&AgentState::Thinking);
-        assert!(matches!(s, StatusPhase::Thinking));
-    }
-
-    #[test]
-    fn test_from_agent_state_tool_call() {
-        let s = StatusPhase::from_agent_state(&AgentState::ToolCall {
-            tool_name: "grep".into(),
-        });
-        match s {
-            StatusPhase::ToolCall { tool_name } => assert_eq!(tool_name, "grep"),
-            _ => panic!("expected ToolCall"),
-        }
-    }
-
-    #[test]
-    fn test_from_agent_state_approval() {
-        let s = StatusPhase::from_agent_state(&AgentState::Approval {
-            tool_name: "shell".into(),
-            args: "{}".into(),
-        });
-        match s {
-            StatusPhase::Approval { tool_name } => assert_eq!(tool_name, "shell"),
-            _ => panic!("expected Approval"),
-        }
-    }
-
-    #[test]
-    fn test_from_agent_state_error() {
-        let s = StatusPhase::from_agent_state(&AgentState::Error("bad".into()));
-        match s {
-            StatusPhase::Error(msg) => assert_eq!(msg, "bad"),
-            _ => panic!("expected Error"),
-        }
-    }
-
-    #[test]
     fn test_phase_is_active() {
         assert!(!StatusPhase::Idle.is_active());
         assert!(StatusPhase::Thinking.is_active());
@@ -447,10 +374,8 @@ mod tests {
         let mut panel = AgentStatusPanel::new();
         let mut state = AppState::default();
         state.model = "gpt-4o".into();
-        state.agent_state = AgentState::Thinking;
         panel.sync_from_state(&state);
         assert_eq!(panel.model, "gpt-4o");
-        assert!(matches!(panel.phase, StatusPhase::Thinking));
     }
 
     #[test]

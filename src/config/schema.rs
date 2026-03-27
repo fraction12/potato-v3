@@ -8,44 +8,26 @@ use super::keybinds::KeybindConfig;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
-    /// Model to use by default (e.g. `"llama3"`, `"gpt-4o"`).
-    pub model: String,
-    /// Base URL for the local Ollama instance.
-    pub ollama_url: String,
-    /// Cloud provider API key (OpenAI-compatible endpoints).
-    pub api_key: Option<String>,
-    /// Cloud provider base URL override (e.g. for Azure, Together, etc.).
-    pub api_base_url: Option<String>,
+    /// Default agent to launch (e.g. `"claude"`, `"codex"`).
+    pub default_agent: String,
     /// Path to the SQLite session database. Supports `~` expansion.
     pub db_path: String,
-    /// Whether to require user approval for every tool call.
-    pub require_approval: bool,
-    /// Maximum messages to retain in history (0 = unlimited).
-    pub max_history: usize,
     /// UI refresh / tick rate in milliseconds.
     pub tick_rate_ms: u64,
     /// Keyboard bindings.
     pub keybinds: KeybindConfig,
     /// Active theme name (e.g. `"earth"`, `"nord"`).
     pub theme: String,
-    /// Default tool execution timeout in seconds.
-    pub tool_timeout_secs: u64,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
-            model: "llama3".to_string(),
-            ollama_url: "http://localhost:11434".to_string(),
-            api_key: None,
-            api_base_url: None,
+            default_agent: "claude".to_string(),
             db_path: "~/.potato/sessions.db".to_string(),
-            require_approval: true,
-            max_history: 0,
             tick_rate_ms: 250,
             keybinds: KeybindConfig::default(),
             theme: "earth".to_string(),
-            tool_timeout_secs: 30,
         }
     }
 }
@@ -59,30 +41,22 @@ mod tests {
     #[test]
     fn test_default_config_values() {
         let cfg = Config::default();
-        assert_eq!(cfg.model, "llama3");
-        assert_eq!(cfg.ollama_url, "http://localhost:11434");
+        assert_eq!(cfg.default_agent, "claude");
         assert_eq!(cfg.db_path, "~/.potato/sessions.db");
-        assert!(cfg.require_approval);
-        assert_eq!(cfg.tool_timeout_secs, 30);
         assert_eq!(cfg.theme, "earth");
         assert_eq!(cfg.tick_rate_ms, 250);
-        assert_eq!(cfg.max_history, 0);
-        assert!(cfg.api_key.is_none());
     }
 
     #[test]
     fn test_config_toml_deserialization() {
         let toml_str = r#"
-            model = "gpt-4o"
-            ollama_url = "http://localhost:11434"
-            require_approval = false
-            tool_timeout_secs = 60
+            default_agent = "codex"
+            theme = "nord"
         "#;
         let cfg: Config = toml::from_str(toml_str).expect("parse toml");
-        assert_eq!(cfg.model, "gpt-4o");
-        assert!(!cfg.require_approval);
-        assert_eq!(cfg.tool_timeout_secs, 60);
+        assert_eq!(cfg.default_agent, "codex");
+        assert_eq!(cfg.theme, "nord");
         // Fields not specified should use defaults.
-        assert_eq!(cfg.theme, "earth");
+        assert_eq!(cfg.db_path, "~/.potato/sessions.db");
     }
 }

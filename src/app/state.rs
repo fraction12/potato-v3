@@ -7,7 +7,6 @@ use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
 
-use crate::app::agent_state::AgentState;
 use crate::claude_log::ClaudeSessionLogTracker;
 use crate::metrics::SessionMetrics;
 use crate::pty::RealPty;
@@ -29,7 +28,7 @@ pub enum LayoutPreset {
     Minimal,
 }
 
-// ── Existing chat message types (kept for UI compatibility) ───────────────────
+// ── Message role (shared between transcript and widgets) ──────────────────────
 
 /// Role of a participant in the conversation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,6 +38,8 @@ pub enum MessageRole {
     System,
     Error,
 }
+
+// ── Tool call types (used in session transcript) ──────────────────────────────
 
 /// Status of a tool call embedded in an assistant message.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,46 +71,6 @@ impl ToolCallInfo {
             expanded: false,
         }
     }
-}
-
-/// A single message in the conversation history.
-#[derive(Debug, Clone)]
-pub struct ChatMessage {
-    pub role: MessageRole,
-    pub content: String,
-    pub timestamp: DateTime<Utc>,
-    pub tool_call: Option<ToolCallInfo>,
-}
-
-impl ChatMessage {
-    pub fn user(content: impl Into<String>) -> Self {
-        Self { role: MessageRole::User, content: content.into(), timestamp: Utc::now(), tool_call: None }
-    }
-    pub fn assistant(content: impl Into<String>) -> Self {
-        Self { role: MessageRole::Assistant, content: content.into(), timestamp: Utc::now(), tool_call: None }
-    }
-    pub fn system(content: impl Into<String>) -> Self {
-        Self { role: MessageRole::System, content: content.into(), timestamp: Utc::now(), tool_call: None }
-    }
-    pub fn error(content: impl Into<String>) -> Self {
-        Self { role: MessageRole::Error, content: content.into(), timestamp: Utc::now(), tool_call: None }
-    }
-}
-
-/// High-level phase of the UI.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub enum UiPhase {
-    #[default]
-    Welcome,
-    Active,
-}
-
-/// Data for a tool call awaiting user approval.
-#[derive(Debug, Clone)]
-pub struct PendingApproval {
-    pub tool_name: String,
-    pub args: String,
-    pub preview: Option<String>,
 }
 
 // ── Dashboard types ───────────────────────────────────────────────────────────
@@ -380,30 +341,15 @@ pub struct AppState {
     pub screen: AppScreen,
 
     // ── Shared / config ───────────────────────────────────────────────────────
-    /// Active model name (overridable per session).
+    /// Active model name (shown in status bar; passed through from CLI --model).
     pub model: String,
     /// Path to the loaded config file.
     pub config_path: String,
 
-    // ── Legacy fields kept for existing UI code compatibility ─────────────────
-    /// Legacy Ollama-era agent state (kept for UI compatibility).
-    pub agent_state: AgentState,
-    /// Current input buffer (used by legacy render path).
-    pub input_buffer: String,
-    pub input_cursor: usize,
-    pub messages: Vec<ChatMessage>,
-    pub active_panel: usize,
-    pub token_counts: (u64, u64),
-    pub scroll_offset: usize,
-    pub user_scrolled: bool,
-    pub ui_phase: UiPhase,
-    pub pending_approval: Option<PendingApproval>,
+    // ── Error / notification state ────────────────────────────────────────────
     pub error_message: Option<String>,
     pub error_dismiss_ticks: u32,
     pub tick_count: u64,
-    pub focused_panel: PanelId,
-    pub visible_panels: Vec<PanelId>,
-    pub layout_preset: LayoutPreset,
 
     // ── Phase-3 panel system ──────────────────────────────────────────────────
     /// Composable layout manager (Phase-3).
@@ -439,22 +385,9 @@ impl Default for AppState {
             screen: AppScreen::default(),
             model: "claude".to_string(),
             config_path: String::new(),
-            agent_state: AgentState::default(),
-            input_buffer: String::new(),
-            input_cursor: 0,
-            messages: Vec::new(),
-            active_panel: 0,
-            token_counts: (0, 0),
-            scroll_offset: 0,
-            user_scrolled: false,
-            ui_phase: UiPhase::Welcome,
-            pending_approval: None,
             error_message: None,
             error_dismiss_ticks: 0,
             tick_count: 0,
-            focused_panel: PanelId::Chat,
-            visible_panels: vec![PanelId::Chat],
-            layout_preset: LayoutPreset::Wide,
             layout_manager: LayoutManager::new(NewLayoutPreset::Sidebar),
             focus_ring: FocusRing::new(vec![PanelId::Chat, PanelId::ToolOutput]),
             chat_panel: ChatPanel::new(Vec::new()),
@@ -493,63 +426,11 @@ impl AppState {
         if let AppScreen::Session(ref s) = self.screen { Some(s) } else { None }
     }
 
-    // ── Legacy helpers (kept for existing UI code) ────────────────────────────
-
-    pub fn push_message(&mut self, msg: ChatMessage) {
-        self.messages.push(msg);
-        self.ui_phase = UiPhase::Active;
-        if !self.user_scrolled { self.scroll_offset = 0; }
-    }
-
-    pub fn append_token(&mut self, token: &str) {
-        match self.messages.last_mut() {
-            Some(m) if m.role == MessageRole::Assistant => { m.content.push_str(token); }
-            _ => {
-                self.messages.push(ChatMessage::assistant(token));
-                self.ui_phase = UiPhase::Active;
-            }
-        }
-        if !self.user_scrolled { self.scroll_offset = 0; }
-    }
+    // ── Error helpers ─────────────────────────────────────────────────────────
 
     pub fn set_error(&mut self, msg: impl Into<String>, ticks: u32) {
         self.error_message = Some(msg.into());
         self.error_dismiss_ticks = ticks;
-    }
-
-    pub fn input_insert(&mut self, c: char) {
-        self.input_buffer.insert(self.input_cursor, c);
-        self.input_cursor += c.len_utf8();
-    }
-
-    pub fn input_backspace(&mut self) {
-        if self.input_cursor == 0 { return; }
-        let before = &self.input_buffer[..self.input_cursor];
-        if let Some(c) = before.chars().next_back() {
-            self.input_cursor -= c.len_utf8();
-            self.input_buffer.remove(self.input_cursor);
-        }
-    }
-
-    pub fn input_cursor_left(&mut self) {
-        if self.input_cursor == 0 { return; }
-        let before = &self.input_buffer[..self.input_cursor];
-        if let Some(c) = before.chars().next_back() { self.input_cursor -= c.len_utf8(); }
-    }
-
-    pub fn input_cursor_right(&mut self) {
-        if self.input_cursor >= self.input_buffer.len() { return; }
-        if let Some(c) = self.input_buffer[self.input_cursor..].chars().next() {
-            self.input_cursor += c.len_utf8();
-        }
-    }
-
-    pub fn input_cursor_home(&mut self) { self.input_cursor = 0; }
-    pub fn input_cursor_end(&mut self) { self.input_cursor = self.input_buffer.len(); }
-
-    pub fn take_input(&mut self) -> String {
-        self.input_cursor = 0;
-        std::mem::take(&mut self.input_buffer)
     }
 }
 
@@ -633,25 +514,5 @@ mod tests {
         assert!(AgentStatus::Thinking.is_active());
         assert!(!AgentStatus::Idle.is_active());
         assert!(!AgentStatus::Exited { code: Some(0) }.is_active());
-    }
-
-    #[test]
-    fn input_insert_and_backspace() {
-        let mut state = AppState::default();
-        state.input_insert('h');
-        state.input_insert('i');
-        assert_eq!(state.input_buffer, "hi");
-        state.input_backspace();
-        assert_eq!(state.input_buffer, "h");
-    }
-
-    #[test]
-    fn take_input_clears_buffer() {
-        let mut state = AppState::default();
-        state.input_insert('x');
-        let taken = state.take_input();
-        assert_eq!(taken, "x");
-        assert!(state.input_buffer.is_empty());
-        assert_eq!(state.input_cursor, 0);
     }
 }

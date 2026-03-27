@@ -1,22 +1,18 @@
 # Potato default configuration
 # Copy to ~/.potato/config.toml and adjust as needed.
 
-# ── Model ─────────────────────────────────────────────────────────────────────
+# ── Agent ─────────────────────────────────────────────────────────────────────
 
-# Default model passed to Claude Code via --model flag (leave empty to use Claude's default).
-model = ""
+# Default agent to launch when pressing Enter on the dashboard.
+# Options: "claude", "codex"
+default_agent = "claude"
 
-# (Legacy — unused in cockpit mode)
-ollama_url = "http://localhost:11434"
-
-# Whether to require manual approval before executing any tool call.
-require_approval = true
-
-# Maximum messages to retain in memory per session (0 = unlimited).
-max_history = 0
+# ── Session storage ───────────────────────────────────────────────────────────
 
 # Path to the SQLite session database.
 db_path = "~/.potato/sessions.db"
+
+# ── UI ────────────────────────────────────────────────────────────────────────
 
 # Tick rate in milliseconds (controls animation and polling speed).
 tick_rate_ms = 250
@@ -35,11 +31,3 @@ help         = "?"
 approve      = "y"
 deny         = "n"
 new_session  = "ctrl+n"
-
-# ── Theme overrides ───────────────────────────────────────────────────────────
-# Uncomment and adjust to override individual theme colours (RGB values).
-
-# [theme_overrides]
-# background = [30, 20, 15]
-# foreground = [255, 248, 225]
-# border_focused = [249, 168, 37]

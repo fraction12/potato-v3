@@ -16,7 +16,7 @@ use ratatui::{
 
 use crate::app::state::{AppState, MessageRole, TranscriptEntry};
 use crate::ui::markdown::{extract_lang, is_code_fence, render_markdown_line};
-use crate::ui::theme::{AMBER, BG, BRASS, BROWN, CHARCOAL, CREAM, ROSE, RUST_RED, SOIL, SPROUT, STONE, TAN, Theme};
+use crate::ui::theme::{AMBER, BG, BRASS, BROWN, CHARCOAL, CREAM, ROSE, STONE, TAN};
 
 use super::{Panel, PanelAction, PanelId};
 
@@ -547,41 +547,6 @@ impl Panel for ChatPanel {
     fn set_visible(&mut self, visible: bool) {
         self.visible = visible;
     }
-}
-
-// ── Legacy render_chat compatibility shim ─────────────────────────────────────
-
-/// Compatibility shim for existing `ui/mod.rs` callers.
-///
-/// Converts the legacy `messages` list in [`AppState`] to [`TranscriptEntry`]
-/// values and delegates to [`ChatPanel::draw`].
-pub fn render_chat(frame: &mut Frame, area: Rect, state: &AppState, _theme: &Theme) {
-    let transcript: Vec<TranscriptEntry> = state.messages.iter().map(|m| {
-        let role = match m.role {
-            MessageRole::User => MessageRole::User,
-            MessageRole::Assistant => MessageRole::Assistant,
-            MessageRole::System => MessageRole::System,
-            MessageRole::Error => MessageRole::Error,
-        };
-        TranscriptEntry {
-            role,
-            content: m.content.clone(),
-            timestamp: m.timestamp,
-            tool_call: m.tool_call.clone(),
-        }
-    }).collect();
-
-    let panel = ChatPanel {
-        transcript,
-        scroll_offset: state.scroll_offset as u16,
-        user_scrolled: state.user_scrolled,
-        search: None,
-        show_timestamps: false,
-        visible: true,
-    };
-
-    let buf = frame.buffer_mut();
-    panel.draw(buf, area);
 }
 
 // ── Line renderer helper ──────────────────────────────────────────────────────

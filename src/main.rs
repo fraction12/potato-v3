@@ -11,7 +11,6 @@ mod app;
 mod claude_log;
 mod config;
 mod events;
-mod legacy;
 mod log;
 mod metrics;
 mod pty;
@@ -20,13 +19,12 @@ mod terminal;
 mod ui;
 
 use std::io::{self, Write as _};
-use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
 use clap::Parser;
 use crossterm::{
-    event::{DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers, MouseEventKind},
+    event::{DisableMouseCapture, EnableMouseCapture, KeyCode, KeyModifiers, MouseEventKind},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
@@ -36,15 +34,11 @@ use uuid::Uuid;
 use app::message::Message;
 use app::state::{AppScreen, AppState, CockpitFocus, DashboardFocus};
 use app::update::update;
-use ui::layout::LayoutPreset as NewLayoutPreset;
-use ui::panels::PanelId;
 use config::load_config;
 use session::SessionStore;
 use terminal::events::event_stream;
 use terminal::panic_hook::install_panic_hook;
-use adapters::claude::ClaudeAdapter;
-use adapters::generic::GenericAdapter;
-use adapters::{AdapterConfig, AgentAdapter};
+use adapters::{AgentAdapter, claude::ClaudeAdapter, generic::GenericAdapter};
 use app::state::{AgentInfo, DashboardState};
 use ui::screens::{dashboard::render_dashboard, session::render_session};
 use crate::pty::{TurnHandle, key_event_to_bytes};
@@ -127,10 +121,6 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
     // Per-turn handle for the current Claude process (None when not processing a turn).
     // Each user message spawns a new process; this is replaced each turn.
     let mut turn_handle: Option<TurnHandle> = None;
-
-    // The adapter and config for the active session (set when entering a session).
-    let mut session_adapter: Option<Arc<dyn AgentAdapter>> = None;
-    let mut session_config: Option<AdapterConfig> = None;
 
     loop {
         // ── Render ────────────────────────────────────────────────────────────
@@ -327,8 +317,6 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                             // Esc from Input = return to dashboard, drop PTY.
                             CockpitFocus::Input => {
                                 turn_handle = None;
-                                session_adapter = None;
-                                session_config = None;
                                 state.real_pty = None;
                                 state.claude_log = None;
                                 state.screen = AppScreen::Dashboard(DashboardState {
@@ -617,10 +605,7 @@ async fn main() -> Result<()> {
     install_panic_hook();
 
     // Load configuration.
-    let mut cfg = load_config(cli.config.as_deref())?;
-    if let Some(model) = cli.model {
-        cfg.model = model;
-    }
+    let cfg = load_config(cli.config.as_deref())?;
 
     // Initialise session store.
     let db_path = config::expand_tilde(&cfg.db_path);
@@ -631,8 +616,11 @@ async fn main() -> Result<()> {
 
     // Build initial state with detected agents.
     let agents = detect_agents();
+    // The --model flag is stored in AppState directly (Claude picks its own model;
+    // this is only used for display purposes in the status bar).
+    let model = cli.model.unwrap_or_else(|| cfg.default_agent.clone());
     let mut state = AppState {
-        model: cfg.model.clone(),
+        model,
         screen: AppScreen::Dashboard(DashboardState {
             available_agents: agents,
             ..DashboardState::default()
