@@ -154,7 +154,7 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
         }
 
         // ── Claude session log drain (direct sidebar source-of-truth) ───────
-        sync_claude_log(state);
+        sync_all_panes(state);
 
         // ── Input / message wait ──────────────────────────────────────────────
         let msg = tokio::select! {
@@ -349,15 +349,22 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                     // ── Esc — context-sensitive ───────────────────────────────
                     if key.code == KeyCode::Esc {
                         match current_focus {
-                            // Esc from Input = return to dashboard, drop PTY.
+                            // Esc from Input = close active pane; return to dashboard if no panes left.
                             CockpitFocus::Input => {
+                                // Close the active pane (drops PTY).
+                                state.panes.close_active();
+
+                                // Also clear legacy fields.
                                 turn_handle = None;
                                 state.real_pty = None;
                                 state.claude_log = None;
-                                state.screen = AppScreen::Dashboard(DashboardState {
-                                    available_agents: detect_agents(),
-                                    ..DashboardState::default()
-                                });
+
+                                if state.panes.is_empty() {
+                                    state.screen = AppScreen::Dashboard(DashboardState {
+                                        available_agents: detect_agents(),
+                                        ..DashboardState::default()
+                                    });
+                                }
                                 continue;
                             }
                             // Esc from anything else = return focus to Input.
@@ -372,33 +379,43 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
 
                     // ── Terminal focus — viewport scroll first, PTY keys second ──
                     if current_focus == CockpitFocus::Terminal {
-                        if let Some(session) = state.session_mut() {
-                            match key.code {
-                                KeyCode::PageUp => {
-                                    session.scroll_terminal_up(10);
-                                    continue;
+                        {
+                            let has_pane = !state.panes.is_empty();
+                            let handled = if has_pane {
+                                if let Some(pane) = state.panes.active_pane_mut() {
+                                    match key.code {
+                                        KeyCode::PageUp   => { pane.session.scroll_terminal_up(10);    true }
+                                        KeyCode::PageDown => { pane.session.scroll_terminal_down(10);  true }
+                                        KeyCode::Home     => { pane.session.scroll_terminal_up(10_000); true }
+                                        KeyCode::End      => { pane.session.reset_terminal_scroll();   true }
+                                        _ => false,
+                                    }
+                                } else { false }
+                            } else if let Some(session) = state.session_mut() {
+                                match key.code {
+                                    KeyCode::PageUp   => { session.scroll_terminal_up(10);    true }
+                                    KeyCode::PageDown => { session.scroll_terminal_down(10);  true }
+                                    KeyCode::Home     => { session.scroll_terminal_up(10_000); true }
+                                    KeyCode::End      => { session.reset_terminal_scroll();   true }
+                                    _ => false,
                                 }
-                                KeyCode::PageDown => {
-                                    session.scroll_terminal_down(10);
-                                    continue;
-                                }
-                                KeyCode::Home => {
-                                    session.scroll_terminal_up(10_000);
-                                    continue;
-                                }
-                                KeyCode::End => {
-                                    session.reset_terminal_scroll();
-                                    continue;
-                                }
-                                _ => {}
-                            }
+                            } else { false };
+                            if handled { continue; }
                         }
 
                         let raw_bytes = key_event_to_bytes(*key);
                         if !raw_bytes.is_empty() {
-                            if let Some(ref mut pty) = state.real_pty {
+                            // Write to active pane's PTY.
+                            if let Some(pane) = state.panes.active_pane_mut() {
+                                if let Some(ref mut pty) = pane.pty {
+                                    if let Err(e) = pty.write_input(&raw_bytes) {
+                                        tracing::warn!("PTY write_input (terminal focus): {e}");
+                                    }
+                                }
+                            } else if let Some(ref mut pty) = state.real_pty {
+                                // Legacy fallback.
                                 if let Err(e) = pty.write_input(&raw_bytes) {
-                                    tracing::warn!("PTY write_input (terminal focus): {e}");
+                                    tracing::warn!("PTY write_input (terminal focus, legacy): {e}");
                                 }
                             }
                         }
@@ -415,11 +432,28 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                                     session.input_cursor = 0;
                                     session.reset_terminal_scroll();
                                     if !text.is_empty() {
-                                        if let Some(ref mut pty) = state.real_pty {
-                                            if let Err(e) = pty.write_input(text.as_bytes()) {
-                                                tracing::warn!("PTY write_input (text): {e}");
-                                            } else if let Err(e) = pty.write_input(b"\r") {
-                                                tracing::warn!("PTY write_input (enter): {e}");
+                                        // Write to active pane's PTY.
+                                        let written = if let Some(pane) = state.panes.active_pane_mut() {
+                                            if let Some(ref mut pty) = pane.pty {
+                                                if let Err(e) = pty.write_input(text.as_bytes()) {
+                                                    tracing::warn!("PTY write_input (text): {e}");
+                                                    false
+                                                } else if let Err(e) = pty.write_input(b"\r") {
+                                                    tracing::warn!("PTY write_input (enter): {e}");
+                                                    false
+                                                } else {
+                                                    true
+                                                }
+                                            } else { false }
+                                        } else { false };
+                                        // Legacy fallback.
+                                        if !written {
+                                            if let Some(ref mut pty) = state.real_pty {
+                                                if let Err(e) = pty.write_input(text.as_bytes()) {
+                                                    tracing::warn!("PTY write_input (text, legacy): {e}");
+                                                } else if let Err(e) = pty.write_input(b"\r") {
+                                                    tracing::warn!("PTY write_input (enter, legacy): {e}");
+                                                }
                                             }
                                         }
                                     }
@@ -545,7 +579,12 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                         .unwrap_or(CockpitFocus::Input);
 
                     if current_focus == CockpitFocus::Terminal {
-                        if let Some(session) = state.session_mut() {
+                        let scroll_sess = if !state.panes.is_empty() {
+                            state.panes.active_pane_mut().map(|p| &mut p.session)
+                        } else {
+                            state.session_mut()
+                        };
+                        if let Some(session) = scroll_sess {
                             match mouse.kind {
                                 MouseEventKind::ScrollUp => {
                                     session.scroll_terminal_up(3);
@@ -574,130 +613,54 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
 
         // ── Resume a historical session (deferred from key handler) ───────
         if let Some(resume_id) = pending_session_resume.take() {
-            // Remember which rail item was selected so we can restore after enter_session.
             let prev_selected = state.session().map(|s| s.selected_session).unwrap_or(0);
-
-            // Tear down any existing PTY.
-            drop(state.real_pty.take());
-            turn_handle = None;
-            state.claude_log = None;
-
-            let agent_name = "claude";
-            if let Ok(binary) = which::which("claude") {
-                let (term_cols, term_rows) =
-                    crossterm::terminal::size().unwrap_or((120, 40));
-                let pty_cols = (term_cols as u32 * 3 / 4).saturating_sub(2) as u16;
-                let pty_rows = term_rows.saturating_sub(10);
-
-                // --resume <id> reopens an existing session by ID.
-                // --session-id is for creating new sessions with a specific UUID.
-                let session_args = ["--resume", resume_id.as_str()];
-                let launch_cwd = std::env::current_dir().ok();
-
-                match crate::pty::RealPty::spawn_in(
-                    binary.to_str().unwrap_or("claude"),
-                    &session_args,
-                    pty_cols.max(20),
-                    pty_rows.max(5),
-                    launch_cwd.as_deref(),
-                ) {
-                    Ok(real_pty) => {
-                        let mut _dirty_rx = real_pty.dirty_tx.subscribe();
-                        state.real_pty = Some(real_pty);
-
-                        state.enter_session(&resume_id, agent_name);
-
-                        // Restore rail selection so it stays on the session we just opened.
-                        if let Some(ref mut session) = state.session_mut() {
-                            session.selected_session = prev_selected;
-                        }
-
-                        if let Some(home) = dirs::home_dir() {
-                            let cwd = launch_cwd.as_deref().unwrap_or(&home);
-                            let path = crate::claude_log::session_log_path(&home, cwd, &resume_id);
-                            tracing::info!("Resuming Claude session log: {}", path.display());
-                            state.claude_log = Some(crate::claude_log::ClaudeSessionLogTracker::new(path));
-                        }
-
-                        if let Some(ref mut session) = state.session_mut() {
-                            session.status = crate::app::state::AgentStatus::Idle;
-                            session.claude_session_id = Some(resume_id.clone());
-                        }
-
-                        state.persisted_event_count = 0;
-                        if let Some(ref store) = state.store.clone() {
-                            refresh_rail(state, store);
-                        }
-
-                        tracing::info!("Resumed Claude session: {}", resume_id);
+            match spawn_claude_pane(state, Some(&resume_id)) {
+                Ok(_) => {
+                    // Restore rail selection.
+                    if let Some(ref mut session) = state.session_mut() {
+                        session.selected_session = prev_selected;
                     }
-                    Err(e) => {
-                        tracing::error!("RealPty resume failed: {e}");
-                        state.set_error(format!("Failed to resume session: {}", e), 100);
-                    }
+                    tracing::info!("Resumed session in pane: {}", resume_id);
                 }
-            } else {
-                state.set_error("Claude binary not found", 100);
+                Err(e) => state.set_error(e, 100),
             }
         }
 
         // ── Spawn a new Claude session (deferred from Agents Enter) ─────────
         if pending_new_session {
-            // Tear down any existing PTY.
-            drop(state.real_pty.take());
-            turn_handle = None;
-            state.claude_log = None;
+            match spawn_claude_pane(state, None) {
+                Ok(id) => tracing::info!("New pane spawned: {}", id),
+                Err(e) => state.set_error(e, 100),
+            }
+        }
 
-            let agent_name = "claude";
-            if let Ok(binary) = which::which("claude") {
-                let (term_cols, term_rows) =
-                    crossterm::terminal::size().unwrap_or((120, 40));
-                let pty_cols = (term_cols as u32 * 3 / 4).saturating_sub(2) as u16;
-                let pty_rows = term_rows.saturating_sub(10);
-
-                let session_id = uuid::Uuid::new_v4().to_string();
-                let session_args = ["--session-id", session_id.as_str()];
-                let launch_cwd = std::env::current_dir().ok();
-
-                match crate::pty::RealPty::spawn_in(
-                    binary.to_str().unwrap_or("claude"),
-                    &session_args,
-                    pty_cols.max(20),
-                    pty_rows.max(5),
-                    launch_cwd.as_deref(),
-                ) {
-                    Ok(real_pty) => {
-                        let mut _dirty_rx = real_pty.dirty_tx.subscribe();
-                        state.real_pty = Some(real_pty);
-
-                        state.enter_session(&session_id, agent_name);
-
-                        if let Some(home) = dirs::home_dir() {
-                            let cwd = launch_cwd.as_deref().unwrap_or(&home);
-                            let path = crate::claude_log::session_log_path(&home, cwd, &session_id);
-                            tracing::info!("New Claude session log: {}", path.display());
-                            state.claude_log = Some(crate::claude_log::ClaudeSessionLogTracker::new(path));
+        // ── Detect dead panes (Claude exited) and close them ──────────────
+        {
+            let mut dead_indices: Vec<usize> = Vec::new();
+            for i in 0..state.panes.len() {
+                if let Some(pane) = state.panes.get(i) {
+                    if let Some(ref pty) = pane.pty {
+                        // Check if the PTY child has exited by trying to read.
+                        // A dead PTY will have its reader return immediately with empty data
+                        // or error. We use the `is_alive` check on the child process.
+                        if pty.child_exited() {
+                            dead_indices.push(i);
                         }
-
-                        if let Some(ref mut session) = state.session_mut() {
-                            session.status = crate::app::state::AgentStatus::Idle;
-                            session.claude_session_id = Some(session_id.clone());
-                        }
-
-                        state.persisted_event_count = 0;
-                        if let Some(ref store) = state.store.clone() {
-                            refresh_rail(state, store);
-                        }
-
-                        tracing::info!("Spawned new Claude session: {}", session_id);
-                    }
-                    Err(e) => {
-                        tracing::error!("RealPty spawn failed: {e}");
-                        state.set_error(format!("Failed to spawn Claude: {}", e), 100);
                     }
                 }
-            } else {
-                state.set_error("Claude binary not found", 100);
+            }
+            // Close dead panes (iterate in reverse to preserve indices).
+            for i in dead_indices.into_iter().rev() {
+                tracing::info!("Pane {} PTY exited, closing", i);
+                state.panes.close(i);
+            }
+            if state.panes.is_empty() && matches!(state.screen, AppScreen::Session(_)) {
+                state.real_pty = None;
+                state.claude_log = None;
+                state.screen = AppScreen::Dashboard(DashboardState {
+                    available_agents: detect_agents(),
+                    ..DashboardState::default()
+                });
             }
         }
 
@@ -811,6 +774,200 @@ fn sync_claude_log(state: &mut AppState) {
     let elapsed = now - state.last_rail_refresh;
     if title_changed || elapsed >= 30 || state.last_rail_refresh == 0 {
         refresh_rail(state, &store);
+    }
+}
+
+/// Spawn a Claude PTY session into the pane manager.
+///
+/// If `resume_id` is `Some`, resumes an existing session via `--resume <id>`.
+/// Otherwise creates a new session with `--session-id <uuid>`.
+///
+/// Returns the session id on success.
+fn spawn_claude_pane(
+    state: &mut AppState,
+    resume_id: Option<&str>,
+) -> Result<String, String> {
+    let binary = which::which("claude").map_err(|_| "Claude binary not found".to_string())?;
+
+    if !state.panes.can_open() {
+        return Err("Maximum panes already open".to_string());
+    }
+
+    let (term_cols, term_rows) = crossterm::terminal::size().unwrap_or((120, 40));
+    // Split center among panes.
+    let n_panes = state.panes.len() + 1; // after we open one
+    let center_cols = (term_cols as u32 * 3 / 4).saturating_sub(2);
+    let pty_cols = (center_cols / n_panes as u32).max(20) as u16;
+    let pty_rows = term_rows.saturating_sub(10);
+
+    let launch_cwd = std::env::current_dir().ok();
+
+    let (session_id, session_args_owned): (String, Vec<String>) = if let Some(rid) = resume_id {
+        (rid.to_string(), vec!["--resume".into(), rid.into()])
+    } else {
+        let id = uuid::Uuid::new_v4().to_string();
+        let args = vec!["--session-id".into(), id.clone()];
+        (id, args)
+    };
+
+    let session_args_refs: Vec<&str> = session_args_owned.iter().map(|s| s.as_str()).collect();
+
+    let real_pty = crate::pty::RealPty::spawn_in(
+        binary.to_str().unwrap_or("claude"),
+        &session_args_refs,
+        pty_cols.max(20),
+        pty_rows.max(5),
+        launch_cwd.as_deref(),
+    )
+    .map_err(|e| format!("PTY spawn failed: {e}"))?;
+
+    // Open pane in manager.
+    let pane = state
+        .panes
+        .open(&session_id, "claude")
+        .ok_or_else(|| "Failed to open pane".to_string())?;
+
+    let _dirty_rx = real_pty.dirty_tx.subscribe();
+    pane.pty = Some(real_pty);
+    pane.session.status = crate::app::state::AgentStatus::Idle;
+    pane.session.claude_session_id = Some(session_id.clone());
+
+    // Set up JSONL log tracker.
+    if let Some(home) = dirs::home_dir() {
+        let cwd = launch_cwd.as_deref().unwrap_or(&home);
+        let path = crate::claude_log::session_log_path(&home, cwd, &session_id);
+        tracing::info!("Claude session log: {}", path.display());
+        pane.log = Some(crate::claude_log::ClaudeSessionLogTracker::new(path));
+    }
+
+    // Mirror to legacy fields for compatibility during migration.
+    // TODO: remove once all reads go through panes.
+    let active_idx = state.panes.active_index();
+    if let Some(p) = state.panes.get(active_idx) {
+        // We can't easily move the PTY, so clone the log state and leave real_pty as the
+        // primary on the pane. For legacy code paths that read state.real_pty, we skip
+        // the mirror — they'll be migrated next.
+    }
+
+    // Ensure we're on the session screen.
+    if !matches!(state.screen, AppScreen::Session(_)) {
+        state.enter_session(&session_id, "claude");
+    }
+    if let Some(ref mut session) = state.session_mut() {
+        session.status = crate::app::state::AgentStatus::Idle;
+        session.claude_session_id = Some(session_id.clone());
+    }
+
+    // Persist to SQLite.
+    if let Some(ref store) = state.store.clone() {
+        let project_dir = launch_cwd
+            .as_deref()
+            .map(crate::claude_log::project_dir_name)
+            .unwrap_or_default();
+        let cwd_str = launch_cwd.as_deref().and_then(|p| p.to_str()).map(str::to_string);
+        let now = unix_now();
+        if let Err(e) = store.upsert_session(
+            &session_id,
+            &project_dir,
+            "claude",
+            None,
+            "",
+            cwd_str.as_deref(),
+            0, 0, 0,
+            now, now,
+        ) {
+            tracing::warn!("Failed to create session row: {e}");
+        }
+        refresh_rail(state, store);
+    }
+
+    tracing::info!("Opened Claude pane for session: {}", session_id);
+    Ok(session_id)
+}
+
+/// Sync all pane JSONL trackers and update sidebar metrics.
+fn sync_all_panes(state: &mut AppState) {
+    let store = state.store.clone();
+    let now = unix_now();
+    let mut any_title_changed = false;
+
+    for i in 0..state.panes.len() {
+        let pane = match state.panes.get_mut(i) {
+            Some(p) => p,
+            None => continue,
+        };
+        let tracker = match pane.log.as_mut() {
+            Some(t) => t,
+            None => continue,
+        };
+        let Ok(changed) = tracker.poll() else { continue; };
+        if !changed {
+            continue;
+        }
+
+        let snapshot = tracker.snapshot();
+
+        // Update live sidebar metrics on the pane's session.
+        pane.session.metrics.input_tokens = snapshot.usage.input_tokens;
+        pane.session.metrics.output_tokens = snapshot.usage.output_tokens;
+        pane.session.tokens_used = snapshot.usage.total_tokens();
+
+        // Persist to SQLite.
+        let session_id = match &pane.session.claude_session_id {
+            Some(id) if !id.is_empty() => id.clone(),
+            _ => continue,
+        };
+
+        if let Some(ref store) = store {
+            let project_dir = if let Some(home) = dirs::home_dir() {
+                let cwd = std::env::current_dir().ok().unwrap_or_else(|| home.clone());
+                crate::claude_log::project_dir_name(&cwd)
+            } else {
+                String::new()
+            };
+
+            let title = if !snapshot.title.is_empty() {
+                snapshot.title.clone()
+            } else {
+                state.rail_sessions.iter()
+                    .find(|s| s.id == session_id)
+                    .map(|s| s.title.clone())
+                    .unwrap_or_default()
+            };
+
+            let old_title = state.rail_sessions.iter()
+                .find(|s| s.id == session_id)
+                .map(|s| s.title.clone())
+                .unwrap_or_default();
+
+            if title != old_title {
+                any_title_changed = true;
+            }
+
+            if let Err(e) = store.upsert_session(
+                &session_id,
+                &project_dir,
+                "claude",
+                snapshot.model.as_deref(),
+                &title,
+                std::env::current_dir().ok().as_deref().and_then(|p| p.to_str()),
+                snapshot.usage.input_tokens,
+                snapshot.usage.output_tokens,
+                snapshot.turns,
+                now, now,
+            ) {
+                tracing::warn!("sync pane {}: upsert_session failed: {e}", i);
+            }
+        }
+    }
+
+    // Also sync legacy single tracker during migration.
+    sync_claude_log(state);
+
+    if any_title_changed {
+        if let Some(ref store) = state.store.clone() {
+            refresh_rail(state, store);
+        }
     }
 }
 

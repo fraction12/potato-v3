@@ -373,7 +373,12 @@ pub struct AppState {
     /// Tool output panel — owns the collapsible tool execution timeline.
     pub tool_output_panel: ToolOutputPanel,
 
-    // ── Real PTY (cockpit mode) ───────────────────────────────────────────────
+    // ── Multi-pane session management (cockpit mode) ──────────────────────────
+    /// Manages up to 2 simultaneous Claude session panes, each with its own
+    /// PTY and log tracker.
+    pub panes: crate::app::pane::PaneManager,
+
+    // ── Legacy single-PTY fields (kept temporarily for migration) ────────────
     /// Live PTY session wrapping the Claude Code process.
     ///
     /// `Some` while an interactive session is active; `None` on the dashboard
@@ -417,6 +422,7 @@ impl Default for AppState {
             focus_ring: FocusRing::new(vec![PanelId::Chat, PanelId::ToolOutput]),
             chat_panel: ChatPanel::new(Vec::new()),
             tool_output_panel: ToolOutputPanel::new(),
+            panes: crate::app::pane::PaneManager::new(),
             real_pty: None,
             claude_log: None,
             store: None,

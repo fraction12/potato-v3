@@ -2,6 +2,7 @@
 
 pub mod action;
 pub mod message;
+pub mod pane;
 pub mod session_reducer;
 pub mod state;
 pub mod update;

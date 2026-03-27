@@ -77,7 +77,7 @@ pub fn render_session(frame: &mut Frame, area: Rect, state: &mut AppState) {
     ])
     .areas(content_area);
 
-    // ── Center column: [pty_output (min)] | [input_bar 3 lines] ──────────────
+    // ── Center column: [pty_panes (min)] | [input_bar 3 lines] ───────────────
     let [pty_area, input_area] = Layout::vertical([
         Constraint::Min(0),
         Constraint::Length(3),
@@ -90,8 +90,25 @@ pub fn render_session(frame: &mut Frame, area: Rect, state: &mut AppState) {
         .map(|s| s.cockpit_focus)
         .unwrap_or(CockpitFocus::Input);
 
-    // Render PTY viewport (needs &mut state for resize).
-    render_pty_viewport(frame, pty_area, state, focus);
+    // ── Render PTY panes (side-by-side if multiple) ──────────────────────────
+    let n_panes = state.panes.len();
+    let active_pane_idx = state.panes.active_index();
+
+    if n_panes == 0 {
+        // Fall back to legacy single PTY or placeholder.
+        render_pty_viewport_legacy(frame, pty_area, state, focus);
+    } else if n_panes == 1 {
+        render_pane_viewport(frame, pty_area, state, 0, active_pane_idx == 0, focus);
+    } else {
+        // Split the PTY area horizontally for each pane.
+        let constraints: Vec<Constraint> = (0..n_panes)
+            .map(|_| Constraint::Ratio(1, n_panes as u32))
+            .collect();
+        let pane_areas = Layout::horizontal(constraints).split(pty_area);
+        for i in 0..n_panes {
+            render_pane_viewport(frame, pane_areas[i], state, i, i == active_pane_idx, focus);
+        }
+    }
 
     // Now borrow session immutably for the rest.
     let AppScreen::Session(ref session) = state.screen else { return };
@@ -307,7 +324,111 @@ fn render_sessions_section(frame: &mut Frame, area: Rect, state: &AppState, focu
 
 // ── Center — PTY viewport ─────────────────────────────────────────────────────
 
-fn render_pty_viewport(frame: &mut Frame, area: Rect, state: &mut AppState, focus: CockpitFocus) {
+/// Render a single pane's PTY viewport from the PaneManager.
+fn render_pane_viewport(
+    frame: &mut Frame,
+    area: Rect,
+    state: &mut AppState,
+    pane_idx: usize,
+    is_active: bool,
+    focus: CockpitFocus,
+) {
+    let focused = focus == CockpitFocus::Terminal && is_active;
+    let border_style = if focused {
+        Style::default().fg(AMBER)
+    } else if is_active {
+        Style::default().fg(BRASS)
+    } else {
+        Style::default().fg(STONE)
+    };
+    let title_style = if focused {
+        Style::default().fg(AMBER).add_modifier(Modifier::BOLD)
+    } else if is_active {
+        Style::default().fg(TAN).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(STONE)
+    };
+
+    let inner_cols = area.width.saturating_sub(2);
+    let inner_rows = area.height.saturating_sub(2);
+
+    let pane = state.panes.get(pane_idx);
+
+    if let Some(pane) = pane {
+        let desired_scroll = pane.session.terminal_scroll;
+
+        if let Some(ref pty) = pane.pty {
+            let _ = pty.resize(inner_cols.max(1), inner_rows.max(1));
+            let actual_scroll = pty.set_scrollback(desired_scroll);
+
+            let pane_label = format!(" Claude {} ", pane_idx + 1);
+            let title = if actual_scroll > 0 {
+                Span::styled(format!("{} ↑{} ", pane_label.trim(), actual_scroll), title_style)
+            } else {
+                Span::styled(pane_label, title_style)
+            };
+
+            if let Ok(parser) = pty.screen.try_lock() {
+                use tui_term::widget::PseudoTerminal;
+                let widget = PseudoTerminal::new(parser.screen()).block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_style(border_style)
+                        .title(title.clone()),
+                );
+                frame.render_widget(widget, area);
+            } else {
+                let busy = Paragraph::new("…")
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .border_style(border_style)
+                            .title(title),
+                    )
+                    .style(Style::default().fg(STONE));
+                frame.render_widget(busy, area);
+            }
+
+            // Sync scroll back to pane state.
+            if let Some(pane_mut) = state.panes.get_mut(pane_idx) {
+                pane_mut.session.terminal_scroll = actual_scroll;
+            }
+        } else {
+            // Pane exists but no PTY — starting up.
+            let placeholder = Paragraph::new("  Starting…")
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_style(border_style)
+                        .title(Span::styled(format!(" Claude {} ", pane_idx + 1), title_style)),
+                )
+                .style(Style::default().fg(STONE));
+            frame.render_widget(placeholder, area);
+        }
+    }
+
+    // Focus indicator.
+    if focused && area.height > 2 && area.width > 14 {
+        let hint = Span::styled(
+            " [TERM] ",
+            Style::default()
+                .fg(BG)
+                .bg(AMBER)
+                .add_modifier(Modifier::BOLD),
+        );
+        let hint_line = Line::from(vec![hint]);
+        let hint_area = Rect {
+            x: area.x + area.width.saturating_sub(10),
+            y: area.y,
+            width: 9,
+            height: 1,
+        };
+        frame.render_widget(Paragraph::new(hint_line), hint_area);
+    }
+}
+
+/// Legacy single-PTY viewport (used during migration when panes are empty).
+fn render_pty_viewport_legacy(frame: &mut Frame, area: Rect, state: &mut AppState, focus: CockpitFocus) {
     let focused = focus == CockpitFocus::Terminal;
     let border_style = if focused {
         Style::default().fg(AMBER)
@@ -506,9 +627,12 @@ fn render_right_rail(frame: &mut Frame, area: Rect, state: &AppState, focus: Coc
     ])
     .areas(area);
 
+    // Read metrics from the active pane's log tracker (or fall back to legacy).
     let sidebar = state
-        .claude_log
-        .as_ref()
+        .panes
+        .active_pane()
+        .and_then(|p| p.log.as_ref())
+        .or(state.claude_log.as_ref())
         .map(|t| t.snapshot())
         .unwrap_or_default();
 

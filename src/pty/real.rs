@@ -54,6 +54,9 @@ pub struct RealPty {
     /// processed and the screen needs re-rendering.
     pub dirty_tx: broadcast::Sender<()>,
 
+    /// Set to `true` by the reader thread when the child process exits (EOF).
+    exited: Arc<std::sync::atomic::AtomicBool>,
+
     // NOTE: We keep `_child` alive so the process is not reaped on drop.
     // There is no field for the PtyPair because `openpty` consumes it and
     // we extract the master/slave handles before storing them.
@@ -133,12 +136,15 @@ impl RealPty {
         // Dirty-notify channel: capacity 16 is enough — the UI coalesces ticks.
         let (dirty_tx, _) = broadcast::channel::<()>(16);
 
+        let exited = Arc::new(std::sync::atomic::AtomicBool::new(false));
+
         // ── Background reader thread ──────────────────────────────────────────
         // Must be a real OS thread (not tokio task) because the portable-pty
         // reader uses blocking `std::io::Read`.
         {
             let screen_clone = screen.clone();
             let dirty_clone = dirty_tx.clone();
+            let exited_clone = exited.clone();
 
             std::thread::Builder::new()
                 .name("pty-reader".to_string())
@@ -146,7 +152,12 @@ impl RealPty {
                     let mut buf = [0u8; 4096];
                     loop {
                         match reader.read(&mut buf) {
-                            Ok(0) | Err(_) => break, // EOF or error — child exited
+                            Ok(0) | Err(_) => {
+                                // EOF or error — child exited.
+                                exited_clone.store(true, std::sync::atomic::Ordering::Relaxed);
+                                let _ = dirty_clone.send(());
+                                break;
+                            }
                             Ok(n) => {
                                 // Feed the raw bytes into the VT100 parser.
                                 if let Ok(mut p) = screen_clone.lock() {
@@ -166,6 +177,7 @@ impl RealPty {
             screen,
             writer,
             dirty_tx,
+            exited,
             _child: child,
             master: pair.master,
         })
@@ -201,6 +213,11 @@ impl RealPty {
         } else {
             0
         }
+    }
+
+    /// Returns `true` if the PTY child process has exited.
+    pub fn child_exited(&self) -> bool {
+        self.exited.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Write raw terminal bytes to the child's stdin.
