@@ -497,10 +497,10 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                                 KeyCode::Enter => {
                                     // Load the selected historical session.
                                     if let Some(info) = state.rail_sessions.get(session.selected_session) {
-                                        let resume_id = info.id.clone();
-                                        pending_session_resume = Some(resume_id);
+                                        pending_session_resume = Some(info.id.clone());
                                     }
-                                    continue;
+                                    // Fall through (no continue) so the deferred
+                                    // resume handler runs at the end of this iteration.
                                 }
                                 _ => {}
                             }
@@ -547,11 +547,13 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                 }
             }
 
-            // Standard update/action dispatch.
-            let action = update(state, m);
-            use app::action::Action;
-            if matches!(action, Action::Quit) {
-                break;
+            // Standard update/action dispatch (skip if we're about to resume).
+            if pending_session_resume.is_none() {
+                let action = update(state, m);
+                use app::action::Action;
+                if matches!(action, Action::Quit) {
+                    break;
+                }
             }
         }
 
