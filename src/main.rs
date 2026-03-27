@@ -769,13 +769,27 @@ fn sync_claude_log(state: &mut AppState) {
 
     let now = unix_now();
 
-    // Upsert session row with latest totals.
-    let title = state
+    // Use the title from the JSONL tracker (first user prompt).
+    // Fall back to existing rail title if the tracker hasn't seen one yet.
+    let title = if !snapshot.title.is_empty() {
+        snapshot.title.clone()
+    } else {
+        state
+            .rail_sessions
+            .iter()
+            .find(|s| s.id == session_id)
+            .map(|s| s.title.clone())
+            .unwrap_or_default()
+    };
+
+    // Track whether title changed so we can force a rail refresh.
+    let old_title = state
         .rail_sessions
         .iter()
         .find(|s| s.id == session_id)
         .map(|s| s.title.clone())
         .unwrap_or_default();
+    let title_changed = title != old_title;
 
     if let Err(e) = store.upsert_session(
         &session_id,
@@ -793,9 +807,9 @@ fn sync_claude_log(state: &mut AppState) {
         tracing::warn!("sync_claude_log: upsert_session failed: {e}");
     }
 
-    // Refresh the rail every 30 s or on any change.
+    // Refresh the rail on title change, or every 30 s, or on first run.
     let elapsed = now - state.last_rail_refresh;
-    if elapsed >= 30 || state.last_rail_refresh == 0 {
+    if title_changed || elapsed >= 30 || state.last_rail_refresh == 0 {
         refresh_rail(state, &store);
     }
 }

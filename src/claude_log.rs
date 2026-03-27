@@ -45,6 +45,8 @@ pub struct ClaudeSidebarData {
     pub last_stop_reason: Option<String>,
     pub usage: ClaudeUsageTotals,
     pub tools: Vec<ClaudeToolEntry>,
+    /// First user prompt text (used as session title in the rail).
+    pub title: String,
 }
 
 #[derive(Debug, Clone)]
@@ -59,6 +61,7 @@ pub struct ClaudeSessionLogTracker {
     offset: u64,
     carry: Vec<u8>,
     next_order: u64,
+    title: String,
     model: Option<String>,
     turns: u64,
     last_stop_reason: Option<String>,
@@ -127,6 +130,7 @@ impl ClaudeSessionLogTracker {
             last_stop_reason: self.last_stop_reason.clone(),
             usage: self.usage.clone(),
             tools: ordered.into_values().collect(),
+            title: self.title.clone(),
         }
     }
 
@@ -183,6 +187,16 @@ impl ClaudeSessionLogTracker {
                 }
             }
         } else if role == "user" {
+            // Extract first user prompt as session title.
+            if self.title.is_empty() {
+                if let Some(content) = message.get("content") {
+                    let text = extract_user_text(content);
+                    if !text.is_empty() {
+                        self.title = truncate_str(&text, 80);
+                        changed = true;
+                    }
+                }
+            }
             if let Some(content) = message.get("content").and_then(Value::as_array) {
                 for item in content {
                     if item.get("type").and_then(Value::as_str) == Some("tool_result") {
@@ -318,6 +332,36 @@ pub fn session_log_path(home: &Path, cwd: &Path, session_id: &str) -> PathBuf {
     claude_projects_dir(home)
         .join(project_dir_name(cwd))
         .join(format!("{session_id}.jsonl"))
+}
+
+/// Extract plain text from a Claude user message `content` field.
+/// Content may be a string or an array of objects with `type: "text"`.
+fn extract_user_text(content: &Value) -> String {
+    match content {
+        Value::String(s) => s.clone(),
+        Value::Array(arr) => {
+            for item in arr {
+                if item.get("type").and_then(Value::as_str) == Some("text") {
+                    if let Some(text) = item.get("text").and_then(Value::as_str) {
+                        return text.to_string();
+                    }
+                }
+                // Also handle tool_result items — skip those for title extraction.
+            }
+            String::new()
+        }
+        _ => String::new(),
+    }
+}
+
+/// Truncate a string to at most `max` characters.
+fn truncate_str(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        let truncated: String = s.chars().take(max.saturating_sub(1)).collect();
+        format!("{}…", truncated)
+    }
 }
 
 fn compact_json(value: Option<&Value>) -> String {
