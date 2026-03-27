@@ -224,3 +224,57 @@ fn unix_now() -> i64 {
         .unwrap_or_default()
         .as_secs() as i64
 }
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fresh_store() -> SessionStore {
+        SessionStore::in_memory().expect("in-memory store")
+    }
+
+    #[test]
+    fn test_create_and_list_sessions() {
+        let store = fresh_store();
+        assert!(store.list_sessions().expect("list").is_empty());
+
+        let id1 = store.create_session("Session One").expect("create 1");
+        let id2 = store.create_session("Session Two").expect("create 2");
+
+        let sessions = store.list_sessions().expect("list");
+        assert_eq!(sessions.len(), 2);
+
+        // IDs should be present.
+        let ids: Vec<&str> = sessions.iter().map(|s| s.id.as_str()).collect();
+        assert!(ids.contains(&id1.as_str()));
+        assert!(ids.contains(&id2.as_str()));
+    }
+
+    #[test]
+    fn test_save_and_load_messages() {
+        let store = fresh_store();
+        let session_id = store.create_session("Test Session").expect("create");
+
+        store.save_message(&session_id, "user", "Hello!", Some(5)).expect("save user");
+        store.save_message(&session_id, "assistant", "Hi there.", Some(8)).expect("save assistant");
+
+        let messages = store.load_messages(&session_id).expect("load");
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].role, "user");
+        assert_eq!(messages[0].content, "Hello!");
+        assert_eq!(messages[0].tokens, Some(5));
+        assert_eq!(messages[1].role, "assistant");
+    }
+
+    #[test]
+    fn test_delete_session() {
+        let store = fresh_store();
+        let id = store.create_session("To Delete").expect("create");
+        assert_eq!(store.list_sessions().expect("list").len(), 1);
+
+        store.delete_session(&id).expect("delete");
+        assert!(store.list_sessions().expect("list").is_empty());
+    }
+}

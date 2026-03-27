@@ -79,3 +79,60 @@ pub async fn execute_tool_safe(
     let result = execute_tool(tool, args, timeout).await;
     result.output_or_error().to_string()
 }
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tools::Tool;
+    use anyhow::Result;
+    use async_trait::async_trait;
+    use serde_json::{Value, json};
+    use std::time::Duration;
+
+    /// A tool that echoes the "msg" argument.
+    struct EchoTool;
+
+    #[async_trait]
+    impl Tool for EchoTool {
+        fn name(&self) -> &str { "echo" }
+        fn description(&self) -> &str { "echoes msg" }
+        fn parameters_schema(&self) -> Value { json!({}) }
+        async fn execute(&self, args: Value) -> Result<String> {
+            Ok(args["msg"].as_str().unwrap_or("").to_string())
+        }
+    }
+
+    /// A tool that sleeps for 2 seconds (designed to be timed out).
+    struct SleepTool;
+
+    #[async_trait]
+    impl Tool for SleepTool {
+        fn name(&self) -> &str { "sleep_tool" }
+        fn description(&self) -> &str { "sleeps" }
+        fn parameters_schema(&self) -> Value { json!({}) }
+        async fn execute(&self, _args: Value) -> Result<String> {
+            tokio::time::sleep(Duration::from_secs(10)).await;
+            Ok("done".to_string())
+        }
+    }
+
+    #[tokio::test]
+    async fn test_execute_returns_result() {
+        let tool = Arc::new(EchoTool);
+        let result = execute_tool(tool, json!({"msg": "hello"}), Duration::from_secs(5)).await;
+        assert!(result.is_ok());
+        assert_eq!(result.output_or_error(), "hello");
+        assert_eq!(result.tool_name, "echo");
+    }
+
+    #[tokio::test]
+    async fn test_execute_timeout() {
+        let tool = Arc::new(SleepTool);
+        let result = execute_tool(tool, json!({}), Duration::from_millis(50)).await;
+        assert!(!result.is_ok());
+        let err = result.output_or_error();
+        assert!(err.contains("timeout") || err.contains("timed out"), "expected timeout error, got: {}", err);
+    }
+}

@@ -70,3 +70,52 @@ impl Tool for WriteFileTool {
         true
     }
 }
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::path::PathBuf;
+
+    fn tmp_path(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("potato_write_test_{}", name))
+    }
+
+    #[test]
+    fn test_write_requires_approval() {
+        let tool = WriteFileTool;
+        assert!(tool.requires_approval());
+    }
+
+    #[tokio::test]
+    async fn test_write_creates_file() {
+        let path = tmp_path("creates_file.txt");
+        // Ensure it doesn't exist yet.
+        let _ = tokio::fs::remove_file(&path).await;
+        let tool = WriteFileTool;
+        let result = tool.execute(json!({
+            "path": path.to_str().unwrap(),
+            "content": "hello, potato!"
+        })).await.expect("write should succeed");
+        assert!(result.contains("bytes"));
+        let content = tokio::fs::read_to_string(&path).await.expect("read back");
+        assert_eq!(content, "hello, potato!");
+    }
+
+    #[tokio::test]
+    async fn test_write_creates_parent_dirs() {
+        let base = tmp_path("nested_dir");
+        let path = base.join("sub").join("deep").join("file.txt");
+        // Ensure clean state.
+        let _ = tokio::fs::remove_dir_all(&base).await;
+        let tool = WriteFileTool;
+        let result = tool.execute(json!({
+            "path": path.to_str().unwrap(),
+            "content": "nested content"
+        })).await.expect("write nested should succeed");
+        assert!(result.contains("bytes"));
+        assert!(path.exists());
+    }
+}

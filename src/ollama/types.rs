@@ -247,3 +247,39 @@ pub(crate) struct OllamaTagsResponse {
 pub(crate) struct OllamaModelEntry {
     pub name: String,
 }
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_chat_message_user_constructor() {
+        let msg = ChatMessage::user("Hello, world!");
+        assert_eq!(msg.role, "user");
+        assert_eq!(msg.content, "Hello, world!");
+        assert!(msg.tool_calls.is_none());
+    }
+
+    #[test]
+    fn test_stream_chunk_deserialization() {
+        let json_str = r#"{"content":"partial text","tool_calls":[],"done":false}"#;
+        let chunk: StreamChunk = serde_json::from_str(json_str).expect("deserialize chunk");
+        assert_eq!(chunk.content, "partial text");
+        assert!(!chunk.done);
+        assert!(chunk.tool_calls.is_empty());
+    }
+
+    #[test]
+    fn test_function_args_string_format() {
+        // OpenAI sends arguments as a JSON-encoded string.
+        let json_str = r#"{
+            "name": "my_tool",
+            "arguments": "{\"key\": \"value\"}"
+        }"#;
+        let fc: FunctionCall = serde_json::from_str(json_str).expect("deserialize FunctionCall");
+        assert_eq!(fc.name, "my_tool");
+        assert_eq!(fc.arguments["key"].as_str(), Some("value"));
+    }
+}

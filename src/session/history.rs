@@ -96,3 +96,42 @@ impl<'a> MessageHistory<'a> {
         self.total_tokens = 0;
     }
 }
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::session::store::SessionStore;
+
+    fn setup() -> (SessionStore, String) {
+        let store = SessionStore::in_memory().expect("in-memory store");
+        let session_id = store.create_session("test session").expect("create");
+        (store, session_id)
+    }
+
+    #[test]
+    fn test_push_and_messages() {
+        let (store, session_id) = setup();
+        let mut history = MessageHistory::new(&session_id, &store);
+
+        history.push("user", "Hello!", None).expect("push user");
+        history.push("assistant", "Hi there.", None).expect("push assistant");
+
+        assert_eq!(history.len(), 2);
+        assert_eq!(history.messages()[0].role, "user");
+        assert_eq!(history.messages()[0].content, "Hello!");
+        assert_eq!(history.messages()[1].role, "assistant");
+    }
+
+    #[test]
+    fn test_total_tokens() {
+        let (store, session_id) = setup();
+        let mut history = MessageHistory::new(&session_id, &store);
+
+        history.push("user", "msg1", Some(10)).expect("push 1");
+        history.push("assistant", "msg2", Some(20)).expect("push 2");
+
+        assert_eq!(history.total_tokens(), 30);
+    }
+}

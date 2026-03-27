@@ -79,3 +79,45 @@ impl Tool for ReadFileTool {
         Ok(slice)
     }
 }
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::path::PathBuf;
+
+    fn tmp_path(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("potato_read_test_{}", name))
+    }
+
+    #[test]
+    fn test_read_file_name() {
+        let tool = ReadFileTool;
+        assert_eq!(tool.name(), "read_file");
+    }
+
+    #[tokio::test]
+    async fn test_read_nonexistent_returns_error() {
+        let tool = ReadFileTool;
+        let result = tool.execute(json!({"path": "/nonexistent/file_that_does_not_exist_potato.txt"})).await;
+        assert!(result.is_err(), "reading nonexistent file should error");
+    }
+
+    #[tokio::test]
+    async fn test_read_with_offset_limit() {
+        let path = tmp_path("offset_limit.txt");
+        std::fs::write(&path, "line1\nline2\nline3\nline4\nline5\n").expect("write");
+        let tool = ReadFileTool;
+        let result = tool.execute(json!({
+            "path": path.to_str().unwrap(),
+            "offset": 2,
+            "limit": 2
+        })).await.expect("read should succeed");
+        let lines: Vec<&str> = result.lines().collect();
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0], "line2");
+        assert_eq!(lines[1], "line3");
+    }
+}

@@ -109,3 +109,36 @@ impl Tool for ShellTool {
         true
     }
 }
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_shell_requires_approval() {
+        let tool = ShellTool;
+        assert!(tool.requires_approval());
+    }
+
+    #[test]
+    fn test_shell_name_and_description() {
+        let tool = ShellTool;
+        assert_eq!(tool.name(), "shell");
+        assert!(!tool.description().is_empty());
+    }
+
+    #[test]
+    fn test_shell_parameters_schema_has_command() {
+        let tool = ShellTool;
+        let schema = tool.parameters_schema();
+        let props = &schema["properties"];
+        assert!(props["command"].is_object(), "schema should have a 'command' property");
+        let required = &schema["required"];
+        assert!(
+            required.as_array().map(|a| a.iter().any(|v| v.as_str() == Some("command"))).unwrap_or(false),
+            "'command' should be in the required array"
+        );
+    }
+}

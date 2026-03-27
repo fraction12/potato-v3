@@ -49,3 +49,40 @@ impl Default for Config {
         }
     }
 }
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default_config_values() {
+        let cfg = Config::default();
+        assert_eq!(cfg.model, "llama3");
+        assert_eq!(cfg.ollama_url, "http://localhost:11434");
+        assert_eq!(cfg.db_path, "~/.potato/sessions.db");
+        assert!(cfg.require_approval);
+        assert_eq!(cfg.tool_timeout_secs, 30);
+        assert_eq!(cfg.theme, "earth");
+        assert_eq!(cfg.tick_rate_ms, 250);
+        assert_eq!(cfg.max_history, 0);
+        assert!(cfg.api_key.is_none());
+    }
+
+    #[test]
+    fn test_config_toml_deserialization() {
+        let toml_str = r#"
+            model = "gpt-4o"
+            ollama_url = "http://localhost:11434"
+            require_approval = false
+            tool_timeout_secs = 60
+        "#;
+        let cfg: Config = toml::from_str(toml_str).expect("parse toml");
+        assert_eq!(cfg.model, "gpt-4o");
+        assert!(!cfg.require_approval);
+        assert_eq!(cfg.tool_timeout_secs, 60);
+        // Fields not specified should use defaults.
+        assert_eq!(cfg.theme, "earth");
+    }
+}

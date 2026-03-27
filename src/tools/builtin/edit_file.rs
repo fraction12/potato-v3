@@ -79,3 +79,51 @@ impl Tool for EditFileTool {
         true
     }
 }
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::path::PathBuf;
+
+    fn tmp_path(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("potato_edit_test_{}", name))
+    }
+
+    #[test]
+    fn test_edit_requires_approval() {
+        let tool = EditFileTool;
+        assert!(tool.requires_approval());
+    }
+
+    #[tokio::test]
+    async fn test_edit_replaces_text() {
+        let path = tmp_path("replace.txt");
+        std::fs::write(&path, "Hello, world!\nGoodbye, world!\n").expect("write");
+        let tool = EditFileTool;
+        let result = tool.execute(json!({
+            "path": path.to_str().unwrap(),
+            "old_text": "Hello, world!",
+            "new_text": "Hello, potato!"
+        })).await.expect("edit should succeed");
+        assert!(result.contains("successfully"));
+        let content = std::fs::read_to_string(&path).expect("read back");
+        assert!(content.contains("Hello, potato!"));
+        assert!(content.contains("Goodbye, world!"));
+    }
+
+    #[tokio::test]
+    async fn test_edit_missing_text_errors() {
+        let path = tmp_path("missing_text.txt");
+        std::fs::write(&path, "some content here\n").expect("write");
+        let tool = EditFileTool;
+        let result = tool.execute(json!({
+            "path": path.to_str().unwrap(),
+            "old_text": "THIS TEXT DOES NOT EXIST",
+            "new_text": "replacement"
+        })).await;
+        assert!(result.is_err(), "should error when old_text not found");
+    }
+}

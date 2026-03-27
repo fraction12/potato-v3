@@ -107,3 +107,40 @@ async fn which_rg() -> bool {
         .map(|o| o.status.success())
         .unwrap_or(false)
 }
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::path::PathBuf;
+
+    fn tmp_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("potato_search_test_{}", name));
+        std::fs::create_dir_all(&dir).expect("create dir");
+        dir
+    }
+
+    #[test]
+    fn test_search_name() {
+        let tool = SearchTool;
+        assert_eq!(tool.name(), "search");
+    }
+
+    #[tokio::test]
+    async fn test_search_finds_pattern() {
+        let dir = tmp_dir("finds_pattern");
+        // Write files with known content.
+        std::fs::write(dir.join("a.txt"), "hello potato world\nfoo bar\n").expect("write a");
+        std::fs::write(dir.join("b.txt"), "no match here\n").expect("write b");
+
+        let tool = SearchTool;
+        let result = tool.execute(json!({
+            "pattern": "potato",
+            "path": dir.to_str().unwrap()
+        })).await.expect("search should succeed");
+
+        assert!(result.contains("potato"), "result should contain matching line");
+    }
+}

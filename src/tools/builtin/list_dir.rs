@@ -98,3 +98,42 @@ fn format_size(bytes: u64) -> String {
         format!("{} B", bytes)
     }
 }
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::path::PathBuf;
+
+    fn tmp_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("potato_listdir_test_{}", name));
+        std::fs::create_dir_all(&dir).expect("create dir");
+        dir
+    }
+
+    #[test]
+    fn test_list_dir_name() {
+        let tool = ListDirTool;
+        assert_eq!(tool.name(), "list_dir");
+    }
+
+    #[tokio::test]
+    async fn test_list_dir_shows_entries() {
+        let dir = tmp_dir("shows_entries");
+        std::fs::write(dir.join("alpha.txt"), "content").expect("write alpha");
+        std::fs::write(dir.join("beta.rs"), "fn main(){}").expect("write beta");
+        let sub = dir.join("subdir");
+        std::fs::create_dir_all(&sub).expect("create subdir");
+
+        let tool = ListDirTool;
+        let result = tool.execute(json!({
+            "path": dir.to_str().unwrap()
+        })).await.expect("list_dir should succeed");
+
+        assert!(result.contains("alpha.txt"), "should list alpha.txt");
+        assert!(result.contains("beta.rs"), "should list beta.rs");
+        assert!(result.contains("subdir"), "should list subdir");
+    }
+}
