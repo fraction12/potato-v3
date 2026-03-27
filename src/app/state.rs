@@ -232,7 +232,12 @@ pub struct SessionState {
     pub approval_pending: Option<PendingApprovalSession>,
     pub status: AgentStatus,
     pub input_buffer: String,
+    /// How many lines the transcript view is scrolled up from the bottom.
+    /// 0 = pinned to the bottom (auto-scroll). Increases as user scrolls up.
     pub scroll_offset: u16,
+    /// Whether the user has manually scrolled up. When true, auto-scroll is
+    /// suppressed until the user scrolls back to the bottom.
+    pub user_scrolled: bool,
     pub input_cursor: usize,
     pub tick_count: u64,
 }
@@ -249,6 +254,7 @@ impl SessionState {
             status: AgentStatus::Starting,
             input_buffer: String::new(),
             scroll_offset: 0,
+            user_scrolled: false,
             input_cursor: 0,
             tick_count: 0,
         }
@@ -466,6 +472,7 @@ mod tests {
         assert_eq!(s.status, AgentStatus::Starting);
         assert!(s.transcript.is_empty());
         assert_eq!(s.scroll_offset, 0);
+        assert!(!s.user_scrolled);
     }
 
     #[test]

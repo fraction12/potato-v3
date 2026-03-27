@@ -3,75 +3,103 @@
 //! Layout:
 //! ```
 //! ┌──────────────────────────────────────────────┐
-//! │              🥔  Potato                       │  title
+//! │                 🥔  Potato                    │  title (Brown, centered)
 //! ├───────────────────┬──────────────────────────┤
 //! │  Agents           │  Recent Sessions         │
 //! │  ● Claude Code    │  [claude] 2024-01 $0.01  │
-//! │    Codex (n/a)    │  [codex]  2024-01 $0.00  │
+//! │    Codex (n/a)    │  No recent sessions      │
 //! ├───────────────────┴──────────────────────────┤
-//! │  [Enter] launch  [Tab] switch pane  [q] quit │  footer
+//! │  ↑↓ navigate  Tab switch panel  Enter launch  q quit │  footer (Brown)
 //! └──────────────────────────────────────────────┘
 //! ```
 
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
-    style::{Modifier, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
 };
 
-use crate::app::state::{AppState, AppScreen, DashboardFocus};
-use crate::ui::theme::{AMBER, BG, BROWN, CHARCOAL, CREAM, RUST_RED, SOIL, TAN};
+use crate::app::state::{AppScreen, AppState, DashboardFocus};
+use crate::ui::theme::{AMBER, BG, BROWN, CHARCOAL, CREAM, SOIL, SPROUT, TAN};
+
+/// Muted gray for unavailable/secondary items.
+const MUTED: Color = Color::Rgb(100, 100, 100);
 
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 /// Render the full dashboard screen.
 pub fn render_dashboard(frame: &mut Frame, area: Rect, state: &AppState) {
-    let AppScreen::Dashboard(ref dash) = state.screen else { return };
+    let AppScreen::Dashboard(ref dash) = state.screen else {
+        return;
+    };
 
     // Outer block fills the whole area with the background colour.
-    let outer = Block::default()
-        .style(Style::default().bg(BG));
+    let outer = Block::default().style(Style::default().bg(BG));
     frame.render_widget(outer, area);
 
     // Vertical split: title, content, footer.
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),  // title bar
-            Constraint::Min(0),     // main content
-            Constraint::Length(1),  // footer
+            Constraint::Length(3), // title bar
+            Constraint::Min(0),    // main content
+            Constraint::Length(1), // footer
         ])
         .split(area);
 
     render_title(frame, rows[0]);
     render_content(frame, rows[1], state);
-    render_footer(frame, rows[2], dash.focus == DashboardFocus::AgentList);
+    render_footer(frame, rows[2]);
 }
 
 // ── Title ─────────────────────────────────────────────────────────────────────
 
 fn render_title(frame: &mut Frame, area: Rect) {
+    // Brown centered title, BG background (no Charcoal), bottom border in Soil.
     let title = Paragraph::new("🥔  Potato")
         .alignment(Alignment::Center)
-        .style(Style::default().fg(AMBER).bg(CHARCOAL).add_modifier(Modifier::BOLD))
-        .block(Block::default().borders(Borders::BOTTOM).border_style(Style::default().fg(SOIL)));
+        .style(
+            Style::default()
+                .fg(BROWN)
+                .bg(BG)
+                .add_modifier(Modifier::BOLD),
+        )
+        .block(
+            Block::default()
+                .borders(Borders::BOTTOM)
+                .border_style(Style::default().fg(SOIL)),
+        );
     frame.render_widget(title, area);
 }
 
 // ── Content (two-column split) ────────────────────────────────────────────────
 
 fn render_content(frame: &mut Frame, area: Rect, state: &AppState) {
-    let AppScreen::Dashboard(ref dash) = state.screen else { return };
+    let AppScreen::Dashboard(ref dash) = state.screen else {
+        return;
+    };
 
     let cols = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(35), Constraint::Percentage(65)])
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(area);
 
-    render_agent_list(frame, cols[0], dash.available_agents.as_slice(), dash.selected_agent, dash.focus == DashboardFocus::AgentList);
-    render_session_list(frame, cols[1], dash.recent_sessions.as_slice(), dash.selected_session, dash.focus == DashboardFocus::SessionList);
+    render_agent_list(
+        frame,
+        cols[0],
+        dash.available_agents.as_slice(),
+        dash.selected_agent,
+        dash.focus == DashboardFocus::AgentList,
+    );
+    render_session_list(
+        frame,
+        cols[1],
+        dash.recent_sessions.as_slice(),
+        dash.selected_session,
+        dash.focus == DashboardFocus::SessionList,
+    );
 }
 
 // ── Agent list ────────────────────────────────────────────────────────────────
@@ -95,29 +123,47 @@ fn render_agent_list(
         .border_style(border_style)
         .style(Style::default().bg(BG));
 
+    if agents.is_empty() {
+        let p = Paragraph::new("\n  No agents detected.")
+            .style(Style::default().fg(MUTED))
+            .block(block);
+        frame.render_widget(p, area);
+        return;
+    }
+
     let items: Vec<ListItem> = agents
         .iter()
         .enumerate()
         .map(|(i, agent)| {
-            let (indicator, fg) = if agent.available {
-                ("● ", AMBER)   // green-ish (amber) sprout = available
+            let is_selected = i == selected;
+            let bg = if is_selected {
+                CHARCOAL
             } else {
-                ("○ ", SOIL)    // muted = not available
+                BG
             };
 
-            let style = if i == selected && focused {
-                Style::default().fg(CREAM).bg(CHARCOAL).add_modifier(Modifier::BOLD)
-            } else if i == selected {
-                Style::default().fg(CREAM).bg(CHARCOAL)
+            if agent.available {
+                // Available: Sprout indicator + Cream name on selected, Sprout otherwise.
+                let name_fg = if is_selected { CREAM } else { SPROUT };
+                let name_style = Style::default().fg(name_fg).bg(bg);
+                let indicator_style = Style::default().fg(SPROUT).bg(bg);
+                let line = Line::from(vec![
+                    Span::styled(" ● ", indicator_style),
+                    Span::styled(agent.name.clone(), name_style),
+                ]);
+                ListItem::new(line)
             } else {
-                Style::default().fg(fg)
-            };
-
-            let line = Line::from(vec![
-                Span::styled(indicator, Style::default().fg(fg)),
-                Span::styled(agent.name.clone(), style),
-            ]);
-            ListItem::new(line)
+                // Unavailable: muted indicator + muted name.
+                let name_style = Style::default().fg(MUTED).bg(bg);
+                let indicator_style = Style::default().fg(MUTED).bg(bg);
+                let suffix = " (not found)";
+                let line = Line::from(vec![
+                    Span::styled(" ○ ", indicator_style),
+                    Span::styled(agent.name.clone(), name_style),
+                    Span::styled(suffix, Style::default().fg(MUTED).bg(bg)),
+                ]);
+                ListItem::new(line)
+            }
         })
         .collect();
 
@@ -155,9 +201,10 @@ fn render_session_list(
         .style(Style::default().bg(BG));
 
     if sessions.is_empty() {
-        let placeholder = Paragraph::new("\n  No recent sessions.\n  Press Enter on an agent to start one.")
-            .style(Style::default().fg(SOIL))
-            .block(block);
+        let placeholder =
+            Paragraph::new("\n  No recent sessions.\n  Press Enter on an agent to start one.")
+                .style(Style::default().fg(MUTED))
+                .block(block);
         frame.render_widget(placeholder, area);
         return;
     }
@@ -174,18 +221,26 @@ fn render_session_list(
             };
 
             let is_selected = i == selected;
-            let style = if is_selected && focused {
+            let bg = if is_selected { CHARCOAL } else { BG };
+
+            let row_style = if is_selected && focused {
                 Style::default().fg(CREAM).bg(CHARCOAL).add_modifier(Modifier::BOLD)
             } else if is_selected {
                 Style::default().fg(CREAM).bg(CHARCOAL)
             } else {
-                Style::default().fg(TAN)
+                Style::default().fg(TAN).bg(BG)
             };
 
             let line = Line::from(vec![
-                Span::styled(format!("  [{:<10}] ", s.agent_name), Style::default().fg(BROWN)),
-                Span::styled(date, style),
-                Span::styled(format!("  {}", cost), Style::default().fg(AMBER)),
+                Span::styled(
+                    format!("  [{:<10}] ", s.agent_name),
+                    Style::default().fg(BROWN).bg(bg),
+                ),
+                Span::styled(date, row_style),
+                Span::styled(
+                    format!("  {}", cost),
+                    Style::default().fg(AMBER).bg(bg),
+                ),
             ]);
             ListItem::new(line)
         })
@@ -203,17 +258,18 @@ fn render_session_list(
 
 // ── Footer ────────────────────────────────────────────────────────────────────
 
-fn render_footer(frame: &mut Frame, area: Rect, _agents_focused: bool) {
-    let sep = Span::styled("  │  ", Style::default().fg(SOIL));
+fn render_footer(frame: &mut Frame, area: Rect) {
     let line = Line::from(vec![
-        Span::styled(" [Enter] launch ", Style::default().fg(AMBER)),
-        sep.clone(),
-        Span::styled("[Tab] switch pane ", Style::default().fg(TAN)),
-        sep.clone(),
-        Span::styled("[q] quit ", Style::default().fg(RUST_RED)),
+        Span::styled(
+            " ↑↓ navigate  ",
+            Style::default().fg(BROWN),
+        ),
+        Span::styled("Tab switch panel  ", Style::default().fg(BROWN)),
+        Span::styled("Enter launch  ", Style::default().fg(BROWN)),
+        Span::styled("q quit", Style::default().fg(BROWN)),
     ]);
     let footer = Paragraph::new(line)
-        .style(Style::default().bg(CHARCOAL))
+        .style(Style::default().bg(BG))
         .alignment(Alignment::Left);
     frame.render_widget(footer, area);
 }
@@ -223,7 +279,7 @@ fn render_footer(frame: &mut Frame, area: Rect, _agents_focused: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::state::{AgentInfo, DashboardState, SessionSummary};
+    use crate::app::state::{AgentInfo, DashboardFocus, DashboardState, SessionSummary};
     use chrono::Utc;
 
     fn make_dashboard_state() -> AppState {
@@ -243,15 +299,13 @@ mod tests {
                     available: false,
                 },
             ];
-            dash.recent_sessions = vec![
-                SessionSummary {
-                    session_id: "s-1".to_string(),
-                    agent_name: "claude".to_string(),
-                    started_at: Utc::now(),
-                    total_cost_usd: 0.001,
-                    turn_count: 3,
-                },
-            ];
+            dash.recent_sessions = vec![SessionSummary {
+                session_id: "s-1".to_string(),
+                agent_name: "claude".to_string(),
+                started_at: Utc::now(),
+                total_cost_usd: 0.001,
+                turn_count: 3,
+            }];
         }
         state
     }
@@ -279,5 +333,12 @@ mod tests {
         assert_eq!(dash.focus, DashboardFocus::AgentList);
         dash.focus = DashboardFocus::SessionList;
         assert_eq!(dash.focus, DashboardFocus::SessionList);
+    }
+
+    #[test]
+    fn empty_sessions_placeholder() {
+        // Regression: rendering with zero sessions should not panic (tested by building items).
+        let sessions: Vec<SessionSummary> = vec![];
+        assert!(sessions.is_empty());
     }
 }

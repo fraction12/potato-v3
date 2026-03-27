@@ -247,7 +247,10 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                             break;
                         }
                         KeyCode::Esc => {
-                            // Return to dashboard.
+                            // Return to dashboard — kill the PTY child first.
+                            if let Some(ref handle) = pty_handle {
+                                handle.kill();
+                            }
                             state.screen = AppScreen::Dashboard(DashboardState {
                                 available_agents: detect_agents(),
                                 ..DashboardState::default()
@@ -255,10 +258,48 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                             pty_handle = None;
                             continue;
                         }
+                        // ── Scroll when input buffer is empty ─────────────────
+                        KeyCode::Up | KeyCode::Char('k')
+                            if session.input_buffer.is_empty() =>
+                        {
+                            session.scroll_offset = session.scroll_offset.saturating_add(3);
+                            session.user_scrolled = session.scroll_offset > 0;
+                            continue;
+                        }
+                        KeyCode::Down | KeyCode::Char('j')
+                            if session.input_buffer.is_empty() =>
+                        {
+                            if session.scroll_offset > 0 {
+                                session.scroll_offset =
+                                    session.scroll_offset.saturating_sub(3);
+                            }
+                            if session.scroll_offset == 0 {
+                                session.user_scrolled = false;
+                            }
+                            continue;
+                        }
+                        KeyCode::PageUp => {
+                            session.scroll_offset = session.scroll_offset.saturating_add(10);
+                            session.user_scrolled = session.scroll_offset > 0;
+                            continue;
+                        }
+                        KeyCode::PageDown => {
+                            session.scroll_offset =
+                                session.scroll_offset.saturating_sub(10);
+                            if session.scroll_offset == 0 {
+                                session.user_scrolled = false;
+                            }
+                            continue;
+                        }
+                        // ── Text input ────────────────────────────────────────
                         KeyCode::Enter => {
                             // Submit the input buffer to the agent.
                             let text = std::mem::take(&mut session.input_buffer);
+                            session.input_cursor = 0;
                             if !text.is_empty() {
+                                // Auto-scroll to bottom on send.
+                                session.scroll_offset = 0;
+                                session.user_scrolled = false;
                                 session.transcript.push(
                                     app::state::TranscriptEntry::user(&text),
                                 );
@@ -271,10 +312,66 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                         }
                         KeyCode::Backspace => {
                             session.input_buffer.pop();
+                            if session.input_cursor > session.input_buffer.len() {
+                                session.input_cursor = session.input_buffer.len();
+                            }
+                            continue;
+                        }
+                        // ── Approval overlay keys ─────────────────────────────
+                        // These must take priority over normal char input.
+                        KeyCode::Char('y') | KeyCode::Char('Y')
+                            if session.approval_pending.is_some() =>
+                        {
+                            let tool_id = session
+                                .approval_pending
+                                .as_ref()
+                                .map(|p| p.tool_id.clone())
+                                .unwrap_or_default();
+                            // Update session state via the pure reducer.
+                            app::session_reducer::apply_event(
+                                session,
+                                crate::events::AgentEvent::ApprovalDecision {
+                                    tool_id,
+                                    approved: true,
+                                },
+                                chrono::Utc::now(),
+                            );
+                            // Forward formatted approval to PTY stdin.
+                            if let Some(ref handle) = pty_handle {
+                                if let Some(formatted) = ClaudeAdapter.format_approval(true) {
+                                    let _ = handle.stdin_tx.try_send(formatted);
+                                }
+                            }
+                            continue;
+                        }
+                        KeyCode::Char('n') | KeyCode::Char('N')
+                            if session.approval_pending.is_some() =>
+                        {
+                            let tool_id = session
+                                .approval_pending
+                                .as_ref()
+                                .map(|p| p.tool_id.clone())
+                                .unwrap_or_default();
+                            // Update session state via the pure reducer.
+                            app::session_reducer::apply_event(
+                                session,
+                                crate::events::AgentEvent::ApprovalDecision {
+                                    tool_id,
+                                    approved: false,
+                                },
+                                chrono::Utc::now(),
+                            );
+                            // Forward formatted denial to PTY stdin.
+                            if let Some(ref handle) = pty_handle {
+                                if let Some(formatted) = ClaudeAdapter.format_approval(false) {
+                                    let _ = handle.stdin_tx.try_send(formatted);
+                                }
+                            }
                             continue;
                         }
                         KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                             session.input_buffer.push(c);
+                            session.input_cursor = session.input_buffer.len();
                             continue;
                         }
                         _ => {}

@@ -29,6 +29,18 @@ pub struct PtyHandle {
     pub event_rx: broadcast::Receiver<AgentEvent>,
     /// Watch the process exit code (`None` = still running).
     pub exit_rx: watch::Receiver<Option<i32>>,
+    /// Kill signal sender — call `kill()` to terminate the child process.
+    kill_tx: watch::Sender<bool>,
+}
+
+impl PtyHandle {
+    /// Send a kill signal to the background tasks, which will call
+    /// `child.kill()` and exit.  Safe to call multiple times (idempotent).
+    pub fn kill(&self) {
+        // `send` overwrites the current value; if the receiver is already
+        // gone this returns an Err which we intentionally ignore.
+        let _ = self.kill_tx.send(true);
+    }
 }
 
 // ── PtyProcess ────────────────────────────────────────────────────────────────
@@ -39,10 +51,11 @@ pub struct PtyProcess;
 impl PtyProcess {
     /// Spawn an agent process and return a [`PtyHandle`] for communicating with it.
     ///
-    /// Three background tasks are launched:
+    /// Four background tasks are launched:
     /// 1. **Reader** — reads stdout lines, parses them via the adapter, broadcasts events.
-    /// 2. **Writer** — receives strings from `stdin_tx`, writes them to the child stdin.
-    /// 3. **Exit watcher** — waits for the child to exit, broadcasts `AgentExited`.
+    /// 2. **Stderr reader** — drains stderr and emits Warning events.
+    /// 3. **Writer** — receives strings from `stdin_tx`, writes them to the child stdin.
+    /// 4. **Exit watcher** — waits for the child to exit, broadcasts `AgentExited`.
     ///
     /// ## Reliability notes
     ///
@@ -54,11 +67,12 @@ impl PtyProcess {
     /// - **AgentStarted ordering**: `AgentStarted` is enqueued *before* the handle
     ///   is returned, so it is always the first event in the receiver's queue.
     ///
-    /// - **Stdin error propagation**: if a write to the child's stdin fails the
-    ///   writer task terminates and drops the child stdin handle.  The mpsc channel
-    ///   buffer (256 slots) will fill up and callers will observe a backpressure
-    ///   block on [`mpsc::Sender::send`].  Callers should use [`mpsc::Sender::try_send`]
-    ///   or [`mpsc::Sender::send`] with a timeout if stdin errors must be detected.
+    /// - **Stdin error propagation**: if a write to the child's stdin fails, the
+    ///   writer task broadcasts `AgentEvent::Error` before exiting.
+    ///
+    /// - **Kill API**: call [`PtyHandle::kill`] to forcefully terminate the child
+    ///   and all background tasks.  The exit watcher will emit `AgentExited` and
+    ///   update `exit_rx` as usual.
     ///
     /// - **Dropped receivers**: dropping [`PtyHandle::event_rx`] does not panic or
     ///   block any background task; subsequent broadcast sends silently succeed
@@ -91,6 +105,10 @@ impl PtyProcess {
         let (stdin_tx, mut stdin_rx) = mpsc::channel::<String>(256);
         let (exit_tx, exit_rx) = watch::channel::<Option<i32>>(None);
 
+        // Kill signal: a watch channel carrying a bool.  When set to `true` the
+        // background tasks should terminate the child and exit.
+        let (kill_tx, kill_rx) = watch::channel::<bool>(false);
+
         // ── Emit AgentStarted ─────────────────────────────────────────────────
         let _ = event_tx.send(AgentEvent::AgentStarted {
             adapter: adapter_name.clone(),
@@ -103,27 +121,39 @@ impl PtyProcess {
             let event_tx_r = event_tx.clone();
             let adapter_r = adapter.clone();
             let mut reader = BufReader::new(stdout).lines();
+            let mut kill_rx_r = kill_rx.clone();
 
             tokio::spawn(async move {
                 loop {
-                    match reader.next_line().await {
-                        Ok(Some(line)) => {
-                            debug!(line = %line, "agent stdout");
-                            let events = adapter_r.parse_line(&line);
-                            for event in events {
-                                let _ = event_tx_r.send(event);
+                    tokio::select! {
+                        // Kill signal received — exit without reading more.
+                        _ = kill_rx_r.changed() => {
+                            if *kill_rx_r.borrow() {
+                                debug!("stdout reader: kill signal received, exiting");
+                                break;
                             }
                         }
-                        Ok(None) => {
-                            debug!("agent stdout EOF");
-                            break;
-                        }
-                        Err(e) => {
-                            error!(error = %e, "error reading agent stdout");
-                            let _ = event_tx_r.send(AgentEvent::Error {
-                                message: format!("stdout read error: {e}"),
-                            });
-                            break;
+                        line_result = reader.next_line() => {
+                            match line_result {
+                                Ok(Some(line)) => {
+                                    debug!(line = %line, "agent stdout");
+                                    let events = adapter_r.parse_line(&line);
+                                    for event in events {
+                                        let _ = event_tx_r.send(event);
+                                    }
+                                }
+                                Ok(None) => {
+                                    debug!("agent stdout EOF");
+                                    break;
+                                }
+                                Err(e) => {
+                                    error!(error = %e, "error reading agent stdout");
+                                    let _ = event_tx_r.send(AgentEvent::Error {
+                                        message: format!("stdout read error: {e}"),
+                                    });
+                                    break;
+                                }
+                            }
                         }
                     }
                 }
@@ -157,27 +187,59 @@ impl PtyProcess {
         }
 
         // ── Task 2: stdin writer ──────────────────────────────────────────────
-        tokio::spawn(async move {
-            while let Some(text) = stdin_rx.recv().await {
-                debug!(text = %text, "writing to agent stdin");
-                if let Err(e) = stdin.write_all(text.as_bytes()).await {
-                    error!(error = %e, "failed to write to agent stdin");
-                    break;
+        {
+            let event_tx_w = event_tx.clone();
+            tokio::spawn(async move {
+                while let Some(text) = stdin_rx.recv().await {
+                    debug!(text = %text, "writing to agent stdin");
+                    if let Err(e) = stdin.write_all(text.as_bytes()).await {
+                        error!(error = %e, "failed to write to agent stdin");
+                        let _ = event_tx_w.send(AgentEvent::Error {
+                            message: format!("stdin write failed: {e}"),
+                        });
+                        break;
+                    }
+                    if let Err(e) = stdin.flush().await {
+                        error!(error = %e, "failed to flush agent stdin");
+                        let _ = event_tx_w.send(AgentEvent::Error {
+                            message: format!("stdin write failed: {e}"),
+                        });
+                        break;
+                    }
                 }
-                if let Err(e) = stdin.flush().await {
-                    error!(error = %e, "failed to flush agent stdin");
-                    break;
-                }
-            }
-            // Channel closed — drop stdin so the agent sees EOF.
-        });
+                // Channel closed or write error — drop stdin so the agent sees EOF.
+            });
+        }
 
         // ── Task 3: exit watcher ──────────────────────────────────────────────
         {
             let event_tx_x = event_tx.clone();
+            let mut kill_rx_x = kill_rx.clone();
 
             tokio::spawn(async move {
-                let exit_status = child.wait().await;
+                // Wait for either the process to exit naturally, or a kill signal.
+                let exit_status = tokio::select! {
+                    status = child.wait() => status,
+                    _ = async {
+                        loop {
+                            // Poll until kill_rx becomes true or the sender is dropped.
+                            if kill_rx_x.changed().await.is_err() {
+                                break;
+                            }
+                            if *kill_rx_x.borrow() {
+                                break;
+                            }
+                        }
+                    } => {
+                        // Kill signal received — terminate the child.
+                        debug!("exit watcher: kill signal received, killing child");
+                        if let Err(e) = child.kill().await {
+                            error!(error = %e, "failed to kill agent process");
+                        }
+                        child.wait().await
+                    }
+                };
+
                 let exit_code = match exit_status {
                     Ok(status) => {
                         info!(code = ?status.code(), "agent process exited");
@@ -194,7 +256,7 @@ impl PtyProcess {
             });
         }
 
-        Ok(PtyHandle { stdin_tx, event_rx, exit_rx })
+        Ok(PtyHandle { stdin_tx, event_rx, exit_rx, kill_tx })
     }
 }
 
@@ -379,7 +441,7 @@ mod tests {
 
         let handle = PtyProcess::spawn(adapter, config).await.unwrap();
         // Destructure so we can drop stdin_tx explicitly while keeping rx alive.
-        let PtyHandle { stdin_tx, event_rx: mut rx, exit_rx: _ } = handle;
+        let PtyHandle { stdin_tx, event_rx: mut rx, exit_rx: _, kill_tx: _ } = handle;
 
         // Send a distinctive line via the channel.
         stdin_tx.send("potato-stdin-write\n".to_string()).await.unwrap();
@@ -635,6 +697,136 @@ mod tests {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
+    // TEST 10 (NEW): kill_terminates_child_process
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Spawn a long-running process (`sleep 60`), call `handle.kill()`, and
+    /// verify that:
+    ///   - `exit_rx` eventually becomes `Some(_)` (process was killed)
+    ///   - `AgentExited` event is received in the broadcast stream
+    ///
+    /// Uses a generous timeout to account for OS scheduling.
+    #[tokio::test]
+    async fn kill_terminates_child_process() {
+        let adapter = Arc::new(FakeAdapter::new("sleep").with_args(vec!["60".into()]));
+        let config = AdapterConfig { working_dir: std::env::temp_dir(), ..Default::default() };
+
+        let handle = PtyProcess::spawn(adapter, config).await.unwrap();
+        // Destructure so we can call kill_tx.send() without a partial-move issue.
+        let PtyHandle { stdin_tx: _, mut event_rx, mut exit_rx, kill_tx } = handle;
+
+        // Drain AgentStarted so it doesn't interfere.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // Send kill signal via the watch sender directly (same as kill()).
+        let _ = kill_tx.send(true);
+
+        // exit_rx must change to Some(_) within 5 seconds.
+        tokio::time::timeout(Duration::from_secs(5), exit_rx.changed())
+            .await
+            .expect("timed out waiting for exit_rx after kill()")
+            .expect("exit_rx sender dropped unexpectedly");
+
+        let code = *exit_rx.borrow();
+        assert!(code.is_some(), "exit_rx should be Some(_) after kill(); got None");
+
+        // Collect remaining events; AgentExited must appear.
+        let events = drain_until_exit(&mut event_rx, Duration::from_secs(3)).await;
+        let exited = events.iter().any(|e| matches!(e, AgentEvent::AgentExited { .. }));
+        assert!(exited, "AgentExited event must be received after kill(); events: {events:?}");
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // TEST 11 (NEW): kill_is_idempotent
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Calling `handle.kill()` twice must not panic or deadlock.
+    #[tokio::test]
+    async fn kill_is_idempotent() {
+        let adapter = Arc::new(FakeAdapter::new("sleep").with_args(vec!["60".into()]));
+        let config = AdapterConfig { working_dir: std::env::temp_dir(), ..Default::default() };
+
+        let handle = PtyProcess::spawn(adapter, config).await.unwrap();
+        let PtyHandle { stdin_tx: _, event_rx: _, mut exit_rx, kill_tx } = handle;
+
+        // First kill.
+        let _ = kill_tx.send(true);
+        // Second kill — must not panic (watch::Sender::send is always safe).
+        let _ = kill_tx.send(true);
+
+        // Process should still exit within the timeout.
+        tokio::time::timeout(Duration::from_secs(5), exit_rx.changed())
+            .await
+            .expect("timed out waiting for exit_rx after double kill()")
+            .expect("exit_rx sender dropped unexpectedly");
+
+        assert!(exit_rx.borrow().is_some(), "process must exit after kill()");
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // TEST 12 (NEW): stdin_write_error_emits_agent_error_event
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Spawn a process that immediately exits, wait for it to die, then send
+    /// to `stdin_tx`.  The writer task should emit `AgentEvent::Error` because
+    /// the child's stdin pipe is broken.
+    #[tokio::test]
+    async fn stdin_write_error_emits_agent_error_event() {
+        // `true` exits immediately with code 0.
+        let adapter = Arc::new(FakeAdapter::new("sh").with_args(vec!["-c".into(), "exit 0".into()]));
+        let config = AdapterConfig { working_dir: std::env::temp_dir(), ..Default::default() };
+
+        let handle = PtyProcess::spawn(adapter, config).await.unwrap();
+        let stdin_tx = handle.stdin_tx.clone();
+        let mut rx = handle.event_rx;
+        let mut exit_rx = handle.exit_rx;
+
+        // Wait for the process to exit — pipe is now broken.
+        tokio::time::timeout(Duration::from_secs(5), exit_rx.changed())
+            .await
+            .expect("timed out waiting for process to exit")
+            .expect("exit_rx sender dropped");
+
+        // Give the OS a moment to fully close the pipe.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Drain events already buffered (AgentStarted, AgentExited).
+        loop {
+            match rx.try_recv() {
+                Ok(_) => {}
+                Err(_) => break,
+            }
+        }
+
+        // Now attempt a write to the dead process — this should result in
+        // an Error event from the writer task.
+        let _ = stdin_tx.send("this will fail\n".to_string()).await;
+
+        // We need to collect events; the Error may come within a short window.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+        let mut got_error = false;
+        loop {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() { break; }
+            match tokio::time::timeout(Duration::from_millis(200), rx.recv()).await {
+                Ok(Ok(AgentEvent::Error { message })) => {
+                    if message.contains("stdin write failed") {
+                        got_error = true;
+                        break;
+                    }
+                }
+                Ok(Ok(_)) => {} // other events
+                _ => break,
+            }
+        }
+
+        assert!(
+            got_error,
+            "expected AgentEvent::Error with 'stdin write failed' after writing to dead process",
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     // LEGACY TESTS (kept, renamed for clarity)
     // ─────────────────────────────────────────────────────────────────────────
 
@@ -696,7 +888,8 @@ mod tests {
         let (stdin_tx, _stdin_rx) = mpsc::channel::<String>(1);
         let (event_tx, event_rx) = broadcast::channel::<AgentEvent>(1);
         let (_exit_tx, exit_rx) = watch::channel::<Option<i32>>(None);
+        let (kill_tx, _kill_rx) = watch::channel::<bool>(false);
         drop(event_tx);
-        let _handle = PtyHandle { stdin_tx, event_rx, exit_rx };
+        let _handle = PtyHandle { stdin_tx, event_rx, exit_rx, kill_tx };
     }
 }
