@@ -162,6 +162,8 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
             _ = tokio::time::sleep(tick_duration) => Some(Message::Tick),
         };
 
+        let mut pending_session_resume: Option<String> = None;
+
         if let Some(m) = msg {
             // Intercept Enter on the dashboard to spawn a RealPty session.
             if let Message::Key(ref key) = m {
@@ -462,6 +464,7 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                     // ── Sessions focus — navigate the session list ────────────
                     if current_focus == CockpitFocus::Sessions {
                         if let AppScreen::Session(ref mut session) = state.screen {
+                            let max_idx = state.rail_sessions.len().saturating_sub(1);
                             match key.code {
                                 KeyCode::Up | KeyCode::Char('k') => {
                                     if session.selected_session > 0 {
@@ -470,12 +473,33 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                                     continue;
                                 }
                                 KeyCode::Down | KeyCode::Char('j') => {
-                                    session.selected_session = session.selected_session.saturating_add(1);
+                                    if session.selected_session < max_idx {
+                                        session.selected_session += 1;
+                                    }
+                                    continue;
+                                }
+                                KeyCode::Home => {
+                                    session.selected_session = 0;
+                                    continue;
+                                }
+                                KeyCode::End => {
+                                    session.selected_session = max_idx;
+                                    continue;
+                                }
+                                KeyCode::PageUp => {
+                                    session.selected_session = session.selected_session.saturating_sub(10);
+                                    continue;
+                                }
+                                KeyCode::PageDown => {
+                                    session.selected_session = (session.selected_session + 10).min(max_idx);
                                     continue;
                                 }
                                 KeyCode::Enter => {
-                                    // Switch to focused session (placeholder for multi-session).
-                                    session.cockpit_focus = CockpitFocus::Input;
+                                    // Load the selected historical session.
+                                    if let Some(info) = state.rail_sessions.get(session.selected_session) {
+                                        let resume_id = info.id.clone();
+                                        pending_session_resume = Some(resume_id);
+                                    }
                                     continue;
                                 }
                                 _ => {}
@@ -528,6 +552,65 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
             use app::action::Action;
             if matches!(action, Action::Quit) {
                 break;
+            }
+        }
+
+        // ── Resume a historical session (deferred from key handler) ───────
+        if let Some(resume_id) = pending_session_resume.take() {
+            // Tear down any existing PTY.
+            drop(state.real_pty.take());
+            turn_handle = None;
+            state.claude_log = None;
+
+            let agent_name = "claude";
+            if let Ok(binary) = which::which("claude") {
+                let (term_cols, term_rows) =
+                    crossterm::terminal::size().unwrap_or((120, 40));
+                let pty_cols = (term_cols as u32 * 3 / 4).saturating_sub(2) as u16;
+                let pty_rows = term_rows.saturating_sub(10);
+
+                let session_args = ["--resume", "--session-id", resume_id.as_str()];
+                let launch_cwd = std::env::current_dir().ok();
+
+                match crate::pty::RealPty::spawn_in(
+                    binary.to_str().unwrap_or("claude"),
+                    &session_args,
+                    pty_cols.max(20),
+                    pty_rows.max(5),
+                    launch_cwd.as_deref(),
+                ) {
+                    Ok(real_pty) => {
+                        let mut _dirty_rx = real_pty.dirty_tx.subscribe();
+                        state.real_pty = Some(real_pty);
+
+                        state.enter_session(&resume_id, agent_name);
+
+                        if let Some(home) = dirs::home_dir() {
+                            let cwd = launch_cwd.as_deref().unwrap_or(&home);
+                            let path = crate::claude_log::session_log_path(&home, cwd, &resume_id);
+                            tracing::info!("Resuming Claude session log: {}", path.display());
+                            state.claude_log = Some(crate::claude_log::ClaudeSessionLogTracker::new(path));
+                        }
+
+                        if let Some(ref mut session) = state.session_mut() {
+                            session.status = crate::app::state::AgentStatus::Idle;
+                            session.claude_session_id = Some(resume_id.clone());
+                        }
+
+                        state.persisted_event_count = 0;
+                        if let Some(ref store) = state.store.clone() {
+                            refresh_rail(state, store);
+                        }
+
+                        tracing::info!("Resumed Claude session: {}", resume_id);
+                    }
+                    Err(e) => {
+                        tracing::error!("RealPty resume failed: {e}");
+                        state.set_error(format!("Failed to resume session: {}", e), 100);
+                    }
+                }
+            } else {
+                state.set_error("Claude binary not found", 100);
             }
         }
 

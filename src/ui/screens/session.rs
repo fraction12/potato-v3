@@ -36,7 +36,7 @@ use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Paragraph},
+    widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
 };
 
 use crate::app::state::{AgentStatus, AppScreen, AppState, CockpitFocus, SessionState};
@@ -129,7 +129,7 @@ fn render_left_rail(frame: &mut Frame, area: Rect, state: &AppState, focus: Cock
 
     let rail = &state.rail_sessions;
 
-    // Inner width for text truncation (border + 2 padding).
+    // Inner width for text wrapping (border + 1 padding each side).
     let inner_w = area.width.saturating_sub(4) as usize;
 
     let items: Vec<ListItem<'static>> = if rail.is_empty() {
@@ -155,10 +155,10 @@ fn render_left_rail(frame: &mut Frame, area: Rect, state: &AppState, focus: Cock
                 let title_raw = if s.title.is_empty() {
                     s.id.chars().take(10).collect::<String>()
                 } else {
-                    s.title.chars().take(inner_w.saturating_sub(2)).collect()
+                    s.title.clone()
                 };
 
-                let title_style = if is_selected {
+                let item_title_style = if is_selected {
                     Style::default()
                         .fg(CREAM)
                         .add_modifier(Modifier::BOLD)
@@ -169,12 +169,9 @@ fn render_left_rail(frame: &mut Frame, area: Rect, state: &AppState, focus: Cock
                     Style::default().fg(TAN)
                 };
 
-                // Relative date + token count on second line (or same line if narrow).
-                let rel_date = relative_date(s.updated_at);
-                let tok = fmt_tokens_small(s.total_tokens());
-                let meta = format!("{} {}", rel_date, tok);
-                let meta_w = inner_w.saturating_sub(2);
-                let meta_truncated: String = meta.chars().take(meta_w).collect();
+                // Wrap title across lines if wider than the rail.
+                let title_w = inner_w.saturating_sub(2); // account for marker
+                let title_lines = wrap_text(&title_raw, title_w);
 
                 let row_bg = if is_selected && focused {
                     Color::Rgb(45, 30, 20)
@@ -182,31 +179,57 @@ fn render_left_rail(frame: &mut Frame, area: Rect, state: &AppState, focus: Cock
                     BG
                 };
 
-                ListItem::new(vec![
-                    Line::from(vec![
+                let mut lines: Vec<Line<'static>> = Vec::new();
+
+                // First title line gets the marker prefix.
+                if let Some(first) = title_lines.first() {
+                    lines.push(Line::from(vec![
                         Span::styled(marker.to_string(), marker_style),
-                        Span::styled(title_raw, title_style),
-                    ]),
-                    Line::from(Span::styled(
-                        format!("  {}", meta_truncated),
-                        Style::default().fg(STONE),
-                    )),
-                ])
-                .style(Style::default().bg(row_bg))
+                        Span::styled(first.clone(), item_title_style),
+                    ]));
+                }
+                // Continuation lines indented to match.
+                for cont in title_lines.iter().skip(1) {
+                    lines.push(Line::from(vec![
+                        Span::styled("  ", marker_style),
+                        Span::styled(cont.clone(), item_title_style),
+                    ]));
+                }
+
+                // Relative date + token count.
+                let rel_date = relative_date(s.updated_at);
+                let tok = fmt_tokens_small(s.total_tokens());
+                let meta = format!("{} {}", rel_date, tok);
+                let meta_w = inner_w.saturating_sub(2);
+                let meta_truncated: String = meta.chars().take(meta_w).collect();
+
+                lines.push(Line::from(Span::styled(
+                    format!("  {}", meta_truncated),
+                    Style::default().fg(STONE),
+                )));
+
+                ListItem::new(lines).style(Style::default().bg(row_bg))
             })
             .collect()
     };
 
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(border_style)
+        .title(Span::styled(" Sessions ", title_style));
+
     let list = List::new(items)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(border_style)
-                .title(Span::styled(" Sessions ", title_style)),
-        )
+        .block(block)
+        .highlight_style(Style::default()) // selection tracked manually via row_bg
         .style(Style::default().fg(STONE).bg(BG));
 
-    frame.render_widget(list, area);
+    // Use ListState so ratatui handles scroll offset automatically.
+    let mut list_state = ListState::default();
+    if !rail.is_empty() {
+        list_state.select(Some(selected_idx.min(rail.len().saturating_sub(1))));
+    }
+
+    frame.render_stateful_widget(list, area, &mut list_state);
 }
 
 // ── Center — PTY viewport ─────────────────────────────────────────────────────
@@ -597,6 +620,57 @@ fn render_status_bar(
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+/// Word-wrap `text` into lines of at most `width` characters.
+///
+/// Breaks on whitespace when possible; hard-breaks long words.
+fn wrap_text(text: &str, width: usize) -> Vec<String> {
+    if width == 0 {
+        return vec![text.to_string()];
+    }
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    let mut current_len: usize = 0;
+
+    for word in text.split_whitespace() {
+        let wlen = word.chars().count();
+
+        // Hard-break words longer than the available width.
+        if wlen > width {
+            // Flush current line first.
+            if current_len > 0 {
+                lines.push(std::mem::take(&mut current));
+                current_len = 0;
+            }
+            let mut chars = word.chars().peekable();
+            while chars.peek().is_some() {
+                let chunk: String = chars.by_ref().take(width).collect();
+                lines.push(chunk);
+            }
+            continue;
+        }
+
+        if current_len == 0 {
+            current.push_str(word);
+            current_len = wlen;
+        } else if current_len + 1 + wlen <= width {
+            current.push(' ');
+            current.push_str(word);
+            current_len += 1 + wlen;
+        } else {
+            lines.push(std::mem::take(&mut current));
+            current = word.to_string();
+            current_len = wlen;
+        }
+    }
+    if !current.is_empty() {
+        lines.push(current);
+    }
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+    lines
+}
+
 /// Short one-line label for an [`AgentStatus`].
 fn agent_status_label(status: &AgentStatus) -> String {
     match status {
@@ -833,5 +907,32 @@ mod tests {
     fn relative_date_yesterday() {
         let now = unix_now();
         assert_eq!(relative_date(now - 86_500), "yesterday");
+    }
+
+    // ── wrap_text ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn wrap_text_short() {
+        assert_eq!(wrap_text("hello", 20), vec!["hello"]);
+    }
+
+    #[test]
+    fn wrap_text_wraps() {
+        assert_eq!(
+            wrap_text("hello world foo", 11),
+            vec!["hello world", "foo"],
+        );
+    }
+
+    #[test]
+    fn wrap_text_hard_break() {
+        let long = "abcdefghij";
+        let lines = wrap_text(long, 4);
+        assert_eq!(lines, vec!["abcd", "efgh", "ij"]);
+    }
+
+    #[test]
+    fn wrap_text_empty() {
+        assert_eq!(wrap_text("", 10), vec![""]);
     }
 }
