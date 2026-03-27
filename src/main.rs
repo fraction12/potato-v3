@@ -559,6 +559,9 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
 
         // ── Resume a historical session (deferred from key handler) ───────
         if let Some(resume_id) = pending_session_resume.take() {
+            // Remember which rail item was selected so we can restore after enter_session.
+            let prev_selected = state.session().map(|s| s.selected_session).unwrap_or(0);
+
             // Tear down any existing PTY.
             drop(state.real_pty.take());
             turn_handle = None;
@@ -588,6 +591,11 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                         state.real_pty = Some(real_pty);
 
                         state.enter_session(&resume_id, agent_name);
+
+                        // Restore rail selection so it stays on the session we just opened.
+                        if let Some(ref mut session) = state.session_mut() {
+                            session.selected_session = prev_selected;
+                        }
 
                         if let Some(home) = dirs::home_dir() {
                             let cwd = launch_cwd.as_deref().unwrap_or(&home);
