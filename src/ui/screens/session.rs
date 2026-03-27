@@ -24,7 +24,6 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
 };
-use tui_term::widget::PseudoTerminal;
 
 use crate::app::state::{
     AgentStatus, AppScreen, AppState, MessageRole, SessionState, ToolCallRecord, TranscriptEntry,
@@ -75,19 +74,7 @@ pub fn render_session(frame: &mut Frame, area: Rect, state: &AppState) {
     let chat_focused = state.focus_ring.focused() == &PanelId::Chat;
     let tool_focused = state.focus_ring.focused() == &PanelId::ToolOutput;
 
-    // ── Real PTY rendering path ───────────────────────────────────────────────
-    // When a live PTY session is active, render Claude Code's native TUI
-    // directly via tui-term's PseudoTerminal widget.  The legacy chat panel
-    // and tool timeline are suppressed — the PTY owns the whole main area.
-    if let Some(ref real_pty) = state.real_pty {
-        render_pty_screen(frame, rows[0], real_pty);
-        render_status_bar(frame, rows[1], session, &state.model);
-        // No input bar / approval overlay in real-PTY mode — keystrokes go
-        // directly to the PTY process.
-        return;
-    }
-
-    // ── Legacy transcript rendering path ─────────────────────────────────────
+    // ── Transcript rendering path ─────────────────────────────────────────────
     // Render ChatPanel if we have one; fall back to the legacy transcript renderer.
     state.chat_panel.render(frame, chat_area, chat_focused, state);
 
@@ -103,22 +90,6 @@ pub fn render_session(frame: &mut Frame, area: Rect, state: &AppState) {
     } else {
         render_input_bar(frame, rows[2], session);
     }
-}
-
-// ── Real PTY screen renderer ──────────────────────────────────────────────────
-
-/// Render the vt100 screen from a live [`crate::pty::RealPty`] using the
-/// [`PseudoTerminal`] widget.  The widget occupies the full `area` — no
-/// border or padding.
-fn render_pty_screen(frame: &mut Frame, area: Rect, real_pty: &crate::pty::RealPty) {
-    // Lock the vt100 parser to get a reference to the current screen.
-    // The lock is held only for the duration of this render call.
-    if let Ok(parser) = real_pty.screen.try_lock() {
-        let pseudo_terminal = PseudoTerminal::new(parser.screen());
-        frame.render_widget(pseudo_terminal, area);
-    }
-    // If the lock is contended (reader thread is mid-update), skip this
-    // frame — the dirty_tx notification will trigger a re-render shortly.
 }
 
 // ── Main area (legacy — kept for tests) ──────────────────────────────────────

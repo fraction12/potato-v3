@@ -9,7 +9,6 @@ use chrono::{DateTime, Utc};
 
 use crate::app::agent_state::AgentState;
 use crate::metrics::SessionMetrics;
-use crate::pty::RealPty;
 use crate::ui::focus::FocusRing;
 use crate::ui::layout::LayoutManager;
 use crate::ui::layout::LayoutPreset as NewLayoutPreset;
@@ -339,14 +338,6 @@ pub struct AppState {
     /// Tool output panel — owns the collapsible tool execution timeline.
     pub tool_output_panel: ToolOutputPanel,
 
-    // ── Real PTY (interactive mode) ───────────────────────────────────────────
-    /// Active real PTY session (interactive Claude Code mode).
-    ///
-    /// When `Some`, the session screen renders via [`tui_term::widget::PseudoTerminal`]
-    /// and all keystrokes are forwarded to the PTY instead of Potato's input
-    /// bar.  Set by the dashboard → session transition when the selected agent
-    /// supports interactive mode.
-    pub real_pty: Option<RealPty>,
 }
 
 impl Default for AppState {
@@ -376,7 +367,6 @@ impl Default for AppState {
             focus_ring: FocusRing::new(vec![PanelId::Chat, PanelId::ToolOutput]),
             chat_panel: ChatPanel::new(Vec::new()),
             tool_output_panel: ToolOutputPanel::new(),
-            real_pty: None,
         }
     }
 }

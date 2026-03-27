@@ -1,7 +1,7 @@
 //! Potato — terminal cockpit for external coding agents.
 //!
-//! Boots to a dashboard where you pick an agent, then hosts it in a rich
-//! PTY cockpit that wraps the live session.
+//! Boots to a dashboard where you pick an agent, then suspends its TUI,
+//! hands the full terminal to the agent, and reclaims it when the agent exits.
 
 // Scaffold: suppress warnings for types/items not yet fully wired.
 #![allow(dead_code, unused_imports, unused_variables)]
@@ -11,6 +11,7 @@ mod app;
 mod config;
 mod events;
 mod legacy;
+mod log;
 mod metrics;
 mod pty;
 mod session;
@@ -29,7 +30,6 @@ use crossterm::{
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use ratatui::DefaultTerminal;
-use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
 use app::message::Message;
@@ -47,7 +47,6 @@ use adapters::{AdapterConfig, AgentAdapter};
 use app::state::{AgentInfo, DashboardState};
 use ui::screens::{dashboard::render_dashboard, session::render_session};
 use crate::pty::TurnHandle;
-use crate::pty::{RealPty, key_event_to_bytes};
 
 // ── CLI arguments ─────────────────────────────────────────────────────────────
 
@@ -132,10 +131,6 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
     let mut session_adapter: Option<Arc<dyn AgentAdapter>> = None;
     let mut session_config: Option<AdapterConfig> = None;
 
-    // Dirty-signal subscriber from the real PTY reader thread.
-    // When Some, receiving on this triggers an immediate re-render.
-    let mut pty_dirty_rx: Option<tokio::sync::broadcast::Receiver<()>> = None;
-
     loop {
         // ── Render ────────────────────────────────────────────────────────────
         terminal.draw(|frame| {
@@ -166,88 +161,54 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
         }
 
         // ── Input / message wait ──────────────────────────────────────────────
-        // When a real PTY is active, also wake on dirty signals (new PTY
-        // output) so the screen is re-rendered without waiting for the next
-        // tick.
-        let msg = if let Some(ref mut dirty_rx) = pty_dirty_rx {
-            tokio::select! {
-                Some(m) = event_rx.recv() => Some(m),
-                _ = tokio::time::sleep(tick_duration) => Some(Message::Tick),
-                // PTY has new output — fire a Tick so the renderer picks it up.
-                _ = async { let _ = dirty_rx.recv().await; } => Some(Message::Tick),
-            }
-        } else {
-            tokio::select! {
-                Some(m) = event_rx.recv() => Some(m),
-                _ = tokio::time::sleep(tick_duration) => Some(Message::Tick),
-            }
+        let msg = tokio::select! {
+            Some(m) = event_rx.recv() => Some(m),
+            _ = tokio::time::sleep(tick_duration) => Some(Message::Tick),
         };
 
         if let Some(m) = msg {
-            // Intercept Enter on the dashboard to transition to session screen.
-            // We do NOT spawn Claude here — we wait for the first user message.
+            // Intercept Enter on the dashboard to hand off the terminal to the agent.
             if let Message::Key(ref key) = m {
                 if key.code == crossterm::event::KeyCode::Enter {
                     if let AppScreen::Dashboard(ref dash) = state.screen {
                         if !dash.available_agents.is_empty() {
                             let agent_info = dash.available_agents[dash.selected_agent].clone();
                             if agent_info.available {
-                                let session_id = Uuid::new_v4().to_string();
-                                let adapter: Arc<dyn AgentAdapter> = match agent_info.adapter.as_str() {
-                                    "claude" => Arc::new(ClaudeAdapter),
-                                    other => Arc::new(GenericAdapter::new(other)),
-                                };
-                                let config = AdapterConfig {
-                                    model: if state.model.is_empty() { None } else { Some(state.model.clone()) },
-                                    ..AdapterConfig::default()
-                                };
+                                let binary = agent_info.binary_path.clone().unwrap();
 
-                                // ── Real PTY launch (Claude interactive mode) ──────────
-                                // For Claude (and any agent with a binary path), spawn a
-                                // real PTY so the agent's native TUI renders inside
-                                // Potato.  Fall back to the per-turn --print model if the
-                                // PTY cannot be opened (e.g. no TTY available in CI).
-                                let binary_path = agent_info.binary_path.clone();
-                                let binary_str_owned;
-                                let binary_str: Option<&str> = if let Some(ref bp) = binary_path {
-                                    binary_str_owned = bp.to_string_lossy().into_owned();
-                                    Some(&binary_str_owned)
-                                } else {
-                                    None
-                                };
+                                // ── Full terminal hand-off ─────────────────────────────
+                                // Suspend Potato's TUI, give Claude the raw terminal,
+                                // wait for Claude to exit, then reclaim.
+                                tracing::info!(
+                                    "Suspending Potato TUI to launch {} at {:?}",
+                                    agent_info.name,
+                                    binary
+                                );
 
-                                // Use a conservative terminal size for the initial PTY;
-                                // it will be resized on the first render pass.
-                                let (pty_cols, pty_rows) = (220u16, 50u16);
+                                // 1. Suspend Potato's TUI.
+                                disable_raw_mode()?;
+                                execute!(io::stdout(), LeaveAlternateScreen)?;
 
-                                let maybe_real_pty = if let Some(bin) = binary_str {
-                                    match RealPty::spawn(bin, &[], pty_cols, pty_rows) {
-                                        Ok(pty) => {
-                                            let dirty_rx = pty.subscribe_dirty();
-                                            pty_dirty_rx = Some(dirty_rx);
-                                            Some(pty)
-                                        }
-                                        Err(e) => {
-                                            tracing::warn!(
-                                                "RealPty::spawn failed (falling back to --print mode): {e}"
-                                            );
-                                            None
-                                        }
-                                    }
-                                } else {
-                                    None
-                                };
+                                // 2. Spawn agent with full terminal inheritance.
+                                let status = std::process::Command::new(&binary)
+                                    .stdin(std::process::Stdio::inherit())
+                                    .stdout(std::process::Stdio::inherit())
+                                    .stderr(std::process::Stdio::inherit())
+                                    .status();
 
-                                // Transition to session screen.
-                                state.enter_session(session_id, &agent_info.name);
-                                if let Some(session) = state.session_mut() {
-                                    session.status = app::state::AgentStatus::Idle;
-                                }
-                                state.real_pty = maybe_real_pty;
-                                session_adapter = Some(adapter);
-                                session_config = Some(config);
+                                tracing::info!(
+                                    "Agent '{}' exited: {:?}",
+                                    agent_info.name,
+                                    status
+                                );
 
-                                // Don't process further for this tick.
+                                // 3. Reclaim Potato's TUI.
+                                enable_raw_mode()?;
+                                execute!(io::stdout(), EnterAlternateScreen)?;
+                                // Re-initialise the backend so ratatui redraws cleanly.
+                                terminal.clear()?;
+
+                                // 4. Stay on dashboard — continue the event loop.
                                 state.tick_count = state.tick_count.wrapping_add(1);
                                 continue;
                             }
@@ -298,44 +259,7 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                     }
                 }
 
-                // ── Real PTY input forwarding ──────────────────────────────────
-                // When a real PTY session is active, ALL key events are
-                // forwarded directly to the child process — except for a
-                // handful of Potato-level escape hatches (Ctrl+Q to quit,
-                // Ctrl+Shift+Esc to return to dashboard).
-                if matches!(state.screen, AppScreen::Session(_)) {
-                    if let Some(ref mut real_pty) = state.real_pty {
-                        // Ctrl+Q → quit Potato entirely.
-                        if key.code == KeyCode::Char('q')
-                            && key.modifiers.contains(KeyModifiers::CONTROL)
-                        {
-                            state.should_quit = true;
-                            break;
-                        }
-                        // Ctrl+\ → return to dashboard (kill PTY).
-                        if key.code == KeyCode::Char('\\')
-                            && key.modifiers.contains(KeyModifiers::CONTROL)
-                        {
-                            state.real_pty = None;
-                            pty_dirty_rx = None;
-                            session_adapter = None;
-                            session_config = None;
-                            state.screen = AppScreen::Dashboard(DashboardState {
-                                available_agents: detect_agents(),
-                                ..DashboardState::default()
-                            });
-                            continue;
-                        }
-                        // Forward all other keys to the PTY.
-                        let bytes = key_event_to_bytes(*key);
-                        if !bytes.is_empty() {
-                            let _ = real_pty.write_input(&bytes);
-                        }
-                        continue;
-                    }
-                }
-
-                // Session key handling — send input to PTY.
+                // Session key handling.
                 if matches!(state.screen, AppScreen::Session(_)) {
                     // ── Global panel/layout keybinds (checked before text input) ──
                     if key.modifiers.contains(KeyModifiers::CONTROL) {
@@ -393,11 +317,8 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                             break;
                         }
                         KeyCode::Esc => {
-                            // Return to dashboard — drop the turn handle and real PTY
-                            // (if any) to let processes exit.
+                            // Return to dashboard — drop the turn handle to let processes exit.
                             turn_handle = None;
-                            state.real_pty = None;
-                            pty_dirty_rx = None;
                             session_adapter = None;
                             session_config = None;
                             state.screen = AppScreen::Dashboard(DashboardState {
@@ -487,7 +408,6 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                             continue;
                         }
                         // ── Approval overlay keys ─────────────────────────────
-                        // These must take priority over normal char input.
                         KeyCode::Char('y') | KeyCode::Char('Y')
                             if session.approval_pending.is_some() =>
                         {
@@ -496,7 +416,6 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                                 .as_ref()
                                 .map(|p| p.tool_id.clone())
                                 .unwrap_or_default();
-                            // Update session state via the pure reducer.
                             app::session_reducer::apply_event(
                                 session,
                                 crate::events::AgentEvent::ApprovalDecision {
@@ -505,8 +424,6 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                                 },
                                 chrono::Utc::now(),
                             );
-                            // Note: approval forwarding to the CLI is a future concern;
-                            // in the per-turn model stdin is closed after the prompt.
                             continue;
                         }
                         KeyCode::Char('n') | KeyCode::Char('N')
@@ -517,7 +434,6 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                                 .as_ref()
                                 .map(|p| p.tool_id.clone())
                                 .unwrap_or_default();
-                            // Update session state via the pure reducer.
                             app::session_reducer::apply_event(
                                 session,
                                 crate::events::AgentEvent::ApprovalDecision {
@@ -526,8 +442,6 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                                 },
                                 chrono::Utc::now(),
                             );
-                            // Note: approval forwarding to the CLI is a future concern;
-                            // in the per-turn model stdin is closed after the prompt.
                             continue;
                         }
                         KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -592,8 +506,6 @@ fn apply_pty_event(state: &mut AppState, event: crate::events::AgentEvent) {
     }
 
     // ── Panel routing (Phase-3) ───────────────────────────────────────────────
-    // Mirror ToolStart/ToolDone/ToolError into the ToolOutputPanel so the
-    // timeline stays in sync with the session state.
     match &event {
         AgentEvent::ToolStart { id, name, input } => {
             let record = app::state::ToolCallRecord {
@@ -630,15 +542,13 @@ fn apply_pty_event(state: &mut AppState, event: crate::events::AgentEvent) {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let cli = Cli::parse();
+    // Initialise file-based logging first — before anything else.
+    // All tracing output goes to ~/.potato/potato.log, never to the terminal.
+    if let Err(e) = log::init_file_logging() {
+        eprintln!("Warning: could not initialise file logging: {e}");
+    }
 
-    // Initialise tracing.
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn")),
-        )
-        .with_writer(io::stderr)
-        .init();
+    let cli = Cli::parse();
 
     install_panic_hook();
 
