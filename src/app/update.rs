@@ -7,7 +7,7 @@ use super::{
     message::{AgentEvent, Message},
     state::{AppState, ChatMessage, PendingApproval, ToolCallInfo, ToolCallStatus},
 };
-use crate::agent::state_machine::AgentState;
+use crate::app::agent_state::AgentState;
 use crate::ui::panels::PanelId;
 
 /// Number of ticks before an error message is auto-dismissed.

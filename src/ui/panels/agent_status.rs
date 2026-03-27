@@ -11,7 +11,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Widget},
 };
 
-use crate::agent::state_machine::AgentState;
+use crate::app::agent_state::AgentState;
 use crate::app::state::AppState;
 use crate::ui::theme::{AMBER, BG, CHARCOAL, CREAM, RUST_RED, SOIL, SPROUT, TAN};
 use super::{Panel, PanelAction, PanelId};
