@@ -25,7 +25,7 @@ use std::time::Duration;
 use anyhow::Result;
 use clap::Parser;
 use crossterm::{
-    event::{Event, KeyCode, KeyModifiers},
+    event::{DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers, MouseEventKind},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
@@ -78,7 +78,7 @@ struct TerminalGuard;
 impl TerminalGuard {
     fn enter() -> Result<Self> {
         enable_raw_mode()?;
-        execute!(io::stdout(), EnterAlternateScreen)?;
+        execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture)?;
         Ok(Self)
     }
 }
@@ -86,7 +86,7 @@ impl TerminalGuard {
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
         let _ = disable_raw_mode();
-        let _ = execute!(io::stdout(), LeaveAlternateScreen);
+        let _ = execute!(io::stdout(), DisableMouseCapture, LeaveAlternateScreen);
     }
 }
 
@@ -330,8 +330,30 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                         }
                     }
 
-                    // ── Terminal focus — route all keys to PTY ────────────────
+                    // ── Terminal focus — viewport scroll first, PTY keys second ──
                     if current_focus == CockpitFocus::Terminal {
+                        if let Some(session) = state.session_mut() {
+                            match key.code {
+                                KeyCode::PageUp => {
+                                    session.scroll_terminal_up(10);
+                                    continue;
+                                }
+                                KeyCode::PageDown => {
+                                    session.scroll_terminal_down(10);
+                                    continue;
+                                }
+                                KeyCode::Home => {
+                                    session.scroll_terminal_up(10_000);
+                                    continue;
+                                }
+                                KeyCode::End => {
+                                    session.reset_terminal_scroll();
+                                    continue;
+                                }
+                                _ => {}
+                            }
+                        }
+
                         let raw_bytes = key_event_to_bytes(*key);
                         if !raw_bytes.is_empty() {
                             if let Some(ref mut pty) = state.real_pty {
@@ -351,6 +373,7 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                                 KeyCode::Enter => {
                                     let text = std::mem::take(&mut session.input_buffer);
                                     session.input_cursor = 0;
+                                    session.reset_terminal_scroll();
                                     if !text.is_empty() {
                                         if let Some(ref mut pty) = state.real_pty {
                                             if let Err(e) = pty.write_input(text.as_bytes()) {
@@ -437,6 +460,31 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                     }
                 }
             } // end if let Message::Key
+
+            if let Message::Mouse(ref mouse) = m {
+                if matches!(state.screen, AppScreen::Session(_)) {
+                    let current_focus = state
+                        .session()
+                        .map(|s| s.cockpit_focus)
+                        .unwrap_or(CockpitFocus::Input);
+
+                    if current_focus == CockpitFocus::Terminal {
+                        if let Some(session) = state.session_mut() {
+                            match mouse.kind {
+                                MouseEventKind::ScrollUp => {
+                                    session.scroll_terminal_up(3);
+                                    continue;
+                                }
+                                MouseEventKind::ScrollDown => {
+                                    session.scroll_terminal_down(3);
+                                    continue;
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
 
             // Standard update/action dispatch.
             let action = update(state, m);

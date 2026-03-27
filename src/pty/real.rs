@@ -121,7 +121,7 @@ impl RealPty {
             .context("failed to clone PTY master reader")?;
 
         // Shared vt100 parser — renderer and reader share this via Arc<Mutex>.
-        let screen = Arc::new(Mutex::new(vt100::Parser::new(rows, cols, 0)));
+        let screen = Arc::new(Mutex::new(vt100::Parser::new(rows, cols, 10_000)));
 
         // Dirty-notify channel: capacity 16 is enough — the UI coalesces ticks.
         let (dirty_tx, _) = broadcast::channel::<()>(16);
@@ -177,6 +177,23 @@ impl RealPty {
             p.set_size(rows, cols);
         }
         Ok(())
+    }
+
+    pub fn set_scrollback(&self, rows: usize) -> usize {
+        if let Ok(mut p) = self.screen.lock() {
+            p.set_scrollback(rows);
+            p.screen().scrollback()
+        } else {
+            0
+        }
+    }
+
+    pub fn scrollback(&self) -> usize {
+        if let Ok(p) = self.screen.lock() {
+            p.screen().scrollback()
+        } else {
+            0
+        }
     }
 
     /// Write raw terminal bytes to the child's stdin.

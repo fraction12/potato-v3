@@ -24,7 +24,7 @@
 //! `Esc` returns to Input.
 //!
 //! - **Input** focus: characters go into `session.input_buffer`; Enter sends
-//!   `input_buffer + "\n"` to the PTY stdin.
+//!   the buffered text plus a real terminal carriage return to the PTY stdin.
 //! - **Terminal** focus: *all* key events (except Ctrl+Q/Ctrl+\) are converted
 //!   to raw byte sequences and written to the PTY stdin unchanged. This lets
 //!   the user interact with Claude's native pickers / approvals / menus.
@@ -157,10 +157,21 @@ fn render_pty_viewport(frame: &mut Frame, area: Rect, state: &mut AppState, focu
     // Inner area available to the PTY (minus border).
     let inner_cols = area.width.saturating_sub(2);
     let inner_rows = area.height.saturating_sub(2);
+    let desired_scroll = state.session().map(|s| s.terminal_scroll).unwrap_or(0);
+
+    let mut synced_scroll = None;
 
     if let Some(ref pty) = state.real_pty {
         // Resize PTY every frame so it matches the exact output rect.
         let _ = pty.resize(inner_cols.max(1), inner_rows.max(1));
+        let actual_scroll = pty.set_scrollback(desired_scroll);
+        synced_scroll = Some(actual_scroll);
+
+        let title = if actual_scroll > 0 {
+            Span::styled(format!(" Claude ↑{} ", actual_scroll), title_style)
+        } else {
+            Span::styled(" Claude ", title_style)
+        };
 
         if let Ok(parser) = pty.screen.try_lock() {
             use tui_term::widget::PseudoTerminal;
@@ -168,7 +179,7 @@ fn render_pty_viewport(frame: &mut Frame, area: Rect, state: &mut AppState, focu
                 Block::default()
                     .borders(Borders::ALL)
                     .border_style(border_style)
-                    .title(Span::styled(" Claude ", title_style)),
+                    .title(title.clone()),
             );
             frame.render_widget(widget, area);
         } else {
@@ -178,7 +189,7 @@ fn render_pty_viewport(frame: &mut Frame, area: Rect, state: &mut AppState, focu
                     Block::default()
                         .borders(Borders::ALL)
                         .border_style(border_style)
-                        .title(" Claude "),
+                        .title(title),
                 )
                 .style(Style::default().fg(STONE));
             frame.render_widget(busy, area);
@@ -196,6 +207,12 @@ fn render_pty_viewport(frame: &mut Frame, area: Rect, state: &mut AppState, focu
         )
         .style(Style::default().fg(STONE));
         frame.render_widget(placeholder, area);
+    }
+
+    if let Some(actual_scroll) = synced_scroll {
+        if let Some(session) = state.session_mut() {
+            session.terminal_scroll = actual_scroll;
+        }
     }
 
     // Render "TERMINAL" focus indicator in top-right corner of the block when

@@ -302,6 +302,12 @@ pub struct SessionState {
 
     /// Index of the selected session in the left-rail sessions list.
     pub selected_session: usize,
+
+    /// Scrollback offset for the embedded Claude terminal viewport.
+    ///
+    /// `0` means live-follow at the bottom. Larger values mean the user has
+    /// scrolled up in the Claude pane.
+    pub terminal_scroll: usize,
 }
 
 impl SessionState {
@@ -323,7 +329,24 @@ impl SessionState {
             tokens_used: 0,
             cockpit_focus: CockpitFocus::Input,
             selected_session: 0,
+            terminal_scroll: 0,
         }
+    }
+
+    pub fn scroll_terminal_up(&mut self, lines: usize) {
+        self.terminal_scroll = self.terminal_scroll.saturating_add(lines);
+    }
+
+    pub fn scroll_terminal_down(&mut self, lines: usize) {
+        self.terminal_scroll = self.terminal_scroll.saturating_sub(lines);
+    }
+
+    pub fn reset_terminal_scroll(&mut self) {
+        self.terminal_scroll = 0;
+    }
+
+    pub fn terminal_is_live(&self) -> bool {
+        self.terminal_scroll == 0
     }
 }
 
@@ -564,6 +587,28 @@ mod tests {
         assert!(s.transcript.is_empty());
         assert_eq!(s.scroll_offset, 0);
         assert!(!s.user_scrolled);
+        assert_eq!(s.terminal_scroll, 0);
+        assert!(s.terminal_is_live());
+    }
+
+    #[test]
+    fn terminal_scroll_saturates_and_resets() {
+        let mut s = SessionState::new("id", "agent");
+        s.scroll_terminal_up(24);
+        s.scroll_terminal_up(10);
+        assert_eq!(s.terminal_scroll, 34);
+        assert!(!s.terminal_is_live());
+
+        s.scroll_terminal_down(9);
+        assert_eq!(s.terminal_scroll, 25);
+
+        s.scroll_terminal_down(999);
+        assert_eq!(s.terminal_scroll, 0);
+        assert!(s.terminal_is_live());
+
+        s.scroll_terminal_up(12);
+        s.reset_terminal_scroll();
+        assert_eq!(s.terminal_scroll, 0);
     }
 
     #[test]
