@@ -326,12 +326,18 @@ fn render_input_bar(frame: &mut Frame, area: Rect, session: &SessionState, focus
 fn render_right_rail(frame: &mut Frame, area: Rect, state: &AppState, focus: CockpitFocus) {
     let focused = focus == CockpitFocus::Sidebar;
     let title_color = if focused { AMBER } else { TAN };
+    let border_fg = if focused { AMBER } else { BRASS };
+    let label = Style::default().fg(STONE);
+    let value = Style::default().fg(CREAM);
 
-    // Split sidebar vertically: Metrics | Tools | Quick
-    let [metrics_area, tools_area, quick_area] = Layout::vertical([
-        Constraint::Length(7),
-        Constraint::Length(10),
-        Constraint::Min(0),
+    // Inner width for truncation (border + 1 char padding each side).
+    let inner_w = area.width.saturating_sub(4) as usize;
+
+    // Split sidebar vertically: Metrics | Tools | Totals
+    let [metrics_area, tools_area, totals_area] = Layout::vertical([
+        Constraint::Length(9),
+        Constraint::Min(5),
+        Constraint::Length(6),
     ])
     .areas(area);
 
@@ -342,99 +348,124 @@ fn render_right_rail(frame: &mut Frame, area: Rect, state: &AppState, focus: Coc
         .unwrap_or_default();
 
     // ── Metrics ───────────────────────────────────────────────────────────────
+
+    let model_short = sidebar
+        .model
+        .as_deref()
+        .unwrap_or("—")
+        .strip_prefix("claude-")
+        .unwrap_or(sidebar.model.as_deref().unwrap_or("—"));
+
     let metrics_text = vec![
-        Line::from(vec![
-            Span::styled("Model ", Style::default().fg(BRASS)),
-            Span::raw(sidebar.model.unwrap_or_else(|| "—".to_string())),
-        ]),
-        Line::from(vec![
-            Span::styled("Turns ", Style::default().fg(BRASS)),
-            Span::raw(format!("{}", sidebar.turns)),
-        ]),
-        Line::from(vec![
-            Span::styled("I/O   ", Style::default().fg(BRASS)),
-            Span::raw(format!("{} / {}", sidebar.usage.input_tokens, sidebar.usage.output_tokens)),
-        ]),
-        Line::from(vec![
-            Span::styled("Cache ", Style::default().fg(BRASS)),
-            Span::raw(format!("{} / {}", sidebar.usage.cache_read_input_tokens, sidebar.usage.cache_creation_input_tokens)),
-        ]),
-        Line::from(vec![
-            Span::styled("Stop  ", Style::default().fg(BRASS)),
-            Span::raw(sidebar.last_stop_reason.unwrap_or_else(|| "—".to_string())),
-        ]),
+        Line::from(Span::raw("")),
+        metric_line(" Model", model_short, label, value),
+        metric_line(" Turns", &sidebar.turns.to_string(), label, value),
+        metric_line(" In",    &fmt_tokens(sidebar.usage.input_tokens), label, value),
+        metric_line(" Out",   &fmt_tokens(sidebar.usage.output_tokens), label, value),
+        metric_line(" Cache", &fmt_tokens(sidebar.usage.cache_read_input_tokens), label, value),
+        metric_line(" Stop",  sidebar.last_stop_reason.as_deref().unwrap_or("—"), label, value),
     ];
 
     frame.render_widget(
-        Paragraph::new(metrics_text).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(if focused { AMBER } else { BRASS }))
-                .title(Span::styled(" Claude ", Style::default().fg(title_color))),
-        ),
+        Paragraph::new(metrics_text)
+            .block(sidebar_block(" Claude ", title_color, border_fg))
+            .style(Style::default().bg(BG)),
         metrics_area,
     );
 
     // ── Tools ─────────────────────────────────────────────────────────────────
+
+    let max_tools = tools_area.height.saturating_sub(2) as usize; // minus borders
+
     let tools_text: Vec<Line> = if sidebar.tools.is_empty() {
-        vec![Line::from(Span::styled("  waiting for Claude log…", Style::default().fg(STONE)))]
+        vec![
+            Line::from(Span::raw("")),
+            Line::from(Span::styled(" waiting…", Style::default().fg(STONE))),
+        ]
     } else {
         sidebar
             .tools
             .iter()
             .rev()
-            .take(6)
+            .take(max_tools)
             .map(|e| {
                 let icon = match e.status {
-                    ClaudeToolStatus::Done => Span::styled("✓ ", Style::default().fg(SPROUT)),
-                    ClaudeToolStatus::Error => Span::styled("✗ ", Style::default().fg(ROSE)),
-                    ClaudeToolStatus::Running => Span::styled("⏳ ", Style::default().fg(AMBER)),
+                    ClaudeToolStatus::Done    => Span::styled(" ✓ ", Style::default().fg(SPROUT)),
+                    ClaudeToolStatus::Error   => Span::styled(" ✗ ", Style::default().fg(ROSE)),
+                    ClaudeToolStatus::Running => Span::styled(" ⏳", Style::default().fg(AMBER)),
                 };
-                let max_name = (area.width.saturating_sub(5)) as usize;
-                let name = if e.name.len() > max_name && max_name > 1 {
-                    format!("{}…", &e.name[..max_name.saturating_sub(1)])
-                } else {
-                    e.name.clone()
-                };
-                Line::from(vec![icon, Span::styled(name, Style::default().fg(CREAM))])
+                let max_name = inner_w.saturating_sub(3);
+                let name = truncate_str(&e.name, max_name);
+                Line::from(vec![icon, Span::styled(name, value)])
             })
             .collect()
     };
 
     frame.render_widget(
-        Paragraph::new(tools_text).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(if focused { AMBER } else { BRASS }))
-                .title(Span::styled(" Tools ", Style::default().fg(title_color))),
-        ),
+        Paragraph::new(tools_text)
+            .block(sidebar_block(" Tools ", title_color, border_fg))
+            .style(Style::default().bg(BG)),
         tools_area,
     );
 
-    // ── Quick nav / direct counters ───────────────────────────────────────────
-    let quick_lines = vec![
-        Line::from(vec![
-            Span::styled("Web   ", Style::default().fg(BRASS)),
-            Span::styled(
-                format!("{} / {}", sidebar.usage.web_search_requests, sidebar.usage.web_fetch_requests),
-                Style::default().fg(CREAM),
-            ),
-        ]),
-        Line::from(vec![
-            Span::styled("Total ", Style::default().fg(BRASS)),
-            Span::styled(format!("{}", sidebar.usage.total_tokens()), Style::default().fg(CREAM)),
-        ]),
-        Line::from(Span::styled("  direct from Claude JSONL", Style::default().fg(STONE))),
+    // ── Totals ────────────────────────────────────────────────────────────────
+
+    let totals_text = vec![
+        Line::from(Span::raw("")),
+        metric_line(" Total", &fmt_tokens(sidebar.usage.total_tokens()), label, value),
+        metric_line(" Web",   &format!("{}s {}f", sidebar.usage.web_search_requests, sidebar.usage.web_fetch_requests), label, value),
+        metric_line(" New$",  &fmt_tokens(sidebar.usage.cache_creation_input_tokens), label, value),
     ];
+
     frame.render_widget(
-        Paragraph::new(quick_lines).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(if focused { AMBER } else { BRASS }))
-                .title(Span::styled(" Source ", Style::default().fg(title_color))),
-        ),
-        quick_area,
+        Paragraph::new(totals_text)
+            .block(sidebar_block(" Totals ", title_color, border_fg))
+            .style(Style::default().bg(BG)),
+        totals_area,
     );
+}
+
+/// Render a sidebar section block with consistent styling.
+fn sidebar_block(title: &str, title_color: Color, border_color: Color) -> Block<'_> {
+    Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(border_color))
+        .title(Span::styled(title, Style::default().fg(title_color)))
+}
+
+/// Render a `label  value` metric line with right-aligned value appearance.
+fn metric_line<'a>(
+    name: &'a str,
+    val: &str,
+    label_style: Style,
+    value_style: Style,
+) -> Line<'a> {
+    // Pad label to 6 chars for alignment.
+    let padded_label = format!("{:<6}", name);
+    Line::from(vec![
+        Span::styled(padded_label, label_style),
+        Span::styled(format!(" {}", val), value_style),
+    ])
+}
+
+/// Format token counts with `k` suffix for readability.
+fn fmt_tokens(n: u64) -> String {
+    if n >= 1_000_000 {
+        format!("{:.1}M", n as f64 / 1_000_000.0)
+    } else if n >= 10_000 {
+        format!("{:.1}k", n as f64 / 1_000.0)
+    } else {
+        n.to_string()
+    }
+}
+
+/// Truncate a string to `max` chars, appending `…` if needed.
+fn truncate_str(s: &str, max: usize) -> String {
+    if s.len() <= max || max < 2 {
+        s.to_string()
+    } else {
+        format!("{}…", &s[..max - 1])
+    }
 }
 
 // ── Status bar (full width) ───────────────────────────────────────────────────
@@ -457,9 +488,8 @@ fn render_status_bar(
     let (status_label, status_fg) = agent_status_display(&session.status);
     let status_span = Span::styled(status_label, Style::default().fg(status_fg).bg(CHARCOAL));
 
-    let tokens = session.metrics.total_tokens();
     let token_span = Span::styled(
-        format!("tok: {}", tokens),
+        format!("tok: {}", fmt_tokens(session.tokens_used)),
         Style::default().fg(BRASS).bg(CHARCOAL),
     );
 
