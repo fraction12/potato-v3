@@ -306,102 +306,35 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
 }
 
 /// Apply a PTY event to the application state.
+///
+/// Delegates to the pure [`app::session_reducer::apply_event`] function so all
+/// state-transition logic is unit-testable without a terminal or PTY.
 fn apply_pty_event(state: &mut AppState, event: crate::events::AgentEvent) {
     use crate::events::AgentEvent;
 
-    let Some(session) = state.session_mut() else { return };
-
-    match event {
-        AgentEvent::TextDelta { text } => {
-            // Append to the last assistant transcript entry, or create one.
-            match session.transcript.last_mut() {
-                Some(e) if e.role == app::state::MessageRole::Assistant => {
-                    e.content.push_str(&text);
-                }
-                _ => {
-                    session.transcript.push(app::state::TranscriptEntry::assistant(&text));
-                }
-            }
-            session.status = app::state::AgentStatus::Thinking;
-        }
-        AgentEvent::TextDone { full_text } => {
-            // Ensure the last entry reflects the complete text.
-            if let Some(e) = session.transcript.last_mut() {
-                if e.role == app::state::MessageRole::Assistant {
-                    e.content = full_text;
-                }
-            }
-        }
-        AgentEvent::ToolStart { id, name, input } => {
-            session.status = app::state::AgentStatus::RunningTool { name: name.clone() };
-            session.tool_calls.push(app::state::ToolCallRecord {
-                id,
-                name,
-                input,
-                output: None,
-                started_at: chrono::Utc::now(),
-                duration_ms: None,
-                success: None,
-            });
-        }
-        AgentEvent::ToolDone { id, output, duration_ms, success } => {
-            if let Some(tc) = session.tool_calls.iter_mut().find(|t| t.id == id) {
-                tc.output = Some(output);
-                tc.duration_ms = Some(duration_ms);
-                tc.success = Some(success);
-            }
-            session.status = app::state::AgentStatus::Thinking;
-        }
-        AgentEvent::ToolError { id, error } => {
-            if let Some(tc) = session.tool_calls.iter_mut().find(|t| t.id == id) {
-                tc.output = Some(error.clone());
-                tc.success = Some(false);
-            }
-        }
-        AgentEvent::ApprovalRequired { tool_id, tool_name, input } => {
-            session.status = app::state::AgentStatus::WaitingApproval { tool_name: tool_name.clone() };
-            session.approval_pending = Some(app::state::PendingApprovalSession { tool_id, tool_name, input });
-        }
-        AgentEvent::TurnDone { usage } => {
-            session.status = app::state::AgentStatus::Idle;
-            if let Some(u) = usage {
-                session.metrics.input_tokens += u.input_tokens;
-                session.metrics.output_tokens += u.output_tokens;
-                if let Some(cost) = u.cost_usd {
-                    session.metrics.total_cost_usd += cost;
-                }
-                session.metrics.turn_count += 1;
-            }
-        }
-        AgentEvent::SessionBound { agent_session_id } => {
-            session.session_id = agent_session_id;
-        }
-        AgentEvent::AgentStarted { .. } => {
-            session.status = app::state::AgentStatus::Thinking;
-        }
-        AgentEvent::AgentExited { exit_code } => {
-            session.status = app::state::AgentStatus::Exited { code: exit_code };
-        }
-        AgentEvent::Error { message } => {
-            session.status = app::state::AgentStatus::Error { message: message.clone() };
-            session.transcript.push(app::state::TranscriptEntry::system(format!("Error: {}", message)));
-        }
+    // Handle side-effectful variants that cannot live in the pure reducer.
+    match &event {
         AgentEvent::Warning { message } => {
             tracing::warn!("{}", message);
+            return;
         }
         AgentEvent::Raw { payload } => {
-            // Append raw output as an assistant message for visibility.
-            match session.transcript.last_mut() {
-                Some(e) if e.role == app::state::MessageRole::Assistant => {
-                    e.content.push_str(&payload);
-                    e.content.push('\n');
-                }
-                _ => {
-                    session.transcript.push(app::state::TranscriptEntry::assistant(&payload));
-                }
+            // Raw lines are appended as assistant text; delegate to reducer.
+            let text_event = AgentEvent::TextDelta { text: {
+                let mut s = payload.clone();
+                s.push('\n');
+                s
+            }};
+            if let Some(session) = state.session_mut() {
+                app::session_reducer::apply_event(session, text_event, chrono::Utc::now());
             }
+            return;
         }
         _ => {}
+    }
+
+    if let Some(session) = state.session_mut() {
+        app::session_reducer::apply_event(session, event, chrono::Utc::now());
     }
 }
 
