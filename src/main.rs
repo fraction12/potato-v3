@@ -347,14 +347,15 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                     if current_focus == CockpitFocus::Input {
                         if let AppScreen::Session(ref mut session) = state.screen {
                             match key.code {
-                                // Enter — send input_buffer + newline to PTY.
+                                // Enter — send input_buffer, then a real terminal Enter (CR) to PTY.
                                 KeyCode::Enter => {
                                     let text = std::mem::take(&mut session.input_buffer);
                                     session.input_cursor = 0;
                                     if !text.is_empty() {
-                                        let input_bytes = format!("{}\n", text);
                                         if let Some(ref mut pty) = state.real_pty {
-                                            if let Err(e) = pty.write_input(input_bytes.as_bytes()) {
+                                            if let Err(e) = pty.write_input(text.as_bytes()) {
+                                                tracing::warn!("PTY write_input (text): {e}");
+                                            } else if let Err(e) = pty.write_input(b"\r") {
                                                 tracing::warn!("PTY write_input (enter): {e}");
                                             }
                                         }
