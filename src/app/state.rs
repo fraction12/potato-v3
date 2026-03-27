@@ -9,6 +9,7 @@ use chrono::{DateTime, Utc};
 
 use crate::app::agent_state::AgentState;
 use crate::metrics::SessionMetrics;
+use crate::pty::RealPty;
 use crate::ui::focus::FocusRing;
 use crate::ui::layout::LayoutManager;
 use crate::ui::layout::LayoutPreset as NewLayoutPreset;
@@ -160,6 +161,46 @@ pub struct DashboardState {
     pub focus: DashboardFocus,
 }
 
+// ── Cockpit focus ─────────────────────────────────────────────────────────────
+
+/// Which panel in the cockpit session screen holds keyboard focus.
+///
+/// Tab order: Sessions → Input → Terminal → Sidebar → (wrap).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CockpitFocus {
+    /// Left rail — Claude session list.
+    Sessions,
+    /// Bottom-center — Potato-owned text input bar.
+    #[default]
+    Input,
+    /// Center — the embedded PTY terminal viewport.
+    Terminal,
+    /// Right rail — metrics / tools / skills sidebar.
+    Sidebar,
+}
+
+impl CockpitFocus {
+    /// Advance to the next focus in the ring (Tab).
+    pub fn next(self) -> Self {
+        match self {
+            Self::Sessions => Self::Input,
+            Self::Input    => Self::Terminal,
+            Self::Terminal => Self::Sidebar,
+            Self::Sidebar  => Self::Sessions,
+        }
+    }
+
+    /// Retreat to the previous focus in the ring (Shift+Tab).
+    pub fn prev(self) -> Self {
+        match self {
+            Self::Sessions => Self::Sidebar,
+            Self::Input    => Self::Sessions,
+            Self::Terminal => Self::Input,
+            Self::Sidebar  => Self::Terminal,
+        }
+    }
+}
+
 // ── Session types ─────────────────────────────────────────────────────────────
 
 /// A transcript entry (message or tool event) shown in the session view.
@@ -250,6 +291,17 @@ pub struct SessionState {
     /// Pass this as `--resume <id>` when spawning the next turn so Claude can
     /// continue the conversation thread. `None` until the first turn completes.
     pub claude_session_id: Option<String>,
+
+    /// Cumulative token count for this session (updated from metrics events).
+    pub tokens_used: u64,
+
+    /// Which cockpit panel currently holds keyboard focus.
+    ///
+    /// Default: `Input` — the user can start typing immediately.
+    pub cockpit_focus: CockpitFocus,
+
+    /// Index of the selected session in the left-rail sessions list.
+    pub selected_session: usize,
 }
 
 impl SessionState {
@@ -268,6 +320,9 @@ impl SessionState {
             input_cursor: 0,
             tick_count: 0,
             claude_session_id: None,
+            tokens_used: 0,
+            cockpit_focus: CockpitFocus::Input,
+            selected_session: 0,
         }
     }
 }
@@ -338,6 +393,13 @@ pub struct AppState {
     /// Tool output panel — owns the collapsible tool execution timeline.
     pub tool_output_panel: ToolOutputPanel,
 
+    // ── Real PTY (cockpit mode) ───────────────────────────────────────────────
+    /// Live PTY session wrapping the Claude Code process.
+    ///
+    /// `Some` while an interactive session is active; `None` on the dashboard
+    /// or after the session exits.  Set when the user presses Enter on the
+    /// dashboard and a `RealPty::spawn` succeeds.
+    pub real_pty: Option<RealPty>,
 }
 
 impl Default for AppState {
@@ -367,6 +429,7 @@ impl Default for AppState {
             focus_ring: FocusRing::new(vec![PanelId::Chat, PanelId::ToolOutput]),
             chat_panel: ChatPanel::new(Vec::new()),
             tool_output_panel: ToolOutputPanel::new(),
+            real_pty: None,
         }
     }
 }

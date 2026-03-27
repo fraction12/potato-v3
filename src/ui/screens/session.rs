@@ -1,379 +1,444 @@
-//! Session screen — the rich cockpit wrapping a live agent PTY session.
+//! Session screen — cockpit layout wrapping a live agent PTY session.
 //!
-//! Layout:
+//! Layout (3-column):
 //! ```
-//! ┌───────────────────────────────────────┬────────────────────┐
-//! │  Transcript (70%)                     │  Tool Timeline (30%)│
-//! │  ❯ hello                              │  ✓ read_file  12ms  │
-//! │    Hi there, how can I help?          │  ⏳ shell     …     │
-//! │    ▋                                  │                    │
-//! ├───────────────────────────────────────┴────────────────────┤
-//! │  [claude]  claude-opus-4  Thinking…  tokens: 120  $0.001  │  status bar
-//! ├────────────────────────────────────────────────────────────┤
-//! │  ❯ _                                                       │  input bar
-//! └────────────────────────────────────────────────────────────┘
+//! ┌─────────────────┬──────────────────────────────────┬─────────────────┐
+//! │  Sessions       │                                  │  Claude metrics │
+//! │  (left rail)    │   Claude PTY terminal viewport   │  / tools        │
+//! │                 │   (center, fills available h)    │  / skills       │
+//! │  ● session-1    │                                  │  / other        │
+//! │                 ├──────────────────────────────────┤                 │
+//! │                 │  ❯ Potato input bar              │                 │
+//! └─────────────────┴──────────────────────────────────┴─────────────────┘
+//! │  Status bar (full width, 1 line)                                     │
+//! └──────────────────────────────────────────────────────────────────────┘
 //! ```
 //!
-//! If `approval_pending` is set, a full-width overlay is rendered above the
-//! input bar showing the tool name, input preview, and approve/deny prompts.
+//! ## Focus model
+//!
+//! Default focus: **Input**.
+//!
+//! `Tab` cycles: Sessions → Input → Terminal → Sidebar → Sessions.
+//! `Shift+Tab` reverses.
+//! `Ctrl+J` jumps directly to Terminal.
+//! `Esc` returns to Input.
+//!
+//! - **Input** focus: characters go into `session.input_buffer`; Enter sends
+//!   `input_buffer + "\n"` to the PTY stdin.
+//! - **Terminal** focus: *all* key events (except Ctrl+Q/Ctrl+\) are converted
+//!   to raw byte sequences and written to the PTY stdin unchanged. This lets
+//!   the user interact with Claude's native pickers / approvals / menus.
+//! - **Sessions / Sidebar** focus: arrow keys navigate lists; Enter/Esc return
+//!   to Input.
 
 use ratatui::{
     Frame,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
+    widgets::{Block, Borders, List, ListItem, Paragraph},
 };
 
-use crate::app::state::{
-    AgentStatus, AppScreen, AppState, MessageRole, SessionState, ToolCallRecord, TranscriptEntry,
-};
-use crate::ui::layout::{LayoutManager, LayoutPreset};
-use crate::ui::panels::Panel;
+use crate::app::state::{AgentStatus, AppScreen, AppState, CockpitFocus, SessionState};
 use crate::ui::theme::{AMBER, BG, BROWN, CHARCOAL, CREAM, RUST_RED, SOIL, SPROUT, TAN};
 
-// ── Muted gray for "exited / unavailable" text ───────────────────────────────
+// ── Constants ─────────────────────────────────────────────────────────────────
+
 const MUTED: Color = Color::Rgb(100, 100, 100);
+/// Width of the left and right rails (columns).
+const RAIL_WIDTH: u16 = 18;
 
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 /// Render the full session cockpit screen.
 ///
-/// Uses [`LayoutManager`] with the Sidebar preset to split the main area into
-/// a 70% chat column and a 30% tool timeline column.  Status bar and input bar
-/// are hardcoded at the bottom.
-pub fn render_session(frame: &mut Frame, area: Rect, state: &AppState) {
-    let AppScreen::Session(ref session) = state.screen else { return };
+/// Takes `&mut AppState` so it can call `real_pty.resize()` every frame to
+/// keep the PTY size in sync with the rendered output area.
+pub fn render_session(frame: &mut Frame, area: Rect, state: &mut AppState) {
+    let AppScreen::Session(_) = state.screen else { return };
 
     // Outer background fill.
-    let outer = Block::default().style(Style::default().bg(BG));
-    frame.render_widget(outer, area);
+    frame.render_widget(Block::default().style(Style::default().bg(BG)), area);
 
-    // Decide if approval overlay takes over the bottom row.
-    let has_approval = session.approval_pending.is_some();
+    // ── Outer vertical split: [content_rows] | [status_bar 1 line] ───────────
+    let [content_area, status_area] = Layout::vertical([
+        Constraint::Min(0),
+        Constraint::Length(1),
+    ])
+    .areas(area);
 
-    // Vertical: main area | status bar | (approval overlay or input bar).
-    let rows = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Min(0),    // main area (chat + tool timeline)
-            Constraint::Length(1), // status bar
-            Constraint::Length(if has_approval { 5 } else { 1 }), // approval or input
-        ])
-        .split(area);
+    // ── Horizontal split: [left_rail] | [center_col] | [right_rail] ──────────
+    let [left_area, center_area, right_area] = Layout::horizontal([
+        Constraint::Length(RAIL_WIDTH),
+        Constraint::Min(0),
+        Constraint::Length(RAIL_WIDTH + 4), // sidebar slightly wider
+    ])
+    .areas(content_area);
 
-    // Use LayoutManager (Sidebar preset) to split the main area.
-    let layout_mgr = LayoutManager::new(LayoutPreset::Sidebar);
-    let panel_areas = layout_mgr.compute_areas(rows[0]);
+    // ── Center column: [pty_output (min)] | [input_bar 3 lines] ──────────────
+    let [pty_area, input_area] = Layout::vertical([
+        Constraint::Min(0),
+        Constraint::Length(3),
+    ])
+    .areas(center_area);
 
-    // Chat / transcript area.
-    use crate::ui::panels::PanelId;
-    let chat_area = panel_areas.get(&PanelId::Chat).copied().unwrap_or(rows[0]);
-    let tool_area = panel_areas.get(&PanelId::ToolOutput).copied();
+    // Pull focus out before borrowing state mutably for the PTY resize.
+    let focus = state
+        .session()
+        .map(|s| s.cockpit_focus)
+        .unwrap_or(CockpitFocus::Input);
 
-    let chat_focused = state.focus_ring.focused() == &PanelId::Chat;
-    let tool_focused = state.focus_ring.focused() == &PanelId::ToolOutput;
+    // Render PTY viewport (needs &mut state for resize).
+    render_pty_viewport(frame, pty_area, state, focus);
 
-    // ── Transcript rendering path ─────────────────────────────────────────────
-    // Render ChatPanel if we have one; fall back to the legacy transcript renderer.
-    state.chat_panel.render(frame, chat_area, chat_focused, state);
+    // Now borrow session immutably for the rest.
+    let AppScreen::Session(ref session) = state.screen else { return };
 
-    // Render ToolOutputPanel in the tool area (if visible).
-    if let Some(tool_rect) = tool_area {
-        state.tool_output_panel.render(frame, tool_rect, tool_focused, state);
-    }
-
-    render_status_bar(frame, rows[1], session, &state.model);
-
-    if has_approval {
-        render_approval_overlay(frame, rows[2], session);
-    } else {
-        render_input_bar(frame, rows[2], session);
-    }
+    render_left_rail(frame, left_area, session, focus);
+    render_input_bar(frame, input_area, session, focus);
+    render_right_rail(frame, right_area, state, focus);
+    render_status_bar(frame, status_area, session, &state.model, focus);
 }
 
-// ── Main area (legacy — kept for tests) ──────────────────────────────────────
+// ── Left rail — session list ──────────────────────────────────────────────────
 
-#[allow(dead_code)]
-fn render_main_area(frame: &mut Frame, area: Rect, session: &SessionState) {
-    let cols = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
-        .split(area);
-
-    render_transcript(frame, cols[0], session);
-    render_tool_timeline(frame, cols[1], session);
-}
-
-// ── Transcript ────────────────────────────────────────────────────────────────
-
-fn render_transcript(frame: &mut Frame, area: Rect, session: &SessionState) {
-    let is_thinking = matches!(session.status, AgentStatus::Thinking);
-
-    let border_style = Style::default().fg(SOIL);
-    let block = Block::default()
-        .title(Span::styled(" Transcript ", Style::default().fg(TAN)))
-        .borders(Borders::ALL)
-        .border_style(border_style)
-        .style(Style::default().bg(BG));
-
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-
-    if session.transcript.is_empty() {
-        let line = match session.status {
-            AgentStatus::Starting => "  Starting agent…",
-            _ => "  Waiting for first message…",
-        };
-        let p = Paragraph::new(line).style(Style::default().fg(SOIL));
-        frame.render_widget(p, inner);
-        return;
-    }
-
-    // Build all lines. The last assistant entry gets a blinking cursor if
-    // the agent is actively streaming (Thinking status).
-    let total_entries = session.transcript.len();
-    let lines: Vec<Line> = session
-        .transcript
-        .iter()
-        .enumerate()
-        .flat_map(|(idx, entry)| {
-            let is_last = idx == total_entries - 1;
-            let add_cursor =
-                is_thinking && is_last && entry.role == MessageRole::Assistant;
-            transcript_entry_to_lines(entry, add_cursor)
-        })
-        .collect();
-
-    // Scroll calculation: scroll_offset=0 means pinned to bottom.
-    let total = lines.len() as u16;
-    let height = inner.height;
-    let scroll = if total > height {
-        // max_scroll is how far up we can scroll.
-        let max_scroll = total.saturating_sub(height);
-        // scroll_offset is "lines from bottom", clamped to max.
-        let from_bottom = session.scroll_offset.min(max_scroll);
-        max_scroll - from_bottom
+fn render_left_rail(frame: &mut Frame, area: Rect, session: &SessionState, focus: CockpitFocus) {
+    let focused = focus == CockpitFocus::Sessions;
+    let border_style = if focused {
+        Style::default().fg(AMBER)
     } else {
-        0
+        Style::default().fg(CHARCOAL)
+    };
+    let title_style = if focused {
+        Style::default().fg(AMBER).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(TAN)
     };
 
-    let para = Paragraph::new(lines)
-        .style(Style::default().fg(CREAM))
-        .wrap(Wrap { trim: false })
-        .scroll((scroll, 0));
+    // Build session list items. Currently we only show the active session.
+    let short_id: String = session.session_id.chars().take(10).collect();
+    let items: Vec<ListItem> = vec![ListItem::new(Line::from(vec![
+        Span::styled("● ", Style::default().fg(SPROUT)),
+        Span::styled(short_id, Style::default().fg(CREAM)),
+    ]))
+    .style(Style::default().bg(if focused {
+        Color::Rgb(45, 30, 20)
+    } else {
+        BG
+    }))];
 
-    frame.render_widget(para, inner);
-}
+    let list = List::new(items)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(border_style)
+                .title(Span::styled(" Sessions ", title_style)),
+        )
+        .style(Style::default().fg(SOIL).bg(BG));
 
-fn transcript_entry_to_lines(entry: &TranscriptEntry, add_cursor: bool) -> Vec<Line<'static>> {
-    match entry.role {
-        MessageRole::User => user_entry_lines(entry),
-        MessageRole::Assistant => assistant_entry_lines(entry, add_cursor),
-        MessageRole::System => system_entry_lines(entry),
-        MessageRole::Error => error_entry_lines(entry),
-    }
-}
-
-/// User messages: `❯ ` prefix in Amber, text in Cream.
-fn user_entry_lines(entry: &TranscriptEntry) -> Vec<Line<'static>> {
-    let mut lines = vec![];
-    let content = entry.content.clone();
-    let mut first = true;
-    for text_line in content.lines() {
-        if first {
-            lines.push(Line::from(vec![
-                Span::styled("❯ ", Style::default().fg(AMBER).add_modifier(Modifier::BOLD)),
-                Span::styled(text_line.to_string(), Style::default().fg(CREAM)),
-            ]));
-            first = false;
-        } else {
-            lines.push(Line::from(vec![
-                Span::raw("  "),
-                Span::styled(text_line.to_string(), Style::default().fg(CREAM)),
-            ]));
-        }
-    }
-    if first {
-        // Empty content — still emit the prompt.
-        lines.push(Line::from(Span::styled(
-            "❯ ",
-            Style::default().fg(AMBER).add_modifier(Modifier::BOLD),
-        )));
-    }
-    lines.push(Line::from(""));
-    lines
-}
-
-/// Assistant messages: Cream text, no prefix. Blinking cursor on last line
-/// if `add_cursor` is true.
-fn assistant_entry_lines(entry: &TranscriptEntry, add_cursor: bool) -> Vec<Line<'static>> {
-    let mut lines = vec![];
-    let content = entry.content.clone();
-    let text_lines: Vec<&str> = content.lines().collect();
-    let total = text_lines.len();
-
-    for (i, text_line) in text_lines.iter().enumerate() {
-        let is_last_line = i == total.saturating_sub(1);
-        if add_cursor && is_last_line {
-            // Append blinking cursor to the last line of streaming text.
-            let mut spans = vec![Span::styled(
-                text_line.to_string(),
-                Style::default().fg(CREAM),
-            )];
-            spans.push(Span::styled(
-                "▋",
-                Style::default().fg(AMBER).add_modifier(Modifier::SLOW_BLINK),
-            ));
-            lines.push(Line::from(spans));
-        } else {
-            lines.push(Line::from(Span::styled(
-                text_line.to_string(),
-                Style::default().fg(CREAM),
-            )));
-        }
-    }
-
-    // If content is empty and we're streaming, emit just the cursor.
-    if content.is_empty() && add_cursor {
-        lines.push(Line::from(Span::styled(
-            "▋",
-            Style::default().fg(AMBER).add_modifier(Modifier::SLOW_BLINK),
-        )));
-    }
-
-    lines.push(Line::from(""));
-    lines
-}
-
-/// System messages: muted SOIL color.
-fn system_entry_lines(entry: &TranscriptEntry) -> Vec<Line<'static>> {
-    let content = entry.content.clone();
-    let mut lines: Vec<Line> = content
-        .lines()
-        .map(|l| {
-            Line::from(vec![
-                Span::styled("⚙ ", Style::default().fg(SOIL)),
-                Span::styled(l.to_string(), Style::default().fg(SOIL)),
-            ])
-        })
-        .collect();
-    lines.push(Line::from(""));
-    lines
-}
-
-/// Error messages: Rust red.
-fn error_entry_lines(entry: &TranscriptEntry) -> Vec<Line<'static>> {
-    let content = entry.content.clone();
-    let mut lines: Vec<Line> = content
-        .lines()
-        .map(|l| {
-            Line::from(vec![
-                Span::styled("✗ ", Style::default().fg(RUST_RED)),
-                Span::styled(l.to_string(), Style::default().fg(RUST_RED)),
-            ])
-        })
-        .collect();
-    lines.push(Line::from(""));
-    lines
-}
-
-// ── Tool timeline ─────────────────────────────────────────────────────────────
-
-fn render_tool_timeline(frame: &mut Frame, area: Rect, session: &SessionState) {
-    let border_style = Style::default().fg(SOIL);
-    let block = Block::default()
-        .title(Span::styled(" Tools ", Style::default().fg(TAN)))
-        .borders(Borders::ALL)
-        .border_style(border_style)
-        .style(Style::default().bg(BG));
-
-    if session.tool_calls.is_empty() {
-        let p = Paragraph::new("\n  No tool calls yet.")
-            .style(Style::default().fg(SOIL))
-            .block(block);
-        frame.render_widget(p, area);
-        return;
-    }
-
-    let inner_height = area.height.saturating_sub(2) as usize; // subtract borders
-    let items: Vec<ListItem> = session
-        .tool_calls
-        .iter()
-        .rev()
-        .take(inner_height.max(1) + 20) // render enough for scrolling
-        .map(|tc| tool_call_to_list_item(tc))
-        .collect();
-
-    let list = List::new(items).block(block);
     frame.render_widget(list, area);
 }
 
-fn tool_call_to_list_item(tc: &ToolCallRecord) -> ListItem<'static> {
-    let (badge, badge_color) = match tc.success {
-        Some(true) => ("[✓]", SPROUT),
-        Some(false) => ("[✗]", RUST_RED),
-        None => ("[⏳]", AMBER),
-    };
+// ── Center — PTY viewport ─────────────────────────────────────────────────────
 
-    let duration = match tc.duration_ms {
-        Some(ms) if ms < 1000 => format!(" {}ms", ms),
-        Some(ms) => format!(" {:.1}s", ms as f64 / 1000.0),
-        None => String::new(),
-    };
-
-    // Truncate tool name to fit the narrow sidebar.
-    let name = if tc.name.len() > 12 {
-        format!("{}…", &tc.name[..11])
+fn render_pty_viewport(frame: &mut Frame, area: Rect, state: &mut AppState, focus: CockpitFocus) {
+    let focused = focus == CockpitFocus::Terminal;
+    let border_style = if focused {
+        Style::default().fg(AMBER)
     } else {
-        tc.name.clone()
+        Style::default().fg(BROWN)
+    };
+    let title_style = if focused {
+        Style::default().fg(AMBER).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(TAN).add_modifier(Modifier::BOLD)
     };
 
-    let line = Line::from(vec![
-        Span::styled(badge, Style::default().fg(badge_color).add_modifier(Modifier::BOLD)),
-        Span::raw(" "),
-        Span::styled(name, Style::default().fg(TAN)),
-        Span::styled(duration, Style::default().fg(SOIL)),
-    ]);
+    // Inner area available to the PTY (minus border).
+    let inner_cols = area.width.saturating_sub(2);
+    let inner_rows = area.height.saturating_sub(2);
 
-    ListItem::new(line)
+    if let Some(ref pty) = state.real_pty {
+        // Resize PTY every frame so it matches the exact output rect.
+        let _ = pty.resize(inner_cols.max(1), inner_rows.max(1));
+
+        if let Ok(parser) = pty.screen.try_lock() {
+            use tui_term::widget::PseudoTerminal;
+            let widget = PseudoTerminal::new(parser.screen()).block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(border_style)
+                    .title(Span::styled(" Claude ", title_style)),
+            );
+            frame.render_widget(widget, area);
+        } else {
+            // Parser locked by reader thread — show busy hint.
+            let busy = Paragraph::new("…")
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_style(border_style)
+                        .title(" Claude "),
+                )
+                .style(Style::default().fg(SOIL));
+            frame.render_widget(busy, area);
+        }
+    } else {
+        // No active PTY — placeholder.
+        let placeholder = Paragraph::new(
+            "\n  No active session.\n  Select an agent on the dashboard and press Enter.",
+        )
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(CHARCOAL))
+                .title(Span::styled(" Claude ", Style::default().fg(SOIL))),
+        )
+        .style(Style::default().fg(SOIL));
+        frame.render_widget(placeholder, area);
+    }
+
+    // Render "TERMINAL" focus indicator in top-right corner of the block when
+    // terminal focus is active so the user can see the mode clearly.
+    if focused && area.height > 2 && area.width > 14 {
+        let hint = Span::styled(
+            " [TERM] ",
+            Style::default()
+                .fg(BG)
+                .bg(AMBER)
+                .add_modifier(Modifier::BOLD),
+        );
+        let hint_line = Line::from(vec![hint]);
+        let hint_area = Rect {
+            x: area.x + area.width.saturating_sub(10),
+            y: area.y,
+            width: 9,
+            height: 1,
+        };
+        frame.render_widget(Paragraph::new(hint_line), hint_area);
+    }
 }
 
-// ── Status bar ────────────────────────────────────────────────────────────────
+// ── Center bottom — input bar ─────────────────────────────────────────────────
 
-fn render_status_bar(frame: &mut Frame, area: Rect, session: &SessionState, model: &str) {
+fn render_input_bar(frame: &mut Frame, area: Rect, session: &SessionState, focus: CockpitFocus) {
+    let focused = focus == CockpitFocus::Input;
+
+    let is_busy = matches!(
+        session.status,
+        AgentStatus::Thinking | AgentStatus::RunningTool { .. }
+    );
+
+    if is_busy {
+        let spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+        let frame_idx = (session.tick_count as usize) % spinner_frames.len();
+        let spinner = spinner_frames[frame_idx];
+        let label = agent_status_label(&session.status);
+
+        let line = Line::from(vec![
+            Span::styled(format!("{} ", spinner), Style::default().fg(AMBER)),
+            Span::styled(label, Style::default().fg(MUTED)),
+        ]);
+        let para = Paragraph::new(line)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(CHARCOAL))
+                    .title(" Input "),
+            )
+            .style(Style::default().bg(BG));
+        frame.render_widget(para, area);
+    } else {
+        let border_style = if focused {
+            Style::default().fg(AMBER)
+        } else {
+            Style::default().fg(BROWN)
+        };
+        let title_style = if focused {
+            Style::default().fg(AMBER).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(SOIL)
+        };
+
+        let prompt = "❯ ";
+        let buf = &session.input_buffer;
+        let cursor = session.input_cursor.min(buf.len());
+        let before = &buf[..cursor];
+        let after = &buf[cursor..];
+
+        let mut spans = vec![Span::styled(
+            prompt,
+            Style::default().fg(AMBER).add_modifier(Modifier::BOLD),
+        )];
+
+        if !before.is_empty() {
+            spans.push(Span::styled(before.to_string(), Style::default().fg(CREAM)));
+        }
+
+        // Block cursor on the character under the cursor position.
+        let cursor_char = after.chars().next().unwrap_or(' ');
+        spans.push(Span::styled(
+            cursor_char.to_string(),
+            if focused {
+                Style::default().fg(BG).bg(CREAM)
+            } else {
+                Style::default().fg(MUTED)
+            },
+        ));
+
+        let after_cursor: String = after.chars().skip(1).collect();
+        if !after_cursor.is_empty() {
+            spans.push(Span::styled(after_cursor, Style::default().fg(CREAM)));
+        }
+
+        let widget = Paragraph::new(Line::from(spans))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(border_style)
+                    .title(Span::styled(" Input ", title_style)),
+            )
+            .style(Style::default().fg(CREAM).bg(BG));
+        frame.render_widget(widget, area);
+    }
+}
+
+// ── Right rail — metrics / tools / sidebar ────────────────────────────────────
+
+fn render_right_rail(frame: &mut Frame, area: Rect, state: &AppState, focus: CockpitFocus) {
+    let focused = focus == CockpitFocus::Sidebar;
+    let border_color = if focused { AMBER } else { CHARCOAL };
+    let title_color = if focused { AMBER } else { TAN };
+
+    // Split sidebar vertically: Metrics | Tools | Quick
+    let [metrics_area, tools_area, quick_area] = Layout::vertical([
+        Constraint::Length(5),
+        Constraint::Length(8),
+        Constraint::Min(0),
+    ])
+    .areas(area);
+
+    // ── Metrics ───────────────────────────────────────────────────────────────
+    let metrics_text = if let AppScreen::Session(ref s) = state.screen {
+        vec![
+            Line::from(vec![
+                Span::styled("Model  ", Style::default().fg(BROWN)),
+                Span::raw(s.agent_name.clone()),
+            ]),
+            Line::from(vec![
+                Span::styled("Tokens ", Style::default().fg(BROWN)),
+                Span::raw(format!("{}", s.tokens_used)),
+            ]),
+            Line::from(vec![
+                Span::styled("Status ", Style::default().fg(BROWN)),
+                Span::raw(agent_status_label(&s.status)),
+            ]),
+        ]
+    } else {
+        vec![]
+    };
+
+    let metrics_border = if focused { AMBER } else { Color::Rgb(62, 39, 35) };
+    frame.render_widget(
+        Paragraph::new(metrics_text).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(metrics_border))
+                .title(Span::styled(" Metrics ", Style::default().fg(title_color))),
+        ),
+        metrics_area,
+    );
+
+    // ── Tools ─────────────────────────────────────────────────────────────────
+    let tools_text: Vec<Line> = state
+        .tool_output_panel
+        .entries()
+        .iter()
+        .rev()
+        .take(6)
+        .map(|e| {
+            let icon = match e.success {
+                Some(true) => Span::styled("✓ ", Style::default().fg(SPROUT)),
+                Some(false) => Span::styled("✗ ", Style::default().fg(RUST_RED)),
+                None => Span::styled("⏳ ", Style::default().fg(AMBER)),
+            };
+            let max_name = (area.width.saturating_sub(5)) as usize;
+            let name = if e.name.len() > max_name && max_name > 1 {
+                format!("{}…", &e.name[..max_name.saturating_sub(1)])
+            } else {
+                e.name.clone()
+            };
+            Line::from(vec![icon, Span::styled(name, Style::default().fg(CREAM))])
+        })
+        .collect();
+
+    frame.render_widget(
+        Paragraph::new(tools_text).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(if focused { AMBER } else { Color::Rgb(62, 39, 35) }))
+                .title(Span::styled(" Tools ", Style::default().fg(title_color))),
+        ),
+        tools_area,
+    );
+
+    // ── Quick nav / skills ────────────────────────────────────────────────────
+    let quick_lines = vec![
+        Line::from(Span::styled("  / skills", Style::default().fg(SOIL))),
+        Line::from(Span::styled("  / context", Style::default().fg(SOIL))),
+        Line::from(Span::styled("  / history", Style::default().fg(SOIL))),
+    ];
+    frame.render_widget(
+        Paragraph::new(quick_lines).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(if focused { AMBER } else { Color::Rgb(62, 39, 35) }))
+                .title(Span::styled(" Quick ", Style::default().fg(title_color))),
+        ),
+        quick_area,
+    );
+}
+
+// ── Status bar (full width) ───────────────────────────────────────────────────
+
+fn render_status_bar(
+    frame: &mut Frame,
+    area: Rect,
+    session: &SessionState,
+    model: &str,
+    focus: CockpitFocus,
+) {
     let sep = Span::styled(" │ ", Style::default().fg(SOIL).bg(CHARCOAL));
 
     let agent_span = Span::styled(
         format!(" {} ", session.agent_name),
         Style::default().fg(AMBER).bg(CHARCOAL).add_modifier(Modifier::BOLD),
     );
-
-    let model_span = Span::styled(
-        model.to_string(),
-        Style::default().fg(TAN).bg(CHARCOAL),
-    );
+    let model_span = Span::styled(model.to_string(), Style::default().fg(TAN).bg(CHARCOAL));
 
     let (status_label, status_fg) = agent_status_display(&session.status);
-    let status_span = Span::styled(
-        status_label,
-        Style::default().fg(status_fg).bg(CHARCOAL),
-    );
+    let status_span = Span::styled(status_label, Style::default().fg(status_fg).bg(CHARCOAL));
 
     let tokens = session.metrics.total_tokens();
     let token_span = Span::styled(
-        format!("tokens: {}", tokens),
+        format!("tok: {}", tokens),
         Style::default().fg(BROWN).bg(CHARCOAL),
     );
 
-    let cost_span = Span::styled(
-        format!("cost: ${:.3}", session.metrics.total_cost_usd),
+    let focus_label = match focus {
+        CockpitFocus::Sessions => "Sessions",
+        CockpitFocus::Input    => "Input",
+        CockpitFocus::Terminal => "Terminal",
+        CockpitFocus::Sidebar  => "Sidebar",
+    };
+    let focus_span = Span::styled(
+        format!("focus: {}", focus_label),
         Style::default().fg(SOIL).bg(CHARCOAL),
     );
 
-    let elapsed_span = Span::styled(
-        format!("elapsed: {}s", session.metrics.duration_secs),
-        Style::default().fg(SOIL).bg(CHARCOAL),
+    let keys_span = Span::styled(
+        " Tab:cycle  Ctrl+J:term  Esc:input  Ctrl+Q:quit ",
+        Style::default().fg(Color::Rgb(70, 50, 40)).bg(CHARCOAL),
     );
 
     let line = Line::from(vec![
@@ -385,18 +450,37 @@ fn render_status_bar(frame: &mut Frame, area: Rect, session: &SessionState, mode
         sep.clone(),
         token_span,
         sep.clone(),
-        cost_span,
+        focus_span,
         sep.clone(),
-        elapsed_span,
-        Span::raw(" "), // trailing pad
+        keys_span,
     ]);
 
-    let bar = Paragraph::new(line).style(Style::default().bg(CHARCOAL));
-    frame.render_widget(bar, area);
+    frame.render_widget(Paragraph::new(line).style(Style::default().bg(CHARCOAL)), area);
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/// Short one-line label for an [`AgentStatus`].
+fn agent_status_label(status: &AgentStatus) -> String {
+    match status {
+        AgentStatus::Starting => "Starting…".to_string(),
+        AgentStatus::Idle => "Idle".to_string(),
+        AgentStatus::Thinking => "Thinking…".to_string(),
+        AgentStatus::RunningTool { name } => format!("▶ {}", name),
+        AgentStatus::WaitingApproval { tool_name } => format!("⚠ Approve: {}", tool_name),
+        AgentStatus::Exited { code } => format!("Exited ({})", code.unwrap_or(-1)),
+        AgentStatus::Error { message } => {
+            if message.len() > 30 {
+                format!("Error: {}…", &message[..29])
+            } else {
+                format!("Error: {}", message)
+            }
+        }
+    }
 }
 
 /// Returns `(label, color)` for a given agent status.
-fn agent_status_display(status: &AgentStatus) -> (String, ratatui::style::Color) {
+fn agent_status_display(status: &AgentStatus) -> (String, Color) {
     match status {
         AgentStatus::Starting => ("Starting…".to_string(), SOIL),
         AgentStatus::Idle => ("Idle".to_string(), SPROUT),
@@ -405,9 +489,7 @@ fn agent_status_display(status: &AgentStatus) -> (String, ratatui::style::Color)
         AgentStatus::WaitingApproval { tool_name } => {
             (format!("⚠ Approve: {}", tool_name), RUST_RED)
         }
-        AgentStatus::Exited { code } => {
-            (format!("Exited ({})", code.unwrap_or(-1)), MUTED)
-        }
+        AgentStatus::Exited { code } => (format!("Exited ({})", code.unwrap_or(-1)), MUTED),
         AgentStatus::Error { message } => {
             let short = if message.len() > 30 {
                 format!("{}…", &message[..29])
@@ -419,128 +501,12 @@ fn agent_status_display(status: &AgentStatus) -> (String, ratatui::style::Color)
     }
 }
 
-// ── Input bar ─────────────────────────────────────────────────────────────────
-
-fn render_input_bar(frame: &mut Frame, area: Rect, session: &SessionState) {
-    // Agent is busy when Thinking or RunningTool.
-    let is_busy = matches!(
-        session.status,
-        AgentStatus::Thinking | AgentStatus::RunningTool { .. }
-    );
-
-    if is_busy {
-        // Spinner + status while agent is working.
-        let spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-        let frame_idx = (session.tick_count as usize) % spinner_frames.len();
-        let spinner = spinner_frames[frame_idx];
-        let (label, _) = agent_status_display(&session.status);
-
-        let line = Line::from(vec![
-            Span::styled(format!("{} ", spinner), Style::default().fg(AMBER)),
-            Span::styled(label, Style::default().fg(MUTED)),
-        ]);
-        let para = Paragraph::new(line).style(Style::default().bg(BG));
-        frame.render_widget(para, area);
-    } else {
-        // Active input: `❯ {buf}|`
-        let prompt = "❯ ";
-        let buf = &session.input_buffer;
-        let cursor = session.input_cursor.min(buf.len());
-        let before = &buf[..cursor];
-        let after = &buf[cursor..];
-
-        let mut spans = vec![Span::styled(
-            prompt,
-            Style::default()
-                .fg(AMBER)
-                .add_modifier(Modifier::BOLD),
-        )];
-
-        if !before.is_empty() {
-            spans.push(Span::styled(
-                before.to_string(),
-                Style::default().fg(CREAM),
-            ));
-        }
-
-        // Cursor block: invert on the character under the cursor.
-        let cursor_char = after.chars().next().unwrap_or(' ');
-        spans.push(Span::styled(
-            cursor_char.to_string(),
-            Style::default().fg(BG).bg(CREAM),
-        ));
-
-        let after_cursor: String = after.chars().skip(1).collect();
-        if !after_cursor.is_empty() {
-            spans.push(Span::styled(after_cursor, Style::default().fg(CREAM)));
-        }
-
-        let para = Paragraph::new(Line::from(spans)).style(Style::default().bg(BG));
-        frame.render_widget(para, area);
-    }
-}
-
-// ── Approval overlay ──────────────────────────────────────────────────────────
-
-fn render_approval_overlay(frame: &mut Frame, area: Rect, session: &SessionState) {
-    let Some(ref approval) = session.approval_pending else {
-        return;
-    };
-
-    // Bordered box in Amber.
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(AMBER))
-        .title(Span::styled(
-            " ⚠  Approval Required ",
-            Style::default()
-                .fg(AMBER)
-                .add_modifier(Modifier::BOLD),
-        ))
-        .style(Style::default().bg(CHARCOAL));
-
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-
-    // Build content: tool name line + up to 3 lines of input preview + actions.
-    let mut content_lines: Vec<Line> = vec![];
-
-    // Tool name line.
-    content_lines.push(Line::from(vec![
-        Span::styled("Tool: ", Style::default().fg(SOIL)),
-        Span::styled(
-            approval.tool_name.clone(),
-            Style::default().fg(CREAM).add_modifier(Modifier::BOLD),
-        ),
-    ]));
-
-    // Input preview (up to 3 lines from JSON).
-    let input_str = serde_json::to_string_pretty(&approval.input)
-        .unwrap_or_else(|_| approval.input.to_string());
-    for line in input_str.lines().take(3) {
-        content_lines.push(Line::from(Span::styled(
-            format!("  {}", line),
-            Style::default().fg(TAN),
-        )));
-    }
-
-    // Action hints.
-    content_lines.push(Line::from(vec![
-        Span::styled("  [y] approve  ", Style::default().fg(SPROUT).add_modifier(Modifier::BOLD)),
-        Span::styled("[n] deny", Style::default().fg(RUST_RED).add_modifier(Modifier::BOLD)),
-    ]));
-
-    let para = Paragraph::new(content_lines).style(Style::default().bg(CHARCOAL));
-    frame.render_widget(para, inner);
-}
-
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::state::{AgentStatus, SessionState, ToolCallRecord, TranscriptEntry};
-    use chrono::Utc;
+    use crate::app::state::{AgentStatus, CockpitFocus, SessionState};
 
     #[test]
     fn agent_status_display_idle_is_sprout() {
@@ -580,100 +546,72 @@ mod tests {
     }
 
     #[test]
-    fn user_entry_produces_amber_prefix() {
-        let entry = TranscriptEntry::user("hello world");
-        let lines = user_entry_lines(&entry);
-        // First line has the ❯ prefix span in Amber and content span.
-        assert!(lines.len() >= 2); // content + blank line
-        let first_line = &lines[0];
-        let first_span = &first_line.spans[0];
-        assert_eq!(first_span.content, "❯ ");
-        assert_eq!(first_span.style.fg, Some(AMBER));
-    }
-
-    #[test]
-    fn assistant_entry_no_prefix() {
-        let entry = TranscriptEntry::assistant("Hello there");
-        let lines = assistant_entry_lines(&entry, false);
-        // Should not have ❯ anywhere.
-        for line in &lines {
-            for span in &line.spans {
-                assert!(!span.content.contains('❯'));
-            }
-        }
-    }
-
-    #[test]
-    fn assistant_entry_with_cursor_appends_block() {
-        let entry = TranscriptEntry::assistant("Streaming…");
-        let lines = assistant_entry_lines(&entry, true);
-        // Last non-blank line should contain the cursor character.
-        let all_content: String = lines
-            .iter()
-            .flat_map(|l| l.spans.iter())
-            .map(|s| s.content.as_ref())
-            .collect();
-        assert!(all_content.contains('▋'));
-    }
-
-    #[test]
-    fn tool_call_badge_done_is_sprout() {
-        let tc = ToolCallRecord {
-            id: "t1".into(),
-            name: "read_file".into(),
-            input: serde_json::json!({}),
-            output: Some("content".into()),
-            started_at: Utc::now(),
-            duration_ms: Some(42),
-            success: Some(true),
-        };
-        let item = tool_call_to_list_item(&tc);
-        // Just ensure it builds without panic; color testing via span inspection.
-        drop(item);
-    }
-
-    #[test]
-    fn tool_call_badge_error_builds() {
-        let tc = ToolCallRecord {
-            id: "t2".into(),
-            name: "shell".into(),
-            input: serde_json::json!({}),
-            output: Some("err".into()),
-            started_at: Utc::now(),
-            duration_ms: Some(0),
-            success: Some(false),
-        };
-        drop(tool_call_to_list_item(&tc));
-    }
-
-    #[test]
-    fn tool_call_pending_builds() {
-        let tc = ToolCallRecord {
-            id: "t3".into(),
-            name: "write_file".into(),
-            input: serde_json::json!({}),
-            output: None,
-            started_at: Utc::now(),
-            duration_ms: None,
-            success: None,
-        };
-        drop(tool_call_to_list_item(&tc));
-    }
-
-    #[test]
-    fn session_state_new_has_user_scrolled_false() {
+    fn session_state_has_tokens_used() {
         let s = SessionState::new("s-1", "claude");
-        assert!(!s.user_scrolled);
-        assert_eq!(s.scroll_offset, 0);
+        assert_eq!(s.tokens_used, 0);
     }
 
     #[test]
-    fn multiline_user_message_indents_continuation() {
-        let entry = TranscriptEntry::user("line one\nline two\nline three");
-        let lines = user_entry_lines(&entry);
-        // First line has ❯, subsequent content lines have "  " padding.
-        assert!(lines[0].spans[0].content.contains('❯'));
-        assert_eq!(lines[1].spans[0].content.as_ref(), "  ");
-        assert_eq!(lines[2].spans[0].content.as_ref(), "  ");
+    fn session_state_default_focus_is_input() {
+        let s = SessionState::new("s-1", "claude");
+        assert_eq!(s.cockpit_focus, CockpitFocus::Input);
+    }
+
+    #[test]
+    fn agent_status_label_for_all_variants() {
+        assert!(agent_status_label(&AgentStatus::Starting).contains("Starting"));
+        assert!(agent_status_label(&AgentStatus::Idle).contains("Idle"));
+        assert!(agent_status_label(&AgentStatus::Thinking).contains("Thinking"));
+        assert!(
+            agent_status_label(&AgentStatus::RunningTool { name: "grep".into() })
+                .contains("grep")
+        );
+        assert!(
+            agent_status_label(&AgentStatus::WaitingApproval { tool_name: "shell".into() })
+                .contains("shell")
+        );
+        assert!(
+            agent_status_label(&AgentStatus::Exited { code: Some(1) }).contains("Exited")
+        );
+        assert!(
+            agent_status_label(&AgentStatus::Error { message: "oops".into() })
+                .contains("oops")
+        );
+    }
+
+    // ── CockpitFocus cycling ──────────────────────────────────────────────────
+
+    #[test]
+    fn cockpit_focus_tab_cycle() {
+        assert_eq!(CockpitFocus::Sessions.next(), CockpitFocus::Input);
+        assert_eq!(CockpitFocus::Input.next(),    CockpitFocus::Terminal);
+        assert_eq!(CockpitFocus::Terminal.next(), CockpitFocus::Sidebar);
+        assert_eq!(CockpitFocus::Sidebar.next(),  CockpitFocus::Sessions);
+    }
+
+    #[test]
+    fn cockpit_focus_shift_tab_cycle() {
+        assert_eq!(CockpitFocus::Sessions.prev(), CockpitFocus::Sidebar);
+        assert_eq!(CockpitFocus::Input.prev(),    CockpitFocus::Sessions);
+        assert_eq!(CockpitFocus::Terminal.prev(), CockpitFocus::Input);
+        assert_eq!(CockpitFocus::Sidebar.prev(),  CockpitFocus::Terminal);
+    }
+
+    #[test]
+    fn cockpit_focus_full_tab_round_trip() {
+        let mut f = CockpitFocus::Input;
+        for _ in 0..4 {
+            f = f.next();
+        }
+        assert_eq!(f, CockpitFocus::Input, "4 Tabs should wrap back to Input");
+    }
+
+    #[test]
+    fn cockpit_focus_full_shift_tab_round_trip() {
+        let mut f = CockpitFocus::Input;
+        for _ in 0..4 {
+            f = f.prev();
+        }
+        assert_eq!(f, CockpitFocus::Input, "4 Shift+Tabs should wrap back to Input");
     }
 }

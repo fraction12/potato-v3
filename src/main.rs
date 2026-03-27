@@ -33,7 +33,7 @@ use ratatui::DefaultTerminal;
 use uuid::Uuid;
 
 use app::message::Message;
-use app::state::{AppScreen, AppState, DashboardFocus};
+use app::state::{AppScreen, AppState, CockpitFocus, DashboardFocus};
 use app::update::update;
 use ui::layout::LayoutPreset as NewLayoutPreset;
 use ui::panels::PanelId;
@@ -46,7 +46,7 @@ use adapters::generic::GenericAdapter;
 use adapters::{AdapterConfig, AgentAdapter};
 use app::state::{AgentInfo, DashboardState};
 use ui::screens::{dashboard::render_dashboard, session::render_session};
-use crate::pty::TurnHandle;
+use crate::pty::{TurnHandle, key_event_to_bytes};
 
 // ── CLI arguments ─────────────────────────────────────────────────────────────
 
@@ -141,6 +141,7 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                 }
                 AppScreen::Session(_) => {
                     render_session(frame, area, state);
+                    // Note: render_session takes &mut AppState to resize the PTY.
                 }
             }
         })?;
@@ -167,7 +168,7 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
         };
 
         if let Some(m) = msg {
-            // Intercept Enter on the dashboard to hand off the terminal to the agent.
+            // Intercept Enter on the dashboard to spawn a RealPty session.
             if let Message::Key(ref key) = m {
                 if key.code == crossterm::event::KeyCode::Enter {
                     if let AppScreen::Dashboard(ref dash) = state.screen {
@@ -175,40 +176,49 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                             let agent_info = dash.available_agents[dash.selected_agent].clone();
                             if agent_info.available {
                                 let binary = agent_info.binary_path.clone().unwrap();
+                                let agent_name = agent_info.name.clone();
 
-                                // ── Full terminal hand-off ─────────────────────────────
-                                // Suspend Potato's TUI, give Claude the raw terminal,
-                                // wait for Claude to exit, then reclaim.
-                                tracing::info!(
-                                    "Suspending Potato TUI to launch {} at {:?}",
-                                    agent_info.name,
-                                    binary
-                                );
-
-                                // 1. Suspend Potato's TUI.
-                                disable_raw_mode()?;
-                                execute!(io::stdout(), LeaveAlternateScreen)?;
-
-                                // 2. Spawn agent with full terminal inheritance.
-                                let status = std::process::Command::new(&binary)
-                                    .stdin(std::process::Stdio::inherit())
-                                    .stdout(std::process::Stdio::inherit())
-                                    .stderr(std::process::Stdio::inherit())
-                                    .status();
+                                // ── RealPty cockpit launch ─────────────────────────────
+                                // Estimate PTY size from terminal dimensions.
+                                // The output panel is ~75% wide, and minus the status/
+                                // sessions/input bars (~7 lines) for height.
+                                let (term_cols, term_rows) =
+                                    crossterm::terminal::size().unwrap_or((120, 40));
+                                let pty_cols = (term_cols as u32 * 3 / 4).saturating_sub(2) as u16;
+                                let pty_rows = term_rows.saturating_sub(10);
 
                                 tracing::info!(
-                                    "Agent '{}' exited: {:?}",
-                                    agent_info.name,
-                                    status
+                                    "Launching {} via RealPty at {}×{}",
+                                    agent_name, pty_cols, pty_rows,
                                 );
 
-                                // 3. Reclaim Potato's TUI.
-                                enable_raw_mode()?;
-                                execute!(io::stdout(), EnterAlternateScreen)?;
-                                // Re-initialise the backend so ratatui redraws cleanly.
-                                terminal.clear()?;
+                                match crate::pty::RealPty::spawn(
+                                    &binary.to_string_lossy(),
+                                    &[],
+                                    pty_cols.max(20),
+                                    pty_rows.max(5),
+                                ) {
+                                    Ok(real_pty) => {
+                                        // Subscribe to dirty notifications for re-render.
+                                        let mut _dirty_rx = real_pty.dirty_tx.subscribe();
+                                        state.real_pty = Some(real_pty);
 
-                                // 4. Stay on dashboard — continue the event loop.
+                                        // Transition to session screen.
+                                        let session_id = uuid::Uuid::new_v4().to_string();
+                                        state.enter_session(&session_id, &agent_name);
+
+                                        // Mark session as idle (PTY is live).
+                                        if let Some(ref mut session) = state.session_mut() {
+                                            session.status = crate::app::state::AgentStatus::Idle;
+                                        }
+                                    }
+                                    Err(e) => {
+                                        tracing::error!("RealPty spawn failed: {e}");
+                                        // Remain on dashboard; surface error via state.
+                                        state.set_error(format!("Failed to launch {}: {}", agent_name, e), 100);
+                                    }
+                                }
+
                                 state.tick_count = state.tick_count.wrapping_add(1);
                                 continue;
                             }
@@ -259,200 +269,173 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                     }
                 }
 
-                // Session key handling.
+                // ── Session key handling ──────────────────────────────────────
                 if matches!(state.screen, AppScreen::Session(_)) {
-                    // ── Global panel/layout keybinds (checked before text input) ──
+                    // ── Global quit — always intercepted first ────────────────
                     if key.modifiers.contains(KeyModifiers::CONTROL) {
-                        match key.code {
-                            // Ctrl+1 → toggle Chat panel
-                            KeyCode::Char('1') => {
-                                state.layout_manager.toggle_panel(&PanelId::Chat);
-                                state.focus_ring.update_panels(
-                                    vec![PanelId::Chat, PanelId::ToolOutput]
-                                        .into_iter()
-                                        .filter(|id| state.layout_manager.is_visible(id))
-                                        .collect(),
-                                );
-                                continue;
-                            }
-                            // Ctrl+2 → toggle ToolOutput panel
-                            KeyCode::Char('2') => {
-                                state.layout_manager.toggle_panel(&PanelId::ToolOutput);
-                                state.focus_ring.update_panels(
-                                    vec![PanelId::Chat, PanelId::ToolOutput]
-                                        .into_iter()
-                                        .filter(|id| state.layout_manager.is_visible(id))
-                                        .collect(),
-                                );
-                                continue;
-                            }
-                            // Ctrl+L → cycle layout preset (Sidebar → Wide → Minimal → Sidebar)
-                            KeyCode::Char('l') => {
-                                let next = match state.layout_manager.preset() {
-                                    NewLayoutPreset::Sidebar => NewLayoutPreset::Wide,
-                                    NewLayoutPreset::Wide   => NewLayoutPreset::Minimal,
-                                    NewLayoutPreset::Minimal => NewLayoutPreset::Sidebar,
-                                };
-                                state.layout_manager.set_preset(next);
-                                continue;
-                            }
-                            _ => {}
-                        }
-                    }
-                    // Tab → focus next; Shift+Tab → focus prev
-                    if key.code == KeyCode::Tab {
-                        if key.modifiers.contains(KeyModifiers::SHIFT) {
-                            state.focus_ring.prev();
-                        } else {
-                            state.focus_ring.next();
-                        }
-                        continue;
-                    }
-                }
-
-                if let AppScreen::Session(ref mut session) = state.screen {
-                    match key.code {
-                        KeyCode::Char('q') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        if matches!(key.code, KeyCode::Char('q') | KeyCode::Char('\\')) {
                             state.should_quit = true;
                             break;
                         }
-                        KeyCode::Esc => {
-                            // Return to dashboard — drop the turn handle to let processes exit.
-                            turn_handle = None;
-                            session_adapter = None;
-                            session_config = None;
-                            state.screen = AppScreen::Dashboard(DashboardState {
-                                available_agents: detect_agents(),
-                                ..DashboardState::default()
-                            });
-                            continue;
-                        }
-                        // ── Scroll when input buffer is empty ─────────────────
-                        KeyCode::Up | KeyCode::Char('k')
-                            if session.input_buffer.is_empty() =>
-                        {
-                            session.scroll_offset = session.scroll_offset.saturating_add(3);
-                            session.user_scrolled = session.scroll_offset > 0;
-                            continue;
-                        }
-                        KeyCode::Down | KeyCode::Char('j')
-                            if session.input_buffer.is_empty() =>
-                        {
-                            if session.scroll_offset > 0 {
-                                session.scroll_offset =
-                                    session.scroll_offset.saturating_sub(3);
-                            }
-                            if session.scroll_offset == 0 {
-                                session.user_scrolled = false;
-                            }
-                            continue;
-                        }
-                        KeyCode::PageUp => {
-                            session.scroll_offset = session.scroll_offset.saturating_add(10);
-                            session.user_scrolled = session.scroll_offset > 0;
-                            continue;
-                        }
-                        KeyCode::PageDown => {
-                            session.scroll_offset =
-                                session.scroll_offset.saturating_sub(10);
-                            if session.scroll_offset == 0 {
-                                session.user_scrolled = false;
-                            }
-                            continue;
-                        }
-                        // ── Text input ────────────────────────────────────────
-                        KeyCode::Enter => {
-                            // Submit the input buffer to the agent via a new per-turn process.
-                            let text = std::mem::take(&mut session.input_buffer);
-                            session.input_cursor = 0;
-                            if !text.is_empty() {
-                                // Auto-scroll to bottom on send.
-                                session.scroll_offset = 0;
-                                session.user_scrolled = false;
-                                session.transcript.push(
-                                    app::state::TranscriptEntry::user(&text),
-                                );
-                                session.status = app::state::AgentStatus::Thinking;
+                    }
 
-                                // Get the claude session id for --resume (None on first turn).
-                                let resume_id = session.claude_session_id.clone();
+                    // ── Ctrl+J — jump directly to Terminal focus ──────────────
+                    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('j') {
+                        if let AppScreen::Session(ref mut session) = state.screen {
+                            session.cockpit_focus = CockpitFocus::Terminal;
+                        }
+                        continue;
+                    }
 
-                                // Spawn a new per-turn process.
-                                if let (Some(adapter), Some(config)) =
-                                    (&session_adapter, &session_config)
-                                {
-                                    match crate::pty::PtyProcess::spawn_turn(
-                                        adapter.clone(),
-                                        config.clone(),
-                                        text.clone(),
-                                        resume_id,
-                                    ).await {
-                                        Ok(handle) => {
-                                            turn_handle = Some(handle);
-                                        }
-                                        Err(e) => {
-                                            session.status = app::state::AgentStatus::Error {
-                                                message: format!("spawn_turn failed: {e}"),
-                                            };
-                                        }
-                                    }
+                    // Get current focus (without mutably borrowing state yet).
+                    let current_focus = state
+                        .session()
+                        .map(|s| s.cockpit_focus)
+                        .unwrap_or(CockpitFocus::Input);
+
+                    // ── Tab / Shift+Tab — cycle focus ring ────────────────────
+                    if key.code == KeyCode::Tab {
+                        if let AppScreen::Session(ref mut session) = state.screen {
+                            session.cockpit_focus = if key.modifiers.contains(KeyModifiers::SHIFT) {
+                                session.cockpit_focus.prev()
+                            } else {
+                                session.cockpit_focus.next()
+                            };
+                        }
+                        continue;
+                    }
+
+                    // ── Esc — context-sensitive ───────────────────────────────
+                    if key.code == KeyCode::Esc {
+                        match current_focus {
+                            // Esc from Input = return to dashboard, drop PTY.
+                            CockpitFocus::Input => {
+                                turn_handle = None;
+                                session_adapter = None;
+                                session_config = None;
+                                state.real_pty = None;
+                                state.screen = AppScreen::Dashboard(DashboardState {
+                                    available_agents: detect_agents(),
+                                    ..DashboardState::default()
+                                });
+                                continue;
+                            }
+                            // Esc from anything else = return focus to Input.
+                            _ => {
+                                if let AppScreen::Session(ref mut session) = state.screen {
+                                    session.cockpit_focus = CockpitFocus::Input;
+                                }
+                                continue;
+                            }
+                        }
+                    }
+
+                    // ── Terminal focus — route all keys to PTY ────────────────
+                    if current_focus == CockpitFocus::Terminal {
+                        let raw_bytes = key_event_to_bytes(*key);
+                        if !raw_bytes.is_empty() {
+                            if let Some(ref mut pty) = state.real_pty {
+                                if let Err(e) = pty.write_input(&raw_bytes) {
+                                    tracing::warn!("PTY write_input (terminal focus): {e}");
                                 }
                             }
-                            continue;
                         }
-                        KeyCode::Backspace => {
-                            session.input_buffer.pop();
-                            if session.input_cursor > session.input_buffer.len() {
-                                session.input_cursor = session.input_buffer.len();
+                        continue;
+                    }
+
+                    // ── Input focus — Potato-owned text editing ───────────────
+                    if current_focus == CockpitFocus::Input {
+                        if let AppScreen::Session(ref mut session) = state.screen {
+                            match key.code {
+                                // Enter — send input_buffer + newline to PTY.
+                                KeyCode::Enter => {
+                                    let text = std::mem::take(&mut session.input_buffer);
+                                    session.input_cursor = 0;
+                                    if !text.is_empty() {
+                                        let input_bytes = format!("{}\n", text);
+                                        if let Some(ref mut pty) = state.real_pty {
+                                            if let Err(e) = pty.write_input(input_bytes.as_bytes()) {
+                                                tracing::warn!("PTY write_input (enter): {e}");
+                                            }
+                                        }
+                                    }
+                                    continue;
+                                }
+                                KeyCode::Backspace => {
+                                    session.input_buffer.pop();
+                                    if session.input_cursor > session.input_buffer.len() {
+                                        session.input_cursor = session.input_buffer.len();
+                                    }
+                                    continue;
+                                }
+                                KeyCode::Left => {
+                                    if session.input_cursor > 0 {
+                                        session.input_cursor -= 1;
+                                    }
+                                    continue;
+                                }
+                                KeyCode::Right => {
+                                    if session.input_cursor < session.input_buffer.len() {
+                                        session.input_cursor += 1;
+                                    }
+                                    continue;
+                                }
+                                KeyCode::Home => {
+                                    session.input_cursor = 0;
+                                    continue;
+                                }
+                                KeyCode::End => {
+                                    session.input_cursor = session.input_buffer.len();
+                                    continue;
+                                }
+                                KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                    session.input_buffer.push(c);
+                                    session.input_cursor = session.input_buffer.len();
+                                    continue;
+                                }
+                                _ => {}
                             }
-                            continue;
                         }
-                        // ── Approval overlay keys ─────────────────────────────
-                        KeyCode::Char('y') | KeyCode::Char('Y')
-                            if session.approval_pending.is_some() =>
-                        {
-                            let tool_id = session
-                                .approval_pending
-                                .as_ref()
-                                .map(|p| p.tool_id.clone())
-                                .unwrap_or_default();
-                            app::session_reducer::apply_event(
-                                session,
-                                crate::events::AgentEvent::ApprovalDecision {
-                                    tool_id,
-                                    approved: true,
-                                },
-                                chrono::Utc::now(),
-                            );
-                            continue;
+                    }
+
+                    // ── Sessions focus — navigate the session list ────────────
+                    if current_focus == CockpitFocus::Sessions {
+                        if let AppScreen::Session(ref mut session) = state.screen {
+                            match key.code {
+                                KeyCode::Up | KeyCode::Char('k') => {
+                                    if session.selected_session > 0 {
+                                        session.selected_session -= 1;
+                                    }
+                                    continue;
+                                }
+                                KeyCode::Down | KeyCode::Char('j') => {
+                                    session.selected_session = session.selected_session.saturating_add(1);
+                                    continue;
+                                }
+                                KeyCode::Enter => {
+                                    // Switch to focused session (placeholder for multi-session).
+                                    session.cockpit_focus = CockpitFocus::Input;
+                                    continue;
+                                }
+                                _ => {}
+                            }
                         }
-                        KeyCode::Char('n') | KeyCode::Char('N')
-                            if session.approval_pending.is_some() =>
-                        {
-                            let tool_id = session
-                                .approval_pending
-                                .as_ref()
-                                .map(|p| p.tool_id.clone())
-                                .unwrap_or_default();
-                            app::session_reducer::apply_event(
-                                session,
-                                crate::events::AgentEvent::ApprovalDecision {
-                                    tool_id,
-                                    approved: false,
-                                },
-                                chrono::Utc::now(),
-                            );
-                            continue;
+                    }
+
+                    // ── Sidebar focus — navigate sidebar items ────────────────
+                    if current_focus == CockpitFocus::Sidebar {
+                        if let AppScreen::Session(ref mut session) = state.screen {
+                            match key.code {
+                                KeyCode::Enter => {
+                                    session.cockpit_focus = CockpitFocus::Input;
+                                    continue;
+                                }
+                                _ => {}
+                            }
                         }
-                        KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            session.input_buffer.push(c);
-                            session.input_cursor = session.input_buffer.len();
-                            continue;
-                        }
-                        _ => {}
                     }
                 }
-            }
+            } // end if let Message::Key
 
             // Standard update/action dispatch.
             let action = update(state, m);
