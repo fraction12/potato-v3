@@ -119,7 +119,30 @@ impl SessionStore {
     }
 
     /// Apply schema migrations — idempotent.
+    ///
+    /// Detects the pre-cockpit schema (old `sessions` table without
+    /// `project_dir` column) and drops it so the new schema can be created.
     fn migrate(&self) -> Result<()> {
+        // Check if we have the old schema (sessions table exists but lacks project_dir).
+        let has_old_schema: bool = self.conn.query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'project_dir'",
+            [],
+            |row| row.get::<_, i64>(0),
+        ).unwrap_or(0) == 0
+        && self.conn.query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'title'",
+            [],
+            |row| row.get::<_, i64>(0),
+        ).unwrap_or(0) > 0;
+
+        if has_old_schema {
+            tracing::info!("Detected pre-cockpit schema; dropping old sessions/messages tables");
+            self.conn.execute_batch(
+                "DROP TABLE IF EXISTS messages;
+                 DROP TABLE IF EXISTS sessions;"
+            ).context("failed to drop old schema")?;
+        }
+
         self.conn.execute_batch(
             // ── Cockpit sessions table ────────────────────────────────────────
             "CREATE TABLE IF NOT EXISTS sessions (
