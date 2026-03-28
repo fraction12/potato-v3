@@ -495,7 +495,66 @@ tasks:
       11 unit tests covering all load paths, TOML roundtrip, override behavior.
     completed_at: "2026-03-27"
 
-  # ─── Phase 8b — Sidebar Redesign (Coordination Observatory) ───────────────────
+  # ─── Phase 8b — Project-Aware State ───────────────────────────────────────────
+
+  - id: T-811
+    title: "Per-project state persistence (.potato/state.db)"
+    status: open
+    phase: phase-8b-project
+    description: |
+      Shift coordination state from in-memory (dies on exit) to per-project
+      SQLite at `.potato/state.db`. On launch, Potato checks cwd for
+      `.potato/` and hydrates InterSessionState from it. On exit (or
+      periodically), flush back.
+
+      Persisted state:
+      - Roles (pane role assignments)
+      - Messages (inter-agent message history)
+      - Shared context (KV store)
+      - Task board (claims, status, history)
+
+      If no `.potato/` exists, fall back to current in-memory-only behavior.
+      Creating `.potato/` is manual for now (no `potato init` yet).
+    acceptance:
+      - .potato/state.db created on first coordination action if .potato/ exists
+      - Roles, messages, shared context, tasks survive between sessions
+      - Hydrated on launch — agents see prior state via MCP tools
+      - Graceful fallback to in-memory when no .potato/ directory
+      - WAL mode, no contention with UI reads
+
+  - id: T-812
+    title: "Project-scoped agent roster (.potato/agents.toml)"
+    status: open
+    phase: phase-8b-project
+    description: |
+      Per-project agent configuration at `.potato/agents.toml`. Defines
+      which agents are available in this project, their roles, default
+      models, extra args, and env overrides.
+
+      Load order: auto-detected defaults < global profiles < .potato/agents.toml.
+      This replaces global-only ProfileLoader for repos that define it.
+
+      Example:
+      ```toml
+      [[agents]]
+      name = "architect"
+      adapter = "claude"
+      model = "sonnet"
+      extra_args = ["--permission-mode", "bypassPermissions"]
+
+      [[agents]]
+      name = "implementer"
+      adapter = "claude"
+      extra_args = ["--permission-mode", "bypassPermissions"]
+      ```
+    acceptance:
+      - .potato/agents.toml loaded on launch if present
+      - Overrides global profiles for matching agents
+      - Left rail shows project-scoped agents
+      - Agents launched with project-specific config
+      - Missing file falls back to global profiles
+
+  # ─── Phase 8c — Sidebar Redesign (Coordination Observatory) ──────────────────
 
   - id: T-810
     title: "Sidebar redesign: coordination observatory"
@@ -530,6 +589,35 @@ tasks:
       - Active pane metrics compressed to 3-4 lines
       - Single-pane mode degrades gracefully (no empty sections)
       - Feed entries attributed with source pane/role and timestamp
+
+  # ─── Phase 8d — Left Rail Redesign ────────────────────────────────────────────
+
+  - id: T-820
+    title: "Left rail: project panel (agents + task board)"
+    status: open
+    phase: phase-8d-left-rail
+    description: |
+      Replace the sessions list with a project-oriented left rail:
+
+      **Agent Roster (top)** — Shows configured agents for this project
+      (from .potato/agents.toml or auto-detected). Each entry shows name,
+      adapter icon, and live status if running. Enter to launch.
+
+      **Task Board (bottom, flex)** — Surfaces MCP task coordination state.
+      Available, claimed, completed tasks. Shows owner (pane/role) for
+      claimed tasks. Backed by InterSessionState (and .potato/state.db
+      when T-811 lands). Scrollable. Agents interact via potato_claim_task
+      / potato_release_task MCP tools.
+
+      Sessions list removed from left rail (accessible via /sessions
+      overlay per T-603).
+    acceptance:
+      - Agent roster shows project agents with status
+      - Task board shows live task state from MCP
+      - Tasks update in real-time as agents claim/complete
+      - Enter on agent launches it
+      - Sessions accessible only via /sessions overlay
+      - Single-pane mode still works (task board shows solo tasks)
 
   # ─── Phase 9 — Polish + Distribution ──────────────────────────────────────────
 
