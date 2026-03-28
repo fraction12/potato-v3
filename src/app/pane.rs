@@ -385,4 +385,38 @@ mod tests {
         let ids: Vec<_> = pm.iter().map(|(i, p)| (i, p.session.session_id.clone())).collect();
         assert_eq!(ids, vec![(0, "sess-1".into()), (1, "sess-2".into())]);
     }
+
+    #[test]
+    fn pane_role_fields_default_to_none() {
+        let mut pm = PaneManager::new();
+        pm.open("sess-1", "claude");
+        let pane = pm.active_pane().unwrap();
+        assert!(pane.role_name.is_none());
+        assert!(pane.role_description.is_none());
+    }
+
+    #[test]
+    fn pane_role_can_be_set() {
+        let mut pm = PaneManager::new();
+        pm.open("sess-1", "claude");
+        let pane = pm.active_pane_mut().unwrap();
+        pane.role_name = Some("architect".into());
+        pane.role_description = Some("Frontend API design".into());
+
+        let pane = pm.active_pane().unwrap();
+        assert_eq!(pane.role_name.as_deref(), Some("architect"));
+        assert_eq!(pane.role_description.as_deref(), Some("Frontend API design"));
+    }
+
+    #[test]
+    fn pane_role_cleared_on_close_reopen() {
+        let mut pm = PaneManager::new();
+        pm.open("sess-1", "claude");
+        pm.active_pane_mut().unwrap().role_name = Some("architect".into());
+        pm.close(0);
+
+        pm.open("sess-2", "claude");
+        // New pane should have no role.
+        assert!(pm.active_pane().unwrap().role_name.is_none());
+    }
 }

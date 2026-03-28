@@ -583,4 +583,34 @@ mod tests {
         assert!(!AgentStatus::Idle.is_active());
         assert!(!AgentStatus::Exited { code: Some(0) }.is_active());
     }
+
+    #[test]
+    fn session_state_overlay_defaults_to_none() {
+        let s = SessionState::new("id", "agent");
+        assert!(s.overlay.is_none());
+    }
+
+    #[test]
+    fn session_state_command_selected_defaults_to_zero() {
+        let s = SessionState::new("id", "agent");
+        assert_eq!(s.command_selected, 0);
+    }
+
+    #[test]
+    fn overlay_enum_variants_are_distinct() {
+        assert_ne!(Overlay::Help, Overlay::Sessions);
+    }
+
+    #[test]
+    fn session_state_overlay_can_be_set_and_cleared() {
+        let mut s = SessionState::new("id", "agent");
+        s.overlay = Some(Overlay::Help);
+        assert_eq!(s.overlay, Some(Overlay::Help));
+
+        s.overlay = Some(Overlay::Sessions);
+        assert_eq!(s.overlay, Some(Overlay::Sessions));
+
+        s.overlay = None;
+        assert!(s.overlay.is_none());
+    }
 }
