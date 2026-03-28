@@ -476,9 +476,9 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                     // ── Overlay active — dispatch key to overlay ──────────────
                     {
                         let overlay_kind = state.session().and_then(|s| s.overlay.clone());
-                        if overlay_kind.is_some() {
-                            match &overlay_kind {
-                                Some(crate::app::state::Overlay::AgentPicker) => {
+                        if let Some(ref kind) = overlay_kind {
+                            match kind {
+                                crate::app::state::Overlay::AgentPicker => {
                                     match key.code {
                                         KeyCode::Esc => {
                                             if let AppScreen::Session(ref mut session) = state.screen {
@@ -914,17 +914,12 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                         }
                     }
 
-                    // ── Sidebar focus — navigate sidebar items ────────────────
-                    if current_focus == CockpitFocus::Sidebar {
+                    // ── Sidebar focus — Enter returns to Input ────────────────
+                    if current_focus == CockpitFocus::Sidebar && key.code == KeyCode::Enter {
                         if let AppScreen::Session(ref mut session) = state.screen {
-                            match key.code {
-                                KeyCode::Enter => {
-                                    session.cockpit_focus = CockpitFocus::Input;
-                                    continue;
-                                }
-                                _ => {}
-                            }
+                            session.cockpit_focus = CockpitFocus::Input;
                         }
+                        continue;
                     }
                 }
             } // end if let Message::Key
@@ -1474,10 +1469,9 @@ fn sync_mcp_roles_to_panes(state: &mut AppState) {
     };
 
     for (pane_id, role) in roles {
-        // Find the pane by id and update if changed.
-        for i in 0..state.panes.len() {
-            if let Some(pane) = state.panes.get_mut(i) {
-                if pane.id == pane_id && pane.role_name.as_deref() != Some(&role.name) {
+        if let Some(idx) = state.panes.find_by_pane_id(pane_id) {
+            if let Some(pane) = state.panes.get_mut(idx) {
+                if pane.role_name.as_deref() != Some(&role.name) {
                     pane.role_name = Some(role.name.clone());
                     if !role.description.is_empty() {
                         pane.role_description = Some(role.description.clone());
