@@ -8,7 +8,7 @@ project:
   language: Rust
   framework: ratatui + tokio + crossterm + portable-pty + vt100
   storage: SQLite (rusqlite, WAL mode)
-  current_phase: phase-7-inter-session
+  current_phase: phase-8-multiagent
 
 metadata:
   version: 0.1.0

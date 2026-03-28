@@ -371,35 +371,46 @@ tasks:
 
   - id: T-801
     title: "Codex adapter"
-    status: open
+    status: done
     phase: phase-8-multiagent
     description: |
-      CodexAdapter: spawn codex CLI, parse output or raw PTY passthrough.
-      Detect structured output format if available.
+      CodexAdapter: spawn codex CLI in interactive PTY mode, parse JSONL events
+      (thread.started, turn.completed, item.started/completed). Full detect()
+      with /opt/homebrew/bin/codex fallback. 36 unit tests.
+    completed_at: "2025-03-27"
 
   - id: T-802
     title: "Generic adapter (raw PTY passthrough)"
-    status: open
+    status: done
     phase: phase-8-multiagent
     description: |
-      GenericAdapter wraps any CLI. No metrics parsing — raw terminal only.
-      Sidebar shows "no metrics" state gracefully.
+      GenericAdapter already existed and is solid. Added build_command working
+      dir test. OpenCode exposed as generic adapter in detect_agents() and
+      agent picker overlay.
+    completed_at: "2025-03-27"
 
   - id: T-803
-    title: "Agent picker overlay (Ctrl+P)"
-    status: open
+    title: "Agent picker overlay (/agent)"
+    status: done
     phase: phase-8-multiagent
     description: |
-      Overlay listing detected agents + configured profiles.
-      Enter to launch. Shows binary path and profile name.
+      AgentPicker overlay triggered by /agent command. Lists Claude/Codex/OpenCode
+      with ●/○ availability, binary path, capabilities (SRAT flags). Up/Down/Enter/Esc.
+      Enter launches selected agent via spawn_agent_pane(). Left rail updated to show
+      all detected agents dynamically. spawn_agent_pane() generalizes spawn_claude_pane()
+      for claude/codex/generic adapters.
+    completed_at: "2025-03-27"
 
   - id: T-804
     title: "Agent profiles (config + .potato/profile.toml)"
-    status: open
+    status: done
     phase: phase-8-multiagent
     description: |
-      Per-agent config: binary path, default args, env vars, cwd.
-      Project-level .potato/profile.toml overrides global config.
+      AgentProfile struct with name/adapter/binary/model/extra_args/env/working_dir.
+      ProfileLoader merges: auto-detected defaults < ~/.config/potato/profiles/*.toml
+      < .potato/profile.toml. Supports single-profile TOML and [[profiles]] arrays.
+      11 unit tests covering all load paths, TOML roundtrip, override behavior.
+    completed_at: "2025-03-27"
 
   # ─── Phase 9 — Polish + Distribution ──────────────────────────────────────────
 
