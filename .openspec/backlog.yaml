@@ -279,7 +279,7 @@ tasks:
 
   - id: T-701
     title: "MCP server subcommand + UDS bridge"
-    status: open
+    status: done
     phase: phase-7-inter-session
     description: |
       Add `potato mcp-server` subcommand that speaks MCP stdio protocol
@@ -294,7 +294,7 @@ tasks:
 
   - id: T-702
     title: "Dynamic .mcp.json generation"
-    status: open
+    status: done
     phase: phase-7-inter-session
     description: |
       When multi-pane is active, Potato writes/updates .mcp.json in the
