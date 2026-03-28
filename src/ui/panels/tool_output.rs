@@ -25,7 +25,7 @@ use ratatui::{
 use chrono::{DateTime, Utc};
 
 use crate::app::state::{AppState, ToolCallRecord};
-use crate::ui::theme::{AMBER, BG, CHARCOAL, CREAM, ROSE, RUST_RED, SOIL, SPROUT, STONE, TAN};
+use crate::ui::theme::{AMBER, BG, CHARCOAL, CREAM, ROSE, SPROUT, STONE, TAN};
 
 use super::{Panel, PanelAction, PanelId};
 
