@@ -1,0 +1,514 @@
+//! Inter-session shared state for the Potato MCP server.
+//!
+//! `InterSessionState` is the in-memory shared state that all MCP server
+//! instances (one per pane) read and write through.
+
+use std::collections::{HashMap, VecDeque};
+
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+// ── Domain types ──────────────────────────────────────────────────────────────
+
+/// Priority level for inter-session messages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MessagePriority {
+    Normal,
+    Urgent,
+}
+
+impl Default for MessagePriority {
+    fn default() -> Self {
+        Self::Normal
+    }
+}
+
+/// A message in a pane's inbox.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InterMessage {
+    pub from_pane: u64,
+    pub content: String,
+    pub priority: MessagePriority,
+    pub timestamp: DateTime<Utc>,
+    pub read: bool,
+}
+
+/// Records that a pane has claimed a task.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskClaim {
+    pub task_id: String,
+    pub description: String,
+    pub claimed_by: u64,
+    pub claimed_at: DateTime<Utc>,
+}
+
+/// Role assignment for a pane.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PaneRole {
+    pub name: String,
+    pub description: String,
+}
+
+// ── Claim result ──────────────────────────────────────────────────────────────
+
+/// Result of attempting to claim a task.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ClaimResult {
+    /// Task was claimed successfully.
+    Claimed,
+    /// Task is already held by another pane.
+    AlreadyClaimed { held_by: u64, since: DateTime<Utc> },
+}
+
+// ── InterSessionState ─────────────────────────────────────────────────────────
+
+/// All shared state for the inter-session MCP layer.
+///
+/// Lives in Potato's main process; accessed by MCP server instances via
+/// `Arc<Mutex<InterSessionState>>`.
+#[derive(Debug, Default)]
+pub struct InterSessionState {
+    /// Per-pane message inboxes.
+    pub inboxes: HashMap<u64, VecDeque<InterMessage>>,
+
+    /// Shared key-value working memory visible to all panes.
+    pub shared_context: HashMap<String, Value>,
+
+    /// Mutex-style task coordination board.
+    pub task_board: HashMap<String, TaskClaim>,
+
+    /// Role assignments per pane.
+    pub roles: HashMap<u64, PaneRole>,
+}
+
+impl InterSessionState {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    // ── Messaging ─────────────────────────────────────────────────────────────
+
+    /// Enqueue a message into `to_pane`'s inbox.
+    pub fn send_message(
+        &mut self,
+        from_pane: u64,
+        to_pane: u64,
+        content: impl Into<String>,
+        priority: MessagePriority,
+    ) {
+        let msg = InterMessage {
+            from_pane,
+            content: content.into(),
+            priority,
+            timestamp: Utc::now(),
+            read: false,
+        };
+        self.inboxes.entry(to_pane).or_default().push_back(msg);
+    }
+
+    /// Drain unread messages from `pane_id`'s inbox.
+    ///
+    /// If `mark_read` is true, messages are marked read before returning;
+    /// they remain in the queue (so they can still be inspected).
+    /// Unread-only messages are returned.
+    pub fn get_messages(&mut self, pane_id: u64, mark_read: bool) -> Vec<InterMessage> {
+        let queue = self.inboxes.entry(pane_id).or_default();
+        let unread: Vec<InterMessage> = queue
+            .iter()
+            .filter(|m| !m.read)
+            .cloned()
+            .collect();
+
+        if mark_read {
+            for msg in queue.iter_mut() {
+                if !msg.read {
+                    msg.read = true;
+                }
+            }
+        }
+
+        unread
+    }
+
+    // ── Roles ─────────────────────────────────────────────────────────────────
+
+    /// Assign a role to a pane.
+    pub fn set_role(&mut self, pane_id: u64, role: PaneRole) {
+        self.roles.insert(pane_id, role);
+    }
+
+    /// Get the role assigned to a pane, if any.
+    pub fn get_role(&self, pane_id: u64) -> Option<&PaneRole> {
+        self.roles.get(&pane_id)
+    }
+
+    /// Get summary status of all panes except `exclude_pane_id`.
+    pub fn get_partner_status(&self, exclude_pane_id: u64) -> Vec<PartnerStatus> {
+        self.roles
+            .iter()
+            .filter(|(id, _)| **id != exclude_pane_id)
+            .map(|(id, role)| PartnerStatus {
+                pane_id: *id,
+                role: role.clone(),
+                unread_messages: self
+                    .inboxes
+                    .get(id)
+                    .map(|q| q.iter().filter(|m| !m.read).count())
+                    .unwrap_or(0),
+            })
+            .collect()
+    }
+
+    // ── Shared context ────────────────────────────────────────────────────────
+
+    /// Read a value from shared context.
+    pub fn shared_context_get(&self, key: &str) -> Option<&Value> {
+        self.shared_context.get(key)
+    }
+
+    /// Write a value to shared context.
+    pub fn shared_context_set(&mut self, key: impl Into<String>, value: Value) {
+        self.shared_context.insert(key.into(), value);
+    }
+
+    /// Delete a key from shared context. Returns whether the key existed.
+    pub fn shared_context_delete(&mut self, key: &str) -> bool {
+        self.shared_context.remove(key).is_some()
+    }
+
+    /// List all keys in shared context.
+    pub fn shared_context_list(&self) -> Vec<String> {
+        let mut keys: Vec<String> = self.shared_context.keys().cloned().collect();
+        keys.sort();
+        keys
+    }
+
+    // ── Task board ────────────────────────────────────────────────────────────
+
+    /// Attempt to claim a task. Returns `Claimed` if successful,
+    /// or `AlreadyClaimed` if another pane holds it.
+    pub fn claim_task(
+        &mut self,
+        task_id: impl Into<String>,
+        description: impl Into<String>,
+        pane_id: u64,
+    ) -> ClaimResult {
+        let task_id = task_id.into();
+        if let Some(existing) = self.task_board.get(&task_id) {
+            if existing.claimed_by != pane_id {
+                return ClaimResult::AlreadyClaimed {
+                    held_by: existing.claimed_by,
+                    since: existing.claimed_at,
+                };
+            }
+            // Same pane re-claiming — allow (idempotent).
+        }
+        self.task_board.insert(
+            task_id.clone(),
+            TaskClaim {
+                task_id,
+                description: description.into(),
+                claimed_by: pane_id,
+                claimed_at: Utc::now(),
+            },
+        );
+        ClaimResult::Claimed
+    }
+
+    /// Release a task claimed by `pane_id`. Returns true if released,
+    /// false if task doesn't exist or is held by a different pane.
+    pub fn release_task(&mut self, task_id: &str, pane_id: u64) -> bool {
+        match self.task_board.get(task_id) {
+            Some(claim) if claim.claimed_by == pane_id => {
+                self.task_board.remove(task_id);
+                true
+            }
+            _ => false,
+        }
+    }
+}
+
+/// Status summary for a partner pane.
+#[derive(Debug, Clone)]
+pub struct PartnerStatus {
+    pub pane_id: u64,
+    pub role: PaneRole,
+    pub unread_messages: usize,
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn make_state() -> InterSessionState {
+        InterSessionState::new()
+    }
+
+    // ── Messaging ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn send_and_receive_message() {
+        let mut state = make_state();
+        state.send_message(0, 1, "hello from pane 0", MessagePriority::Normal);
+        let msgs = state.get_messages(1, false);
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].content, "hello from pane 0");
+        assert_eq!(msgs[0].from_pane, 0);
+        assert!(!msgs[0].read);
+    }
+
+    #[test]
+    fn messages_are_not_marked_read_when_flag_false() {
+        let mut state = make_state();
+        state.send_message(0, 1, "msg", MessagePriority::Normal);
+        let _ = state.get_messages(1, false);
+        // Second call should still return the message as unread.
+        let msgs = state.get_messages(1, false);
+        assert_eq!(msgs.len(), 1);
+    }
+
+    #[test]
+    fn messages_are_marked_read_when_flag_true() {
+        let mut state = make_state();
+        state.send_message(0, 1, "msg", MessagePriority::Normal);
+        let _ = state.get_messages(1, true);
+        // After marking read, no unread messages.
+        let msgs = state.get_messages(1, false);
+        assert_eq!(msgs.len(), 0);
+    }
+
+    #[test]
+    fn multiple_messages_delivered_in_order() {
+        let mut state = make_state();
+        state.send_message(0, 1, "first", MessagePriority::Normal);
+        state.send_message(0, 1, "second", MessagePriority::Normal);
+        state.send_message(0, 1, "third", MessagePriority::Urgent);
+        let msgs = state.get_messages(1, false);
+        assert_eq!(msgs.len(), 3);
+        assert_eq!(msgs[0].content, "first");
+        assert_eq!(msgs[1].content, "second");
+        assert_eq!(msgs[2].content, "third");
+        assert_eq!(msgs[2].priority, MessagePriority::Urgent);
+    }
+
+    #[test]
+    fn messages_dont_cross_pane_inboxes() {
+        let mut state = make_state();
+        state.send_message(0, 1, "for pane 1", MessagePriority::Normal);
+        state.send_message(1, 0, "for pane 0", MessagePriority::Normal);
+        let msgs_for_0 = state.get_messages(0, false);
+        let msgs_for_1 = state.get_messages(1, false);
+        assert_eq!(msgs_for_0.len(), 1);
+        assert_eq!(msgs_for_0[0].content, "for pane 0");
+        assert_eq!(msgs_for_1.len(), 1);
+        assert_eq!(msgs_for_1[0].content, "for pane 1");
+    }
+
+    #[test]
+    fn empty_inbox_returns_empty_vec() {
+        let mut state = make_state();
+        let msgs = state.get_messages(99, false);
+        assert!(msgs.is_empty());
+    }
+
+    // ── Roles ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn set_and_get_role() {
+        let mut state = make_state();
+        let role = PaneRole { name: "architect".into(), description: "Designs the system".into() };
+        state.set_role(0, role.clone());
+        assert_eq!(state.get_role(0), Some(&role));
+    }
+
+    #[test]
+    fn get_role_returns_none_if_unset() {
+        let state = make_state();
+        assert!(state.get_role(42).is_none());
+    }
+
+    #[test]
+    fn set_role_overwrites() {
+        let mut state = make_state();
+        state.set_role(0, PaneRole { name: "a".into(), description: "".into() });
+        state.set_role(0, PaneRole { name: "b".into(), description: "".into() });
+        assert_eq!(state.get_role(0).unwrap().name, "b");
+    }
+
+    #[test]
+    fn get_partner_status_excludes_self() {
+        let mut state = make_state();
+        state.set_role(0, PaneRole { name: "architect".into(), description: "".into() });
+        state.set_role(1, PaneRole { name: "implementer".into(), description: "".into() });
+        let statuses = state.get_partner_status(0);
+        assert_eq!(statuses.len(), 1);
+        assert_eq!(statuses[0].pane_id, 1);
+        assert_eq!(statuses[0].role.name, "implementer");
+    }
+
+    #[test]
+    fn get_partner_status_includes_unread_count() {
+        let mut state = make_state();
+        state.set_role(1, PaneRole { name: "implementer".into(), description: "".into() });
+        state.send_message(0, 1, "a", MessagePriority::Normal);
+        state.send_message(0, 1, "b", MessagePriority::Normal);
+        let statuses = state.get_partner_status(0);
+        // pane 1 has 2 unread messages in ITS inbox
+        let pane1 = statuses.iter().find(|s| s.pane_id == 1).unwrap();
+        assert_eq!(pane1.unread_messages, 2);
+    }
+
+    // ── Shared context ────────────────────────────────────────────────────────
+
+    #[test]
+    fn context_set_and_get() {
+        let mut state = make_state();
+        state.shared_context_set("key1", json!("value1"));
+        assert_eq!(state.shared_context_get("key1"), Some(&json!("value1")));
+    }
+
+    #[test]
+    fn context_get_missing_key() {
+        let state = make_state();
+        assert!(state.shared_context_get("nope").is_none());
+    }
+
+    #[test]
+    fn context_delete_existing_key() {
+        let mut state = make_state();
+        state.shared_context_set("k", json!(1));
+        let deleted = state.shared_context_delete("k");
+        assert!(deleted);
+        assert!(state.shared_context_get("k").is_none());
+    }
+
+    #[test]
+    fn context_delete_missing_key_returns_false() {
+        let mut state = make_state();
+        assert!(!state.shared_context_delete("ghost"));
+    }
+
+    #[test]
+    fn context_list_sorted() {
+        let mut state = make_state();
+        state.shared_context_set("zebra", json!(1));
+        state.shared_context_set("apple", json!(2));
+        state.shared_context_set("mango", json!(3));
+        let keys = state.shared_context_list();
+        assert_eq!(keys, vec!["apple", "mango", "zebra"]);
+    }
+
+    #[test]
+    fn context_list_empty() {
+        let state = make_state();
+        assert!(state.shared_context_list().is_empty());
+    }
+
+    #[test]
+    fn context_set_overwrites() {
+        let mut state = make_state();
+        state.shared_context_set("k", json!("old"));
+        state.shared_context_set("k", json!("new"));
+        assert_eq!(state.shared_context_get("k"), Some(&json!("new")));
+    }
+
+    #[test]
+    fn context_stores_complex_values() {
+        let mut state = make_state();
+        let val = json!({"nested": {"array": [1, 2, 3], "bool": true}});
+        state.shared_context_set("complex", val.clone());
+        assert_eq!(state.shared_context_get("complex"), Some(&val));
+    }
+
+    // ── Task board ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn claim_task_succeeds_when_unclaimed() {
+        let mut state = make_state();
+        let result = state.claim_task("task-1", "Do the thing", 0);
+        assert_eq!(result, ClaimResult::Claimed);
+        assert!(state.task_board.contains_key("task-1"));
+    }
+
+    #[test]
+    fn claim_task_fails_when_held_by_other() {
+        let mut state = make_state();
+        state.claim_task("task-1", "Do the thing", 0);
+        let result = state.claim_task("task-1", "Do the thing", 1);
+        match result {
+            ClaimResult::AlreadyClaimed { held_by, .. } => assert_eq!(held_by, 0),
+            _ => panic!("Expected AlreadyClaimed"),
+        }
+    }
+
+    #[test]
+    fn claim_task_is_idempotent_for_same_pane() {
+        let mut state = make_state();
+        state.claim_task("task-1", "original", 0);
+        let result = state.claim_task("task-1", "re-claim", 0);
+        assert_eq!(result, ClaimResult::Claimed);
+        // Description updated.
+        assert_eq!(state.task_board["task-1"].description, "re-claim");
+    }
+
+    #[test]
+    fn release_task_succeeds_for_owner() {
+        let mut state = make_state();
+        state.claim_task("task-1", "desc", 0);
+        let released = state.release_task("task-1", 0);
+        assert!(released);
+        assert!(!state.task_board.contains_key("task-1"));
+    }
+
+    #[test]
+    fn release_task_fails_for_non_owner() {
+        let mut state = make_state();
+        state.claim_task("task-1", "desc", 0);
+        let released = state.release_task("task-1", 1);
+        assert!(!released);
+        // Task still held by pane 0.
+        assert!(state.task_board.contains_key("task-1"));
+    }
+
+    #[test]
+    fn release_unclaimed_task_returns_false() {
+        let mut state = make_state();
+        assert!(!state.release_task("ghost-task", 0));
+    }
+
+    #[test]
+    fn multiple_tasks_independent() {
+        let mut state = make_state();
+        state.claim_task("task-a", "A", 0);
+        state.claim_task("task-b", "B", 1);
+        // Pane 1 can't take task-a.
+        assert!(matches!(state.claim_task("task-a", "", 1), ClaimResult::AlreadyClaimed { .. }));
+        // Pane 0 can't take task-b.
+        assert!(matches!(state.claim_task("task-b", "", 0), ClaimResult::AlreadyClaimed { .. }));
+        // But pane 0 can release task-a.
+        assert!(state.release_task("task-a", 0));
+        // Now pane 1 can claim task-a.
+        assert_eq!(state.claim_task("task-a", "", 1), ClaimResult::Claimed);
+    }
+
+    // ── MessagePriority serde ─────────────────────────────────────────────────
+
+    #[test]
+    fn message_priority_serializes_lowercase() {
+        assert_eq!(serde_json::to_string(&MessagePriority::Normal).unwrap(), r#""normal""#);
+        assert_eq!(serde_json::to_string(&MessagePriority::Urgent).unwrap(), r#""urgent""#);
+    }
+
+    #[test]
+    fn message_priority_deserializes() {
+        let n: MessagePriority = serde_json::from_str(r#""normal""#).unwrap();
+        let u: MessagePriority = serde_json::from_str(r#""urgent""#).unwrap();
+        assert_eq!(n, MessagePriority::Normal);
+        assert_eq!(u, MessagePriority::Urgent);
+    }
+}
