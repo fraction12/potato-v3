@@ -374,6 +374,82 @@ tasks:
       - InterSessionState updated so MCP get_role reflects current roles
       - .mcp.json written at pane 0 spawn for early tool discovery
 
+  - id: T-707
+    title: "Broadcast bar (send input to all panes)"
+    status: done
+    phase: phase-7-inter-session
+    completed_at: "2026-03-28"
+    description: |
+      Broadcast bar replaces normal input bar — Enter sends typed text to all
+      active panes simultaneously. Toggled via keybind. Useful for sending the
+      same instruction to multiple agents at once.
+    acceptance:
+      - Broadcast bar renders in place of normal input
+      - Enter sends to all active panes
+      - PTY receives \r (Enter) not \n (newline)
+
+  - id: T-708
+    title: "MCP PTY injection engine (push-deliver messages)"
+    status: done
+    phase: phase-7-inter-session
+    completed_at: "2026-03-28"
+    description: |
+      Push-deliver MCP messages into target pane PTYs. Urgent messages inject
+      immediately if target is idle. Normal messages queue and flush on next
+      idle transition (detected from JSONL TurnDone). Bracketed paste stripped
+      to avoid Claude Code Ink issues. Notifications flattened to single line
+      for raw mode compatibility.
+    acceptance:
+      - Urgent messages inject immediately when target is idle
+      - Normal messages queue when target is busy, flush on idle
+      - Bracketed paste not used in injections
+      - Notifications formatted as single line for raw mode
+
+  - id: T-709
+    title: "Pane titles from MCP-claimed roles"
+    status: done
+    phase: phase-7-inter-session
+    completed_at: "2026-03-28"
+    description: |
+      When an agent claims a role via potato_claim_role MCP tool, the pane
+      title updates to show the claimed role name instead of generic 'Claude N'.
+      Roles synced to pane titles every tick.
+    acceptance:
+      - Pane title shows claimed role name
+      - Title updates on role claim without restart
+      - Synced every tick so title stays current
+
+  - id: T-710
+    title: "Single shared MCP server entry (refactor from per-pane)"
+    status: done
+    phase: phase-7-inter-session
+    completed_at: "2026-03-28"
+    description: |
+      Refactored .mcp.json from per-pane MCP server entries (potato-0, potato-1)
+      to a single shared entry. Pane identity still resolved via POTATO_PANE_ID
+      env var. Simplifies config and avoids stale entries.
+    acceptance:
+      - Single MCP server entry in .mcp.json
+      - Pane identity still correctly resolved
+      - No stale per-pane entries on teardown
+
+  - id: T-711
+    title: "Keybind overhaul (Alt+[/], Ctrl+W, Ctrl+Q, Esc)"
+    status: done
+    phase: phase-7-inter-session
+    completed_at: "2026-03-28"
+    description: |
+      Keybind overhaul: Alt+[/] for pane switching (replaced Ctrl+[/]),
+      Ctrl+W closes panes, Ctrl+Q exits terminal focus, Ctrl+\ quits app,
+      Esc clears input instead of killing panes. Arrow key navigation in
+      Agents rail (Up/Down/Home/End).
+    acceptance:
+      - Alt+[/] switches panes
+      - Ctrl+W closes active pane
+      - Ctrl+Q exits terminal focus
+      - Esc clears input, does not kill pane
+      - Arrow keys navigate Agents rail
+
   # ─── Phase 8 — Multi-Agent Support ──────────────────────────────────────────
 
   - id: T-801
@@ -418,6 +494,42 @@ tasks:
       < .potato/profile.toml. Supports single-profile TOML and [[profiles]] arrays.
       11 unit tests covering all load paths, TOML roundtrip, override behavior.
     completed_at: "2026-03-27"
+
+  # ─── Phase 8b — Sidebar Redesign (Coordination Observatory) ───────────────────
+
+  - id: T-810
+    title: "Sidebar redesign: coordination observatory"
+    status: open
+    phase: phase-8b-sidebar
+    description: |
+      Replace the current single-session diagnostics sidebar with a
+      coordination-first layout. The sidebar should answer "what's happening
+      between my agents?" not "how many tokens did pane 0 use?"
+
+      Three sections, top to bottom:
+
+      **Coordination (top)** — Both agents' roles + live status
+      (idle/thinking/tool use). At-a-glance system state, not just focused pane.
+      Shows who's talking to whom.
+
+      **Activity Feed (middle, flex)** — Chronological feed of inter-agent
+      events: MCP messages sent/received, task claims/releases, shared context
+      updates, role changes. This is the collaboration timeline — the most
+      important section for multi-agent use.
+
+      **Active Pane (bottom, compact)** — Compressed 3-4 line metrics for the
+      focused pane: model, turns, tokens. Useful but not the star.
+
+      When only one pane is active (no collaboration), degrade gracefully:
+      coordination section shows single agent status, activity feed shows
+      tool calls from the active pane, bottom stays the same.
+    acceptance:
+      - Coordination section shows all panes' roles + live status
+      - Activity feed shows inter-agent messages, task claims, context updates
+      - Feed is chronological, scrollable, auto-tails new events
+      - Active pane metrics compressed to 3-4 lines
+      - Single-pane mode degrades gracefully (no empty sections)
+      - Feed entries attributed with source pane/role and timestamp
 
   # ─── Phase 9 — Polish + Distribution ──────────────────────────────────────────
 

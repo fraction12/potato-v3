@@ -73,7 +73,7 @@ phases:
       SQLite persistence of session events. Left rail with session history
       and resume. Multi-pane support (up to 2 Claude sessions side-by-side).
       Tab focus cycling across panes. Agents picker in left rail.
-    tickets: [T-501, T-502, T-503, T-504, T-505, T-506, T-507]
+    tickets: [T-501, T-502, T-503, T-505, T-506, T-507]
 
   - id: phase-6-commands
     title: "Slash commands + overlays"
