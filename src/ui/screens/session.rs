@@ -960,9 +960,9 @@ fn render_status_bar(
     );
 
     let keys_text = if pane_count > 1 {
-        " Tab:cycle panes  Ctrl+J:term  Ctrl+Q:exit term  Esc:close "
+        " Tab:cycle panes  Ctrl+J:term  Ctrl+W:close pane  Ctrl+\\:quit "
     } else {
-        " Tab:cycle  Ctrl+J:term  Ctrl+Q:exit term  ?:help "
+        " Tab:cycle  Ctrl+J:term  Ctrl+Q:exit term  Ctrl+W:close  ?:help "
     };
     let keys_span = Span::styled(
         keys_text,

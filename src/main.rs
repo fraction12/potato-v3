@@ -362,18 +362,42 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
 
                 // ── Session key handling ──────────────────────────────────────
                 if matches!(state.screen, AppScreen::Session(_)) {
-                    // ── Global quit — always intercepted first ────────────────
-                    if key.modifiers.contains(KeyModifiers::CONTROL) {
-                        if matches!(key.code, KeyCode::Char('q') | KeyCode::Char('\\')) {
-                            state.should_quit = true;
-                            break;
-                        }
+                    // ── Global quit — Ctrl+\ always quits; Ctrl+Q quits
+                    //    unless terminal is focused (where it means "exit terminal").
+                    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('\\') {
+                        state.should_quit = true;
+                        break;
                     }
 
                     // ── Ctrl+J — jump directly to Terminal focus ──────────────
                     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('j') {
                         if let AppScreen::Session(ref mut session) = state.screen {
                             session.cockpit_focus = CockpitFocus::Terminal;
+                        }
+                        continue;
+                    }
+
+                    // ── Ctrl+W — close active pane ────────────────────────────
+                    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('w') {
+                        state.panes.close_active();
+
+                        // Clean up .mcp.json when dropping below 2 panes.
+                        if state.panes.len() < 2 {
+                            if let Ok(cwd) = std::env::current_dir() {
+                                let _ = crate::mcp::config_writer::remove_mcp_config(&cwd);
+                            }
+                        }
+
+                        // Clear legacy fields.
+                        turn_handle = None;
+                        state.real_pty = None;
+                        state.claude_log = None;
+
+                        if state.panes.is_empty() {
+                            state.screen = AppScreen::Dashboard(DashboardState {
+                                available_agents: detect_agents(),
+                                ..DashboardState::default()
+                            });
                         }
                         continue;
                     }
@@ -506,37 +530,23 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                     }
 
                     // ── Esc — context-sensitive ───────────────────────────────
-                    // When terminal is focused, Esc passes through to the agent PTY
-                    // (agents like Claude Code need Esc). Use Ctrl+Q to leave terminal.
+                    // Terminal focus: Esc passes through to agent PTY (Claude needs it).
+                    // Input focus: Esc clears the input buffer (if non-empty), otherwise no-op.
+                    // Other focus: Esc returns to Input.
+                    // Pane closing requires Ctrl+W, not Esc.
                     if key.code == KeyCode::Esc && current_focus != CockpitFocus::Terminal {
                         match current_focus {
-                            // Esc from Input = close active pane; return to dashboard if no panes left.
                             CockpitFocus::Input => {
-                                // Close the active pane (drops PTY).
-                                state.panes.close_active();
-
-                                // Clean up .mcp.json when dropping below 2 panes.
-                                if state.panes.len() < 2 {
-                                    if let Ok(cwd) = std::env::current_dir() {
-                                        let _ = crate::mcp::config_writer::remove_mcp_config(&cwd);
+                                // Clear input buffer if there's text; otherwise just ignore.
+                                if let AppScreen::Session(ref mut session) = state.screen {
+                                    if !session.input_buffer.is_empty() {
+                                        session.input_buffer.clear();
                                     }
-                                }
-
-                                // Also clear legacy fields.
-                                turn_handle = None;
-                                state.real_pty = None;
-                                state.claude_log = None;
-
-                                if state.panes.is_empty() {
-                                    state.screen = AppScreen::Dashboard(DashboardState {
-                                        available_agents: detect_agents(),
-                                        ..DashboardState::default()
-                                    });
                                 }
                                 continue;
                             }
                             CockpitFocus::Terminal => unreachable!(), // guarded above
-                            // Esc from anything else = return focus to Input.
+                            // Esc from Agents/Sessions/Sidebar = return focus to Input.
                             _ => {
                                 if let AppScreen::Session(ref mut session) = state.screen {
                                     session.cockpit_focus = CockpitFocus::Input;

@@ -35,7 +35,8 @@ struct Section {
 // ── Keybind data ──────────────────────────────────────────────────────────────
 
 static GLOBAL_ENTRIES: &[KeyEntry] = &[
-    KeyEntry::new("q / Ctrl+C",  "Quit"),
+    KeyEntry::new("Ctrl+\\",     "Quit"),
+    KeyEntry::new("Ctrl+W",      "Close active pane"),
     KeyEntry::new("Tab",         "Next focus panel"),
     KeyEntry::new("Shift+Tab",   "Previous focus panel"),
     KeyEntry::new("?",           "Toggle help"),
@@ -44,7 +45,7 @@ static GLOBAL_ENTRIES: &[KeyEntry] = &[
 static INPUT_ENTRIES: &[KeyEntry] = &[
     KeyEntry::new("Enter",  "Send to Claude / Execute command"),
     KeyEntry::new("/",      "Start command mode"),
-    KeyEntry::new("Esc",    "Close active pane"),
+    KeyEntry::new("Esc",    "Clear input"),
 ];
 
 static TERMINAL_ENTRIES: &[KeyEntry] = &[
