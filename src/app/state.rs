@@ -437,6 +437,11 @@ pub struct AppState {
     /// `Some` once `McpBridge::start()` has been called in `main()`.
     /// Passed to each pane's PTY subprocess as `POTATO_SOCKET`.
     pub mcp_socket_path: Option<std::path::PathBuf>,
+
+    /// Shared inter-session coordination state (messages, tasks, roles, context).
+    ///
+    /// Arc<Mutex<>> so it can be shared with the MCP bridge and read from UI.
+    pub inter_session_state: Option<Arc<std::sync::Mutex<crate::mcp::state::InterSessionState>>>,
 }
 
 impl Default for AppState {
@@ -460,6 +465,7 @@ impl Default for AppState {
             last_rail_refresh: 0,
             persisted_event_count: 0,
             mcp_socket_path: None,
+            inter_session_state: None,
         }
     }
 }

@@ -85,7 +85,7 @@ phases:
 
   - id: phase-7-inter-session
     title: "Inter-session communication via MCP"
-    status: in_progress
+    status: done
     goal: >
       Potato MCP server that both Claude panes connect to. Enables real-time
       messaging, shared context, task coordination, and role assignment between

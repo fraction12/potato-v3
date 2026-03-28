@@ -381,14 +381,14 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('w') {
                         state.panes.close_active();
 
-                        // Clean up .mcp.json when dropping below 2 panes.
-                        if state.panes.len() < 2 {
+                        turn_handle = None;
+
+                        // Clean up .mcp.json when all panes are gone.
+                        if state.panes.is_empty() {
                             if let Ok(cwd) = std::env::current_dir() {
                                 let _ = crate::mcp::config_writer::remove_mcp_config(&cwd);
                             }
                         }
-
-                        turn_handle = None;
 
                         if state.panes.is_empty() {
                             state.screen = AppScreen::Dashboard(DashboardState {
@@ -709,14 +709,32 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                                                             pane.id, name, description
                                                         );
                                                     }
+                                                    // Update InterSessionState so MCP tools reflect the role.
+                                                    if let Some(ref inter) = state.inter_session_state {
+                                                        if let Ok(mut is) = inter.lock() {
+                                                            if let Some(pid) = active_pane_id {
+                                                                is.set_role(pid, crate::mcp::state::PaneRole {
+                                                                    name: name.clone(),
+                                                                    description: description.clone().unwrap_or_default(),
+                                                                });
+                                                            }
+                                                        }
+                                                    }
                                                     // Inject notification into ALL other panes.
                                                     if let Some(pid) = active_pane_id {
                                                         let n_panes = state.panes.len();
-                                                        let role_ref: Option<&str> = Some(&name);
+                                                        let desc_part = description
+                                                            .as_deref()
+                                                            .filter(|d| !d.is_empty())
+                                                            .map(|d| format!(" — {d}"))
+                                                            .unwrap_or_default();
+                                                        let content = format!(
+                                                            "🏷️ Partner Pane {pid} has set their role to: {name}{desc_part}"
+                                                        );
                                                         let notification = crate::mcp::injection::format_notification(
                                                             pid,
-                                                            role_ref,
-                                                            &description.clone().unwrap_or_default(),
+                                                            Some(&name),
+                                                            &content,
                                                         );
                                                         for target in 0..n_panes {
                                                             if state.panes.get(target).map(|p| p.id) != Some(pid) {
@@ -994,17 +1012,13 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                 tracing::info!("Pane {} PTY exited, closing", i);
                 state.panes.close(i);
             }
-            // Clean up .mcp.json when dropping below 2 panes.
-            if had_panes && state.panes.len() < 2 {
+            // Only bounce to dashboard if we just closed the last pane.
+            if had_panes && state.panes.is_empty() {
+                // Clean up .mcp.json when all panes are gone.
                 if let Ok(cwd) = std::env::current_dir() {
-                    if let Err(e) = crate::mcp::config_writer::remove_mcp_config(&cwd) {
-                        tracing::warn!("Failed to clean up .mcp.json: {e}");
-                    } else {
-                        tracing::info!("Cleaned up .mcp.json (panes < 2)");
-                    }
+                    let _ = crate::mcp::config_writer::remove_mcp_config(&cwd);
                 }
             }
-            // Only bounce to dashboard if we just closed the last pane.
             if had_panes && state.panes.is_empty() && matches!(state.screen, AppScreen::Session(_)) {
                 tracing::info!("All panes closed, returning to dashboard");
                 state.screen = AppScreen::Dashboard(DashboardState {
@@ -1162,10 +1176,12 @@ fn spawn_claude_pane(
         refresh_rail(state, store);
     }
 
-    // ── Write .mcp.json when the 2nd pane is opened ───────────────────────────
-    // When we now have ≥ 2 panes and a socket path, write/update .mcp.json so
-    // Claude can discover the MCP server entries.
-    if state.panes.len() >= 2 {
+    // ── Write .mcp.json ────────────────────────────────────────────────────────
+    // Always keep .mcp.json in sync with current panes so Claude discovers
+    // Potato MCP tools. Written on every pane spawn (not just the 2nd) so
+    // that pane 0 has the config available if a 2nd pane is opened later
+    // and Claude re-reads it on the next conversation turn.
+    let wrote_mcp = if state.panes.len() >= 1 {
         if let Some(ref sock) = state.mcp_socket_path.clone() {
             if let Some(ref cwd) = launch_cwd {
                 let pane_ids: Vec<u64> =
@@ -1173,15 +1189,130 @@ fn spawn_claude_pane(
                 let sock_str = sock.to_string_lossy();
                 if let Err(e) = crate::mcp::config_writer::write_mcp_config(cwd, &pane_ids, &sock_str) {
                     tracing::warn!("Failed to write .mcp.json: {e}");
+                    false
                 } else {
                     tracing::info!("Wrote .mcp.json for panes: {:?}", pane_ids);
+                    true
                 }
-            }
-        }
+            } else { false }
+        } else { false }
+    } else { false };
+
+    // ── Inject collaboration context into both panes ─────────────────────────
+    // When the second pane spawns, notify existing panes about the new
+    // collaboration and available MCP tools so they start coordinating.
+    if wrote_mcp && state.panes.len() == 2 {
+        inject_collaboration_context(state);
     }
 
     tracing::info!("Opened Claude pane for session: {}", session_id);
     Ok(session_id)
+}
+
+/// Inject collaboration context into all panes when multi-pane becomes active.
+///
+/// Notifies existing panes about the collaboration and available MCP tools.
+/// The new pane (last) gets told about its partner. The existing pane(s) get
+/// told a partner has joined and to use `/mcp` to discover coordination tools.
+fn inject_collaboration_context(state: &mut AppState) {
+    let n = state.panes.len();
+    if n < 2 {
+        return;
+    }
+
+    // Collect pane info before mutating.
+    let pane_info: Vec<(u64, String, Option<String>)> = (0..n)
+        .filter_map(|i| {
+            state.panes.get(i).map(|p| {
+                (
+                    p.id,
+                    p.session.agent_name.clone(),
+                    p.role_name.clone(),
+                )
+            })
+        })
+        .collect();
+
+    let new_pane_idx = n - 1;
+    let new_info = &pane_info[new_pane_idx];
+
+    // Build message for existing panes (all except the new one).
+    for i in 0..new_pane_idx {
+        let partner_label = if let Some(ref role) = new_info.2 {
+            format!("Pane {} ({}, {})", new_info.0, new_info.1, role)
+        } else {
+            format!("Pane {} ({})", new_info.0, new_info.1)
+        };
+
+        let msg = format!(
+            "🤝 A collaboration partner has joined: {partner_label}\n\
+             \n\
+             You now have access to Potato coordination tools via MCP (.mcp.json has been updated).\n\
+             Available tools:\n\
+             • potato_send_message — send a message to your partner\n\
+             • potato_get_messages — check for messages from your partner\n\
+             • potato_get_partner_status — see what your partner is working on\n\
+             • potato_shared_context — read/write shared key-value context\n\
+             • potato_claim_task / potato_release_task — coordinate task ownership\n\
+             • potato_get_role — check assigned roles\n\
+             \n\
+             Coordinate naturally. Use these tools when you need to share context, \
+             divide work, or check on your partner's progress."
+        );
+
+        let formatted = crate::mcp::injection::format_notification(
+            new_info.0,
+            new_info.2.as_deref(),
+            &msg,
+        );
+
+        if let Err(e) = crate::mcp::injection::inject_into_pane(&mut state.panes, i, &formatted) {
+            tracing::warn!("Failed to inject collab context into pane {i}: {e}");
+        } else {
+            tracing::info!("Injected collaboration context into pane {i}");
+        }
+    }
+
+    // Build message for the new pane about its existing partner(s).
+    let partners: Vec<String> = pane_info[..new_pane_idx]
+        .iter()
+        .map(|(id, agent, role)| {
+            if let Some(r) = role {
+                format!("Pane {id} ({agent}, {r})")
+            } else {
+                format!("Pane {id} ({agent})")
+            }
+        })
+        .collect();
+
+    let partner_list = partners.join(", ");
+    let new_msg = format!(
+        "🤝 You've joined a collaboration. Your partner(s): {partner_list}\n\
+         \n\
+         You have access to Potato coordination tools via MCP.\n\
+         Available tools:\n\
+         • potato_send_message — send a message to your partner\n\
+         • potato_get_messages — check for messages from your partner\n\
+         • potato_get_partner_status — see what your partner is working on\n\
+         • potato_shared_context — read/write shared key-value context\n\
+         • potato_claim_task / potato_release_task — coordinate task ownership\n\
+         • potato_get_role — check assigned roles\n\
+         \n\
+         Coordinate naturally. Use these tools when you need to share context, \
+         divide work, or check on your partner's progress."
+    );
+
+    let formatted = crate::mcp::injection::format_notification(
+        pane_info[0].0, // "from" the first pane (as system/potato)
+        Some("potato"),
+        &new_msg,
+    );
+
+    if let Err(e) = crate::mcp::injection::inject_into_pane(&mut state.panes, new_pane_idx, &formatted) {
+        tracing::warn!("Failed to inject collab context into new pane {new_pane_idx}: {e}");
+    } else {
+        tracing::info!("Injected collaboration context into new pane {new_pane_idx}");
+    }
 }
 
 /// Spawn a PTY session for any supported agent adapter.
@@ -1550,6 +1681,7 @@ async fn main() -> Result<()> {
         rail_sessions: initial_sessions,
         last_rail_refresh: unix_now(),
         mcp_socket_path: Some(mcp_socket_path),
+        inter_session_state: Some(inter_state),
         ..AppState::default()
     };
 

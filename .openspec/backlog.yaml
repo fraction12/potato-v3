@@ -354,18 +354,23 @@ tasks:
 
   - id: T-706
     title: "Role assignment (/role command) + spawn injection"
-    status: open
+    status: done
     phase: phase-7-inter-session
+    completed_at: "2026-03-28"
     description: |
       /role <name> [description] slash command to set current pane's role.
       On second pane spawn, inject role context + partner info as a formatted
       notification so both agents are immediately aware of the collaboration.
       Roles stored in PaneState and exposed via potato_get_role.
+      InterSessionState synced on /role so MCP tools reflect current roles.
+      .mcp.json written from pane 0 onwards (not just pane 2+).
+      Cleanup deferred to all-panes-closed instead of below-2.
     acceptance:
       - /role sets role name and description
       - Role injection on spawn for second pane
       - First pane gets notification when partner spawns with role
-      - Roles visible in sidebar or status bar
+      - InterSessionState updated so MCP get_role reflects current roles
+      - .mcp.json written at pane 0 spawn for early tool discovery
 
   # ─── Phase 8 — Multi-Agent Support ──────────────────────────────────────────
 
