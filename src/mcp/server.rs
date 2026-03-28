@@ -10,7 +10,7 @@ use serde_json::{json, Value};
 use crate::mcp::protocol::{
     CallToolParams, InitializeParams, InitializeResult, JsonRpcError, JsonRpcRequest,
     JsonRpcResponse, ListToolsResult, ServerCapabilities, ServerInfo, ToolsCapability,
-    INTERNAL_ERROR, INVALID_PARAMS, METHOD_NOT_FOUND,
+    INVALID_PARAMS, METHOD_NOT_FOUND,
 };
 use crate::mcp::state::InterSessionState;
 use crate::mcp::tools::{handle_tool_call, tool_definitions};
@@ -76,6 +76,17 @@ impl McpServer {
 
     // ── Method handlers ───────────────────────────────────────────────────────
 
+    /// Serialize a result to JSON and wrap in a `JsonRpcResponse`.
+    fn json_response(id: &Value, result: impl serde::Serialize) -> JsonRpcResponse {
+        match serde_json::to_value(result) {
+            Ok(v) => JsonRpcResponse::success(id.clone(), v),
+            Err(e) => JsonRpcResponse::error(
+                id.clone(),
+                JsonRpcError::internal_error(&e.to_string()),
+            ),
+        }
+    }
+
     fn handle_initialize(&self, id: &Value, params: Option<&Value>) -> JsonRpcResponse {
         // Params are informational — we accept any client.
         let _params: Option<InitializeParams> = params
@@ -92,26 +103,14 @@ impl McpServer {
             },
         };
 
-        match serde_json::to_value(result) {
-            Ok(v) => JsonRpcResponse::success(id.clone(), v),
-            Err(e) => JsonRpcResponse::error(
-                id.clone(),
-                JsonRpcError::internal_error(&e.to_string()),
-            ),
-        }
+        Self::json_response(id, result)
     }
 
     fn handle_list_tools(&self, id: &Value) -> JsonRpcResponse {
         let result = ListToolsResult {
             tools: tool_definitions(),
         };
-        match serde_json::to_value(result) {
-            Ok(v) => JsonRpcResponse::success(id.clone(), v),
-            Err(e) => JsonRpcResponse::error(
-                id.clone(),
-                JsonRpcError::internal_error(&e.to_string()),
-            ),
-        }
+        Self::json_response(id, result)
     }
 
     fn handle_call_tool(&self, id: &Value, params: Option<&Value>) -> JsonRpcResponse {
@@ -142,13 +141,7 @@ impl McpServer {
             &self.state,
         );
 
-        match serde_json::to_value(tool_result) {
-            Ok(v) => JsonRpcResponse::success(id.clone(), v),
-            Err(e) => JsonRpcResponse::error(
-                id.clone(),
-                JsonRpcError::internal_error(&e.to_string()),
-            ),
-        }
+        Self::json_response(id, tool_result)
     }
 }
 
