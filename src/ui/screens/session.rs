@@ -964,21 +964,7 @@ fn wrap_text(text: &str, width: usize) -> Vec<String> {
 
 /// Short one-line label for an [`AgentStatus`].
 fn agent_status_label(status: &AgentStatus) -> String {
-    match status {
-        AgentStatus::Starting => "Starting…".to_string(),
-        AgentStatus::Idle => "Idle".to_string(),
-        AgentStatus::Thinking => "Thinking…".to_string(),
-        AgentStatus::RunningTool { name } => format!("▶ {}", name),
-        AgentStatus::WaitingApproval { tool_name } => format!("⚠ Approve: {}", tool_name),
-        AgentStatus::Exited { code } => format!("Exited ({})", code.unwrap_or(-1)),
-        AgentStatus::Error { message } => {
-            if message.len() > 30 {
-                format!("Error: {}…", &message[..29])
-            } else {
-                format!("Error: {}", message)
-            }
-        }
-    }
+    agent_status_display(status).0
 }
 
 /// Returns `(label, color)` for a given agent status.
