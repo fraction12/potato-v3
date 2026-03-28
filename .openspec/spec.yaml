@@ -8,7 +8,7 @@ project:
   language: Rust
   framework: ratatui + tokio + crossterm + portable-pty + vt100
   storage: SQLite (rusqlite, WAL mode)
-  current_phase: phase-5-sessions
+  current_phase: phase-7-inter-session
 
 metadata:
   version: 0.1.0
@@ -67,12 +67,13 @@ phases:
       tokens, stop reason. Correct project-dir naming. PTY cwd binding.
 
   - id: phase-5-sessions
-    title: "Session recording + left rail"
-    status: in_progress
+    title: "Session recording + left rail + multi-pane"
+    status: done
     goal: >
-      SQLite persistence of session events. Left rail populated from
-      Claude session history. Session resume/continue. Export commands.
-    tickets: [T-501, T-502, T-503, T-504]
+      SQLite persistence of session events. Left rail with session history
+      and resume. Multi-pane support (up to 2 Claude sessions side-by-side).
+      Tab focus cycling across panes. Agents picker in left rail.
+    tickets: [T-501, T-502, T-503, T-504, T-505, T-506, T-507]
 
   - id: phase-6-commands
     title: "Slash commands + overlays"
@@ -84,7 +85,7 @@ phases:
 
   - id: phase-7-inter-session
     title: "Inter-session communication via MCP"
-    status: planned
+    status: in_progress
     goal: >
       Potato MCP server that both Claude panes connect to. Enables real-time
       messaging, shared context, task coordination, and role assignment between

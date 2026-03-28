@@ -109,7 +109,7 @@ tasks:
 
   - id: T-501
     title: "SQLite session recording from JSONL events"
-    status: open
+    status: done
     phase: phase-5-sessions
     description: |
       Record Claude JSONL events into Potato's SQLite store as they arrive.
@@ -124,7 +124,7 @@ tasks:
 
   - id: T-502
     title: "Left rail — session list from Claude history"
-    status: open
+    status: done
     phase: phase-5-sessions
     description: |
       Populate left rail from ~/.claude/projects/ JSONL files + Potato SQLite.
@@ -137,8 +137,8 @@ tasks:
       - Navigation works when Sessions panel is focused
 
   - id: T-503
-    title: "Session resume (--session / --continue)"
-    status: open
+    title: "Session resume (Enter to resume from left rail)"
+    status: done
     phase: phase-5-sessions
     description: |
       potato --session <id> or potato --continue launches Claude with
@@ -163,6 +163,45 @@ tasks:
       - /export json dumps all events
       - /export timeline shows tool calls with durations
       - Output written to cwd with session-id filename
+
+  - id: T-505
+    title: "Multi-pane support (2 Claude sessions side-by-side)"
+    status: done
+    phase: phase-5-sessions
+    description: |
+      PaneManager with up to 2 panes. Each pane owns its own PTY, JSONL
+      tailer, and session state. Tab cycles through panes. Active pane
+      marked with ●. Sidebar reads from active pane.
+    acceptance:
+      - Two Claude sessions render side-by-side
+      - Tab/Shift+Tab cycle through panes in focus ring
+      - Active pane highlighted; sidebar shows active pane metrics
+      - Pane closes automatically on Claude exit
+      - Dashboard returns when all panes close
+
+  - id: T-506
+    title: "Agents picker in left rail (+ Claude)"
+    status: done
+    phase: phase-5-sessions
+    description: |
+      Left rail split into Agents section (top) and Sessions (bottom).
+      Enter on '+ Claude' spawns a new session. Focus ring: Agents →
+      Sessions → Input → Terminal → Sidebar.
+    acceptance:
+      - Agents section shows '+ Claude'
+      - Enter spawns new Claude session
+      - Focus ring includes Agents panel
+
+  - id: T-507
+    title: "Live session titles from Claude JSONL"
+    status: done
+    phase: phase-5-sessions
+    description: |
+      Session titles extracted from first user prompt in JSONL.
+      Rail refreshes immediately on title change.
+    acceptance:
+      - New sessions show prompt-derived title
+      - Rail updates without waiting for refresh interval
 
   # ─── Phase 6 — Slash Commands + Overlays ──────────────────────────────────────
 
@@ -206,6 +245,37 @@ tasks:
       - Switching sessions tears down current PTY and launches new one
 
   # ─── Phase 7 — Inter-Session Communication ────────────────────────────────────
+
+  - id: T-700
+    title: "MCP protocol types, state, tools, server handler, config writer (foundation)"
+    status: done
+    phase: phase-7-inter-session
+    description: |
+      TDD foundation for inter-session MCP layer. 113 tests across 5 modules:
+      protocol.rs (JSON-RPC 2.0 + MCP types), state.rs (InterSessionState with
+      message queues, shared KV, task board, roles), tools.rs (7 tool definitions
+      + dispatch), server.rs (McpServer request handler), config_writer.rs
+      (.mcp.json lifecycle with merge/cleanup).
+    acceptance:
+      - All protocol types serialize/deserialize correctly
+      - InterSessionState handles messages, tasks, context, roles
+      - Tool dispatch routes to correct state methods with error handling
+      - McpServer handles initialize/list_tools/call_tool JSON-RPC flows
+      - Config writer merges with existing .mcp.json and cleans up potato-* entries
+
+  - id: T-700b
+    title: "Interactive MCP spike validation"
+    status: done
+    phase: phase-7-inter-session
+    description: |
+      Validated that Claude Code discovers and uses project-scoped .mcp.json
+      MCP servers in --print and stream-json modes. Confirmed: tool discovery
+      works, --permission-mode bypassPermissions skips approval prompts,
+      tool_result events appear in JSONL session logs.
+    acceptance:
+      - Claude discovers .mcp.json tools
+      - bypassPermissions allows MCP tool calls without interactive approval
+      - JSONL logs contain tool_result events for MCP calls
 
   - id: T-701
     title: "MCP server subcommand + UDS bridge"
