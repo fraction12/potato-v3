@@ -309,7 +309,7 @@ tasks:
 
   - id: T-703
     title: "Read-only MCP tools (get_role, get_partner_status)"
-    status: open
+    status: done
     phase: phase-7-inter-session
     description: |
       Implement potato_get_role and potato_get_partner_status MCP tools.
@@ -322,7 +322,7 @@ tasks:
 
   - id: T-704
     title: "Messaging MCP tools + PTY injection"
-    status: open
+    status: done
     phase: phase-7-inter-session
     description: |
       Implement potato_send_message and potato_get_messages. Message queues
@@ -339,7 +339,7 @@ tasks:
 
   - id: T-705
     title: "Shared context + task coordination MCP tools"
-    status: open
+    status: done
     phase: phase-7-inter-session
     description: |
       Implement potato_shared_context (get/set/delete/list) and
