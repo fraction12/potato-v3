@@ -784,10 +784,32 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
 
                     // ── Agents focus — agent picker ───────────────────────────
                     if current_focus == CockpitFocus::Agents {
-                        if let AppScreen::Session(ref mut _session) = state.screen {
+                        if let AppScreen::Session(ref mut session) = state.screen {
+                            let agent_count = crate::ui::overlays::agent_picker::build_agent_rows().len();
+                            let max_idx = agent_count.saturating_sub(1);
                             match key.code {
+                                KeyCode::Up | KeyCode::Char('k') => {
+                                    if session.selected_agent > 0 {
+                                        session.selected_agent -= 1;
+                                    }
+                                    continue;
+                                }
+                                KeyCode::Down | KeyCode::Char('j') => {
+                                    if session.selected_agent < max_idx {
+                                        session.selected_agent += 1;
+                                    }
+                                    continue;
+                                }
+                                KeyCode::Home => {
+                                    session.selected_agent = 0;
+                                    continue;
+                                }
+                                KeyCode::End => {
+                                    session.selected_agent = max_idx;
+                                    continue;
+                                }
                                 KeyCode::Enter => {
-                                    // Spawn a new Claude session.
+                                    // Spawn agent session for the selected agent.
                                     pending_new_session = true;
                                     // Fall through so the deferred handler runs.
                                 }
@@ -912,10 +934,16 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
             }
         }
 
-        // ── Spawn a new Claude session (deferred from Agents Enter) ─────────
+        // ── Spawn a new agent session (deferred from Agents Enter) ──────────
         if pending_new_session {
-            match spawn_claude_pane(state, None) {
-                Ok(id) => tracing::info!("New pane spawned: {}", id),
+            let agent_rows = crate::ui::overlays::agent_picker::build_agent_rows();
+            let selected_idx = state.session().map(|s| s.selected_agent).unwrap_or(0);
+            let adapter_name = agent_rows
+                .get(selected_idx)
+                .map(|r| r.adapter_name.as_str())
+                .unwrap_or("claude");
+            match spawn_agent_pane(state, adapter_name, None) {
+                Ok(id) => tracing::info!("New {} pane spawned: {}", adapter_name, id),
                 Err(e) => state.set_error(e, 100),
             }
         }
