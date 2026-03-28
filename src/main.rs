@@ -259,30 +259,50 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                         .unwrap_or(CockpitFocus::Input);
 
                     // ── Tab / Shift+Tab — cycle focus ring ────────────────────
+                    // When multiple panes exist and focus is on Terminal, Tab
+                    // switches to the next pane's terminal before advancing to
+                    // Sidebar. Shift+Tab does the reverse.
                     if key.code == KeyCode::Tab {
-                        if let AppScreen::Session(ref mut session) = state.screen {
-                            session.cockpit_focus = if key.modifiers.contains(KeyModifiers::SHIFT) {
-                                session.cockpit_focus.prev()
+                        let forward = !key.modifiers.contains(KeyModifiers::SHIFT);
+                        let n_panes = state.panes.len();
+
+                        if n_panes > 1 && current_focus == CockpitFocus::Terminal {
+                            let active = state.panes.active_index();
+                            if forward {
+                                // If not on the last pane, move to next pane.
+                                if active + 1 < n_panes {
+                                    state.panes.focus_next();
+                                    continue;
+                                }
+                                // Last pane → advance focus ring normally (Terminal → Sidebar).
                             } else {
+                                // If not on the first pane, move to prev pane.
+                                if active > 0 {
+                                    state.panes.focus_prev();
+                                    continue;
+                                }
+                                // First pane → retreat focus ring normally (Terminal → Input).
+                            }
+                        }
+
+                        // When tabbing *into* Terminal with multiple panes,
+                        // land on the first pane (forward) or last pane (backward).
+                        if n_panes > 1 {
+                            if forward && current_focus == CockpitFocus::Input {
+                                state.panes.focus(0);
+                            } else if !forward && current_focus == CockpitFocus::Sidebar {
+                                state.panes.focus(n_panes - 1);
+                            }
+                        }
+
+                        if let AppScreen::Session(ref mut session) = state.screen {
+                            session.cockpit_focus = if forward {
                                 session.cockpit_focus.next()
+                            } else {
+                                session.cockpit_focus.prev()
                             };
                         }
                         continue;
-                    }
-
-                    // ── Ctrl+Left / Ctrl+Right — switch active pane ──────────
-                    if key.modifiers.contains(KeyModifiers::CONTROL) && state.panes.len() > 1 {
-                        match key.code {
-                            KeyCode::Left => {
-                                state.panes.focus_prev();
-                                continue;
-                            }
-                            KeyCode::Right => {
-                                state.panes.focus_next();
-                                continue;
-                            }
-                            _ => {}
-                        }
                     }
 
                     // ── Esc — context-sensitive ───────────────────────────────

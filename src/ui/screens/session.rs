@@ -361,7 +361,8 @@ fn render_pane_viewport(
             let _ = pty.resize(inner_cols.max(1), inner_rows.max(1));
             let actual_scroll = pty.set_scrollback(desired_scroll);
 
-            let pane_label = format!(" Claude {} ", pane_idx + 1);
+            let active_marker = if is_active { " ●" } else { "" };
+            let pane_label = format!(" Claude {}{} ", pane_idx + 1, active_marker);
             let title = if actual_scroll > 0 {
                 Span::styled(format!("{} ↑{} ", pane_label.trim(), actual_scroll), title_style)
             } else {
@@ -796,7 +797,7 @@ fn render_status_bar(
     );
 
     let keys_text = if pane_count > 1 {
-        " Tab:cycle  Ctrl+←→:pane  Ctrl+J:term  Esc:close  Ctrl+Q:quit "
+        " Tab:cycle panes  Ctrl+J:term  Esc:close  Ctrl+Q:quit "
     } else {
         " Tab:cycle  Ctrl+J:term  Esc:input  Ctrl+Q:quit "
     };
