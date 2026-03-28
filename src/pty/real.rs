@@ -94,6 +94,23 @@ impl RealPty {
     }
 
     pub fn spawn_in(binary: &str, args: &[&str], cols: u16, rows: u16, cwd: Option<&std::path::Path>) -> Result<Self> {
+        Self::spawn_with_env(binary, args, cols, rows, cwd, &[])
+    }
+
+    /// Like [`spawn_in`] but also sets additional environment variables for
+    /// the child process.
+    ///
+    /// Each element of `env` is an `(key, value)` pair.  These are applied
+    /// *after* the child inherits the parent environment, so they override any
+    /// existing value for the same key.
+    pub fn spawn_with_env(
+        binary: &str,
+        args: &[&str],
+        cols: u16,
+        rows: u16,
+        cwd: Option<&std::path::Path>,
+        env: &[(String, String)],
+    ) -> Result<Self> {
         let pty_system = native_pty_system();
 
         // Open the PTY pair at the requested size.
@@ -108,6 +125,9 @@ impl RealPty {
         }
         if let Some(dir) = cwd {
             cmd.cwd(dir);
+        }
+        for (k, v) in env {
+            cmd.env(k, v);
         }
 
         // Spawn the child on the slave side.

@@ -406,6 +406,12 @@ pub struct AppState {
     /// Number of events already persisted for the active PTY session.
     /// Used to detect newly written JSONL lines without double-inserting.
     pub persisted_event_count: u64,
+
+    /// Path to the Unix domain socket used by the MCP bridge.
+    ///
+    /// `Some` once `McpBridge::start()` has been called in `main()`.
+    /// Passed to each pane's PTY subprocess as `POTATO_SOCKET`.
+    pub mcp_socket_path: Option<std::path::PathBuf>,
 }
 
 impl Default for AppState {
@@ -429,6 +435,7 @@ impl Default for AppState {
             rail_sessions: Vec::new(),
             last_rail_refresh: 0,
             persisted_event_count: 0,
+            mcp_socket_path: None,
         }
     }
 }

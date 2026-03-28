@@ -10,6 +10,7 @@
 //! - `server`   — `McpServer` that processes JSON-RPC requests from a pane
 //! - `config_writer` — Dynamic `.mcp.json` lifecycle management
 
+pub mod bridge;
 pub mod config_writer;
 pub mod protocol;
 pub mod server;

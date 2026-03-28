@@ -20,11 +20,12 @@ mod terminal;
 mod ui;
 
 use std::io::{self, Write as _};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use crossterm::{
     event::{DisableMouseCapture, EnableMouseCapture, KeyCode, KeyModifiers, MouseEventKind},
     execute,
@@ -66,6 +67,116 @@ struct Cli {
     /// Path to a custom config file.
     #[arg(short, long)]
     config: Option<String>,
+
+    /// Subcommand (if absent, runs the TUI as normal).
+    #[command(subcommand)]
+    command: Option<PotatoCommand>,
+}
+
+/// Optional subcommands for Potato.
+#[derive(Subcommand, Debug)]
+enum PotatoCommand {
+    /// Run as a per-pane MCP stdio server (launched by Claude via .mcp.json).
+    ///
+    /// Reads JSON-RPC lines from stdin, forwards them to the main Potato
+    /// process over a Unix domain socket, and writes responses to stdout.
+    ///
+    /// Environment variables (required):
+    ///   POTATO_PANE_ID  — which pane this instance represents (u64)
+    ///   POTATO_SOCKET   — path to the main process UDS socket
+    #[command(name = "mcp-server")]
+    McpServer,
+}
+
+// ── MCP server subprocess entry point ─────────────────────────────────────────
+
+/// Run as a per-pane MCP stdio server.
+///
+/// Reads JSON-RPC lines from stdin, wraps them in a `BridgeRequest` with the
+/// pane id from `POTATO_PANE_ID`, sends them over UDS to the main Potato
+/// process at `POTATO_SOCKET`, and writes responses back to stdout.
+async fn run_mcp_server() -> Result<()> {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::net::UnixStream;
+
+    let pane_id: u64 = std::env::var("POTATO_PANE_ID")
+        .map_err(|_| anyhow::anyhow!("POTATO_PANE_ID env var not set"))?
+        .parse()
+        .map_err(|_| anyhow::anyhow!("POTATO_PANE_ID must be a u64"))?;
+
+    let socket_path = std::env::var("POTATO_SOCKET")
+        .map_err(|_| anyhow::anyhow!("POTATO_SOCKET env var not set"))?;
+
+    let stream = UnixStream::connect(&socket_path)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to connect to Potato bridge at {socket_path}: {e}"))?;
+
+    let (uds_read, mut uds_write) = stream.into_split();
+    let mut uds_reader = BufReader::new(uds_read);
+
+    let stdin = tokio::io::stdin();
+    let mut stdin_reader = BufReader::new(stdin);
+    let mut stdout = tokio::io::stdout();
+
+    let mut line = String::new();
+    loop {
+        line.clear();
+        match stdin_reader.read_line(&mut line).await {
+            Ok(0) => break, // EOF from Claude — session ending.
+            Err(e) => {
+                eprintln!("potato mcp-server: stdin error: {e}");
+                break;
+            }
+            Ok(_) => {
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+
+                // Wrap in bridge protocol and send to main process.
+                let bridge_req = serde_json::json!({
+                    "pane_id": pane_id,
+                    "request": trimmed
+                });
+                let mut msg = bridge_req.to_string();
+                msg.push('\n');
+
+                if let Err(e) = uds_write.write_all(msg.as_bytes()).await {
+                    eprintln!("potato mcp-server: UDS write error: {e}");
+                    break;
+                }
+
+                // Read response from bridge.
+                let mut resp_line = String::new();
+                match uds_reader.read_line(&mut resp_line).await {
+                    Ok(0) => {
+                        eprintln!("potato mcp-server: bridge closed connection");
+                        break;
+                    }
+                    Err(e) => {
+                        eprintln!("potato mcp-server: UDS read error: {e}");
+                        break;
+                    }
+                    Ok(_) => {
+                        // Parse BridgeResponse and extract the inner JSON-RPC response.
+                        if let Ok(v) = serde_json::from_str::<serde_json::Value>(resp_line.trim()) {
+                            if let Some(response_str) = v["response"].as_str() {
+                                let mut out = response_str.to_string();
+                                out.push('\n');
+                                if let Err(e) = stdout.write_all(out.as_bytes()).await {
+                                    eprintln!("potato mcp-server: stdout write error: {e}");
+                                    break;
+                                }
+                                stdout.flush().await.ok();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
 
 // ── RAII terminal guard ───────────────────────────────────────────────────────
@@ -313,6 +424,13 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                             CockpitFocus::Input => {
                                 // Close the active pane (drops PTY).
                                 state.panes.close_active();
+
+                                // Clean up .mcp.json when dropping below 2 panes.
+                                if state.panes.len() < 2 {
+                                    if let Ok(cwd) = std::env::current_dir() {
+                                        let _ = crate::mcp::config_writer::remove_mcp_config(&cwd);
+                                    }
+                                }
 
                                 // Also clear legacy fields.
                                 turn_handle = None;
@@ -615,6 +733,16 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                 tracing::info!("Pane {} PTY exited, closing", i);
                 state.panes.close(i);
             }
+            // Clean up .mcp.json when dropping below 2 panes.
+            if had_panes && state.panes.len() < 2 {
+                if let Ok(cwd) = std::env::current_dir() {
+                    if let Err(e) = crate::mcp::config_writer::remove_mcp_config(&cwd) {
+                        tracing::warn!("Failed to clean up .mcp.json: {e}");
+                    } else {
+                        tracing::info!("Cleaned up .mcp.json (panes < 2)");
+                    }
+                }
+            }
             // Only bounce to dashboard if we just closed the last pane.
             if had_panes && state.panes.is_empty() && matches!(state.screen, AppScreen::Session(_)) {
                 tracing::info!("All panes closed, returning to dashboard");
@@ -775,13 +903,41 @@ fn spawn_claude_pane(
 
     let session_args_refs: Vec<&str> = session_args_owned.iter().map(|s| s.as_str()).collect();
 
-    let real_pty = crate::pty::RealPty::spawn_in(
-        binary.to_str().unwrap_or("claude"),
-        &session_args_refs,
-        pty_cols.max(20),
-        pty_rows.max(5),
-        launch_cwd.as_deref(),
-    )
+    // ── MCP env vars (2nd pane and beyond) ───────────────────────────────────
+    // When a socket is available and we're spawning pane 1+, pass env vars so
+    // Claude can connect to the MCP bridge.
+    let pane_index_after_open = state.panes.len(); // 0-based index the new pane will occupy
+    let mut pane_env: Vec<(String, String)> = Vec::new();
+    if let Some(ref sock) = state.mcp_socket_path.clone() {
+        // Always provide the socket path and the future pane id to every pane.
+        // The pane id matches `PaneManager::next_id` — we can read it from the manager.
+        // PaneManager doesn't expose next_id directly, so we derive it:
+        // after open(), `len()` panes exist and active pane has id == (old_len).
+        // We'll set the env now and the id is the value of `state.panes.len()` since
+        // ids are monotonically allocated from 0 and never reused in a single session.
+        let pane_id: u64 = state.panes.len() as u64; // speculative — matches next_id
+        pane_env.push(("POTATO_PANE_ID".into(), pane_id.to_string()));
+        pane_env.push(("POTATO_SOCKET".into(), sock.to_string_lossy().into_owned()));
+    }
+
+    let real_pty = if pane_env.is_empty() {
+        crate::pty::RealPty::spawn_in(
+            binary.to_str().unwrap_or("claude"),
+            &session_args_refs,
+            pty_cols.max(20),
+            pty_rows.max(5),
+            launch_cwd.as_deref(),
+        )
+    } else {
+        crate::pty::RealPty::spawn_with_env(
+            binary.to_str().unwrap_or("claude"),
+            &session_args_refs,
+            pty_cols.max(20),
+            pty_rows.max(5),
+            launch_cwd.as_deref(),
+            &pane_env,
+        )
+    }
     .map_err(|e| format!("PTY spawn failed: {e}"))?;
 
     // Open pane in manager.
@@ -842,6 +998,24 @@ fn spawn_claude_pane(
             tracing::warn!("Failed to create session row: {e}");
         }
         refresh_rail(state, store);
+    }
+
+    // ── Write .mcp.json when the 2nd pane is opened ───────────────────────────
+    // When we now have ≥ 2 panes and a socket path, write/update .mcp.json so
+    // Claude can discover the MCP server entries.
+    if state.panes.len() >= 2 {
+        if let Some(ref sock) = state.mcp_socket_path.clone() {
+            if let Some(ref cwd) = launch_cwd {
+                let pane_ids: Vec<u64> =
+                    (0..state.panes.len()).filter_map(|i| state.panes.get(i).map(|p| p.id)).collect();
+                let sock_str = sock.to_string_lossy();
+                if let Err(e) = crate::mcp::config_writer::write_mcp_config(cwd, &pane_ids, &sock_str) {
+                    tracing::warn!("Failed to write .mcp.json: {e}");
+                } else {
+                    tracing::info!("Wrote .mcp.json for panes: {:?}", pane_ids);
+                }
+            }
+        }
     }
 
     tracing::info!("Opened Claude pane for session: {}", session_id);
@@ -1016,6 +1190,11 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
 
+    // ── Handle subcommands before TUI setup ───────────────────────────────────
+    if let Some(PotatoCommand::McpServer) = cli.command {
+        return run_mcp_server().await;
+    }
+
     install_panic_hook();
 
     // Load configuration.
@@ -1042,6 +1221,10 @@ async fn main() -> Result<()> {
     // Pre-load session list for the left rail.
     let initial_sessions = store.list_sessions().unwrap_or_default();
 
+    // Start MCP bridge (UDS listener for inter-session communication).
+    let inter_state = Arc::new(std::sync::Mutex::new(mcp::state::InterSessionState::new()));
+    let (_mcp_bridge, mcp_socket_path) = mcp::bridge::McpBridge::start(Arc::clone(&inter_state))?;
+
     let mut state = AppState {
         model,
         screen: AppScreen::Dashboard(DashboardState {
@@ -1051,6 +1234,7 @@ async fn main() -> Result<()> {
         store: Some(store),
         rail_sessions: initial_sessions,
         last_rail_refresh: unix_now(),
+        mcp_socket_path: Some(mcp_socket_path),
         ..AppState::default()
     };
 
