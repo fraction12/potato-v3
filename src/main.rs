@@ -757,12 +757,12 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                                             }
                                         } else {
                                             // ── Broadcast to all panes ────────
-                                            // Send raw text + newline.
-                                            // Bracketed paste doesn't
-                                            // trigger submit in Claude
-                                            // Code interactive mode.
+                                            // Send raw text + carriage return.
+                                            // PTYs use \r (0x0d) for Enter,
+                                            // not \n (0x0a). Claude Code in
+                                            // raw mode only treats \r as submit.
                                             let payload = format!(
-                                                "{text}\n"
+                                                "{text}\r"
                                             );
                                             let n_panes = state.panes.len();
                                             let mut any_written = false;
