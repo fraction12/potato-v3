@@ -8,7 +8,7 @@
 //! │                 │   (center, fills available h)    │  / skills       │
 //! │  ● session-1    │                                  │  / other        │
 //! │                 ├──────────────────────────────────┤                 │
-//! │                 │  ❯ Potato input bar              │                 │
+//! │                 │  ❯ Broadcast bar                 │                 │
 //! └─────────────────┴──────────────────────────────────┴─────────────────┘
 //! │  Status bar (full width, 1 line)                                     │
 //! └──────────────────────────────────────────────────────────────────────┘
@@ -16,21 +16,22 @@
 //!
 //! ## Focus model
 //!
-//! Default focus: **Input**.
+//! Default focus: **Broadcast**.
 //!
-//! `Tab` cycles: Sessions → Input → Terminal → Sidebar → Sessions.
+//! `Tab` cycles: Sessions → Broadcast → Terminal → Sidebar → Sessions.
 //! `Shift+Tab` reverses.
 //! `Ctrl+J` jumps directly to Terminal.
-//! `Ctrl+Q` leaves terminal focus back to Input.
+//! `Ctrl+Q` leaves terminal focus back to Broadcast.
 //! `Esc` passes through to agent PTY when terminal is focused.
 //!
-//! - **Input** focus: characters go into `session.input_buffer`; Enter sends
-//!   the buffered text plus a real terminal carriage return to the PTY stdin.
+//! - **Broadcast** focus: characters go into `session.input_buffer`; Enter
+//!   broadcasts the text (via bracketed paste + CR) to ALL open panes.
+//!   Tab into a specific terminal to talk to a single agent directly.
 //! - **Terminal** focus: *all* key events (except Ctrl+Q/Ctrl+\) are converted
 //!   to raw byte sequences and written to the PTY stdin unchanged. This lets
 //!   the user interact with Claude's native pickers / approvals / menus.
 //! - **Sessions / Sidebar** focus: arrow keys navigate lists; Enter/Esc return
-//!   to Input.
+//!   to Broadcast.
 
 use ratatui::{
     Frame,
@@ -534,7 +535,7 @@ fn render_input_bar(frame: &mut Frame, area: Rect, session: &SessionState, focus
                 Block::default()
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(BRASS))
-                    .title(" Input "),
+                    .title(" Broadcast "),
             )
             .style(Style::default().bg(BG));
         frame.render_widget(para, area);
@@ -586,7 +587,7 @@ fn render_input_bar(frame: &mut Frame, area: Rect, session: &SessionState, focus
                 Block::default()
                     .borders(Borders::ALL)
                     .border_style(border_style)
-                    .title(Span::styled(" Input ", title_style)),
+                    .title(Span::styled(" Broadcast ", title_style)),
             )
             .style(Style::default().fg(CREAM).bg(BG));
         frame.render_widget(widget, area);
@@ -868,7 +869,7 @@ fn render_status_bar(
     let focus_label = match focus {
         CockpitFocus::Agents   => "Agents",
         CockpitFocus::Sessions => "Sessions",
-        CockpitFocus::Input    => "Input",
+        CockpitFocus::Input    => "Broadcast",
         CockpitFocus::Terminal => "Terminal",
         CockpitFocus::Sidebar  => "Sidebar",
     };
@@ -878,7 +879,7 @@ fn render_status_bar(
     );
 
     let keys_text = if pane_count > 1 {
-        " Alt+[/]:switch pane  Ctrl+J:term  Ctrl+W:close pane  Ctrl+\\:quit "
+        " Tab:cycle focus  Ctrl+J:term  Ctrl+W:close pane  Ctrl+\\:quit "
     } else {
         " Tab:cycle  Ctrl+J:term  Ctrl+Q:exit term  Ctrl+W:close  ?:help "
     };

@@ -37,7 +37,7 @@ struct Section {
 static GLOBAL_ENTRIES: &[KeyEntry] = &[
     KeyEntry::new("Ctrl+\\",     "Quit"),
     KeyEntry::new("Ctrl+W",      "Close active pane"),
-    KeyEntry::new("Alt+] / [",   "Next / prev pane"),
+    KeyEntry::new("Tab/S-Tab",   "Cycle focus / panes"),
     KeyEntry::new("Tab",         "Next focus panel"),
     KeyEntry::new("Shift+Tab",   "Previous focus panel"),
     KeyEntry::new("?",           "Toggle help"),

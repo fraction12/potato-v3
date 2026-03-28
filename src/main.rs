@@ -399,14 +399,7 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                         continue;
                     }
 
-                    // ── Alt+[ / Alt+] — switch active pane ────────────────
-                    if state.panes.len() > 1 && key.modifiers.contains(KeyModifiers::ALT) {
-                        match key.code {
-                            KeyCode::Char('[') => { state.panes.focus_prev(); continue; }
-                            KeyCode::Char(']') => { state.panes.focus_next(); continue; }
-                            _ => {}
-                        }
-                    }
+                    // (Alt+[/] pane switching removed — Tab/Shift+Tab handles this.)
 
                     // Get current focus (without mutably borrowing state yet).
                     let current_focus = state
@@ -763,22 +756,29 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                                                 }
                                             }
                                         } else {
-                                            // ── Normal PTY send ───────────────
-                                            let written = if let Some(pane) = state.panes.active_pane_mut() {
-                                                if let Some(ref mut pty) = pane.pty {
-                                                    if let Err(e) = pty.write_input(text.as_bytes()) {
-                                                        tracing::warn!("PTY write_input (text): {e}");
-                                                        false
-                                                    } else if let Err(e) = pty.write_input(b"\r") {
-                                                        tracing::warn!("PTY write_input (enter): {e}");
-                                                        false
-                                                    } else {
-                                                        true
+                                            // ── Broadcast to all panes ────────
+                                            // Wrap in bracketed paste so
+                                            // Claude Code treats multiline
+                                            // as a single paste, then \r
+                                            // to submit.
+                                            let payload = format!(
+                                                "\x1b[200~{text}\x1b[201~\r"
+                                            );
+                                            let n_panes = state.panes.len();
+                                            let mut any_written = false;
+                                            for i in 0..n_panes {
+                                                if let Some(pane) = state.panes.get_mut(i) {
+                                                    if let Some(ref mut pty) = pane.pty {
+                                                        if let Err(e) = pty.write_input(payload.as_bytes()) {
+                                                            tracing::warn!("Broadcast to pane {i}: {e}");
+                                                        } else {
+                                                            any_written = true;
+                                                        }
                                                     }
-                                                } else { false }
-                                            } else { false };
-                                            if !written {
-                                                tracing::warn!("No active pane PTY to write input");
+                                                }
+                                            }
+                                            if !any_written {
+                                                tracing::warn!("No panes to broadcast to");
                                             }
                                         }
                                     }
@@ -1198,121 +1198,50 @@ fn spawn_claude_pane(
         } else { false }
     } else { false };
 
-    // ── Inject collaboration context into both panes ─────────────────────────
-    // When the second pane spawns, notify existing panes about the new
-    // collaboration and available MCP tools so they start coordinating.
+    // ── Auto-fill broadcast bar with collaboration prompt ───────────────────
+    // When the second pane spawns, pre-fill the input (broadcast) bar with
+    // a collaboration context message. User sees it, can edit, hits Enter
+    // to broadcast to both agents simultaneously.
     if wrote_mcp && state.panes.len() == 2 {
-        inject_collaboration_context(state);
+        let collab_prompt = build_collaboration_prompt(state);
+        if let AppScreen::Session(ref mut session) = state.screen {
+            session.input_buffer = collab_prompt.clone();
+            session.input_cursor = collab_prompt.len();
+        }
     }
 
     tracing::info!("Opened Claude pane for session: {}", session_id);
     Ok(session_id)
 }
 
-/// Inject collaboration context into all panes when multi-pane becomes active.
+/// Build a collaboration prompt to pre-fill the broadcast bar.
 ///
-/// Notifies existing panes about the collaboration and available MCP tools.
-/// The new pane (last) gets told about its partner. The existing pane(s) get
-/// told a partner has joined and to use `/mcp` to discover coordination tools.
-fn inject_collaboration_context(state: &mut AppState) {
+/// This is what the user sees and can edit before hitting Enter to send
+/// to all agents simultaneously.
+fn build_collaboration_prompt(state: &AppState) -> String {
     let n = state.panes.len();
-    if n < 2 {
-        return;
-    }
-
-    // Collect pane info before mutating.
-    let pane_info: Vec<(u64, String, Option<String>)> = (0..n)
+    let pane_info: Vec<(u64, String)> = (0..n)
         .filter_map(|i| {
             state.panes.get(i).map(|p| {
-                (
-                    p.id,
-                    p.session.agent_name.clone(),
-                    p.role_name.clone(),
-                )
+                (p.id, p.session.agent_name.clone())
             })
         })
         .collect();
 
-    let new_pane_idx = n - 1;
-    let new_info = &pane_info[new_pane_idx];
-
-    // Build message for existing panes (all except the new one).
-    for i in 0..new_pane_idx {
-        let partner_label = if let Some(ref role) = new_info.2 {
-            format!("Pane {} ({}, {})", new_info.0, new_info.1, role)
-        } else {
-            format!("Pane {} ({})", new_info.0, new_info.1)
-        };
-
-        let msg = format!(
-            "🤝 A collaboration partner has joined: {partner_label}\n\
-             \n\
-             You now have access to Potato coordination tools via MCP (.mcp.json has been updated).\n\
-             Available tools:\n\
-             • potato_send_message — send a message to your partner\n\
-             • potato_get_messages — check for messages from your partner\n\
-             • potato_get_partner_status — see what your partner is working on\n\
-             • potato_shared_context — read/write shared key-value context\n\
-             • potato_claim_task / potato_release_task — coordinate task ownership\n\
-             • potato_get_role — check assigned roles\n\
-             \n\
-             Coordinate naturally. Use these tools when you need to share context, \
-             divide work, or check on your partner's progress."
-        );
-
-        let formatted = crate::mcp::injection::format_notification(
-            new_info.0,
-            new_info.2.as_deref(),
-            &msg,
-        );
-
-        if let Err(e) = crate::mcp::injection::inject_into_pane(&mut state.panes, i, &formatted) {
-            tracing::warn!("Failed to inject collab context into pane {i}: {e}");
-        } else {
-            tracing::info!("Injected collaboration context into pane {i}");
-        }
-    }
-
-    // Build message for the new pane about its existing partner(s).
-    let partners: Vec<String> = pane_info[..new_pane_idx]
+    let pane_labels: Vec<String> = pane_info
         .iter()
-        .map(|(id, agent, role)| {
-            if let Some(r) = role {
-                format!("Pane {id} ({agent}, {r})")
-            } else {
-                format!("Pane {id} ({agent})")
-            }
-        })
+        .map(|(id, agent)| format!("Pane {id} ({agent})"))
         .collect();
 
-    let partner_list = partners.join(", ");
-    let new_msg = format!(
-        "🤝 You've joined a collaboration. Your partner(s): {partner_list}\n\
-         \n\
-         You have access to Potato coordination tools via MCP.\n\
-         Available tools:\n\
-         • potato_send_message — send a message to your partner\n\
-         • potato_get_messages — check for messages from your partner\n\
-         • potato_get_partner_status — see what your partner is working on\n\
-         • potato_shared_context — read/write shared key-value context\n\
-         • potato_claim_task / potato_release_task — coordinate task ownership\n\
-         • potato_get_role — check assigned roles\n\
-         \n\
-         Coordinate naturally. Use these tools when you need to share context, \
-         divide work, or check on your partner's progress."
-    );
-
-    let formatted = crate::mcp::injection::format_notification(
-        pane_info[0].0, // "from" the first pane (as system/potato)
-        Some("potato"),
-        &new_msg,
-    );
-
-    if let Err(e) = crate::mcp::injection::inject_into_pane(&mut state.panes, new_pane_idx, &formatted) {
-        tracing::warn!("Failed to inject collab context into new pane {new_pane_idx}: {e}");
-    } else {
-        tracing::info!("Injected collaboration context into new pane {new_pane_idx}");
-    }
+    format!(
+        "You are in a multi-agent collaboration managed by Potato. \
+         Active panes: {}. \
+         You have Potato MCP tools available: \
+         potato_send_message, potato_get_messages, potato_get_partner_status, \
+         potato_shared_context, potato_claim_task, potato_release_task, potato_get_role. \
+         Use these to coordinate with your partner. Pick a role and get started.",
+        pane_labels.join(", ")
+    )
 }
 
 /// Spawn a PTY session for any supported agent adapter.

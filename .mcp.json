@@ -7,7 +7,17 @@
       "command": "potato",
       "env": {
         "POTATO_PANE_ID": "0",
-        "POTATO_SOCKET": "/tmp/potato-53934.sock"
+        "POTATO_SOCKET": "/tmp/potato-54031.sock"
+      }
+    },
+    "potato-1": {
+      "args": [
+        "mcp-server"
+      ],
+      "command": "potato",
+      "env": {
+        "POTATO_PANE_ID": "1",
+        "POTATO_SOCKET": "/tmp/potato-54031.sock"
       }
     }
   }
