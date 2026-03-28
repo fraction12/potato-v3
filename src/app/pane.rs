@@ -35,10 +35,7 @@ pub struct Pane {
     pub role_name: Option<String>,
     /// Optional free-text description accompanying the role.
     pub role_description: Option<String>,
-    /// Queued injection payloads waiting for the agent to become idle.
-    /// When Claude is actively generating, PTY stdin writes get swallowed
-    /// or act as interrupts. We defer delivery until `status == Idle`.
-    pub pending_injections: Vec<String>,
+
 }
 
 impl Pane {
@@ -51,7 +48,6 @@ impl Pane {
             persisted_event_count: 0,
             role_name: None,
             role_description: None,
-            pending_injections: Vec::new(),
         }
     }
 

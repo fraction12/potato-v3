@@ -8,14 +8,14 @@ project:
   language: Rust
   framework: ratatui + tokio + crossterm + portable-pty + vt100
   storage: SQLite (rusqlite, WAL mode)
-  current_phase: phase-8-multiagent
+  current_phase: phase-9-release
 
 metadata:
   version: 0.1.0
   owner: Dushyant Garg
   status: active
   created_at: 2026-03-26
-  updated_at: 2026-03-27
+  updated_at: 2026-03-28
 
 links:
   readme: ./README.md
@@ -77,11 +77,11 @@ phases:
 
   - id: phase-6-commands
     title: "Slash commands + overlays"
-    status: planned
+    status: in-progress
     goal: >
       /new, /sessions, /export, /help, /agent. Autocomplete dropdown.
       Help overlay with keybind reference.
-    tickets: [T-601, T-602, T-603]
+    tickets: [T-504, T-601, T-602, T-603]
 
   - id: phase-7-inter-session
     title: "Inter-session communication via MCP"
@@ -90,11 +90,11 @@ phases:
       Potato MCP server that both Claude panes connect to. Enables real-time
       messaging, shared context, task coordination, and role assignment between
       sessions. MCP tools + PTY injection for push notifications.
-    tickets: [T-701, T-702, T-703, T-704, T-705, T-706]
+    tickets: [T-700, T-700b, T-701, T-702, T-703, T-704, T-705, T-706, T-707, T-708, T-709, T-710, T-711]
 
   - id: phase-8-multiagent
     title: "Multi-agent support"
-    status: planned
+    status: done
     goal: >
       Codex adapter, GenericAdapter for arbitrary CLIs, agent picker,
       agent profiles in config, project-level .potato/profile.toml.

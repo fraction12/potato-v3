@@ -1416,100 +1416,51 @@ fn spawn_agent_pane(
 /// Drain pending injection requests from the MCP bridge and write formatted
 /// notifications into target pane PTYs so agents actually "see" messages.
 fn drain_inject_requests(state: &mut AppState) {
-    // 1. Receive new requests from the MCP bridge and either inject immediately
-    //    (if target is idle) or queue for later delivery.
-    if let Some(ref mut rx) = state.inject_rx {
-        while let Ok(req) = rx.try_recv() {
-            let notification = crate::mcp::injection::format_notification(
-                req.from_pane,
-                req.from_role.as_deref(),
-                &req.content,
-            );
+    let rx = match state.inject_rx.as_mut() {
+        Some(rx) => rx,
+        None => return,
+    };
 
-            let target_index = (0..state.panes.len())
-                .find(|&i| state.panes.get(i).map(|p| p.id) == Some(req.to_pane));
+    // Drain all pending requests and inject immediately.
+    // In Claude Code, Enter while generating queues a follow-up message —
+    // only Escape interrupts. So we always write to the PTY regardless of
+    // agent status; Claude handles the queueing internally.
+    while let Ok(req) = rx.try_recv() {
+        let notification = crate::mcp::injection::format_notification(
+            req.from_pane,
+            req.from_role.as_deref(),
+            &req.content,
+        );
 
-            match target_index {
-                Some(idx) => {
-                    let is_idle = state
-                        .panes
-                        .get(idx)
-                        .map(|p| matches!(p.session.status, crate::app::state::AgentStatus::Idle))
-                        .unwrap_or(false);
+        let target_index = (0..state.panes.len())
+            .find(|&i| state.panes.get(i).map(|p| p.id) == Some(req.to_pane));
 
-                    if is_idle {
-                        // Agent is at the prompt — safe to inject now.
-                        match crate::mcp::injection::inject_into_pane(
-                            &mut state.panes,
-                            idx,
-                            &notification,
-                        ) {
-                            Ok(true) => {
-                                tracing::info!(
-                                    "Injected message from pane {} to pane {} (immediate)",
-                                    req.from_pane, req.to_pane
-                                );
-                            }
-                            Ok(false) | Err(_) => {
-                                // Couldn't inject — queue it.
-                                if let Some(pane) = state.panes.get_mut(idx) {
-                                    pane.pending_injections.push(notification);
-                                    tracing::info!(
-                                        "Queued message for pane {} (inject failed)",
-                                        req.to_pane
-                                    );
-                                }
-                            }
-                        }
-                    } else {
-                        // Agent is busy — queue until idle.
-                        if let Some(pane) = state.panes.get_mut(idx) {
-                            pane.pending_injections.push(notification);
-                            tracing::info!(
-                                "Queued message for pane {} (agent busy: {:?})",
-                                req.to_pane, pane.session.status
-                            );
-                        }
-                    }
-                }
-                None => {
-                    tracing::warn!("Inject target pane {} not found", req.to_pane);
-                }
-            }
-        }
-    }
-
-    // 2. Flush queued injections for any panes that just became idle.
-    for i in 0..state.panes.len() {
-        let should_flush = state.panes.get(i).map_or(false, |p| {
-            !p.pending_injections.is_empty()
-                && matches!(p.session.status, crate::app::state::AgentStatus::Idle)
-        });
-
-        if should_flush {
-            // Take the queue out to avoid borrow issues.
-            let queue: Vec<String> = if let Some(pane) = state.panes.get_mut(i) {
-                std::mem::take(&mut pane.pending_injections)
-            } else {
-                continue;
-            };
-
-            for notification in queue {
-                match crate::mcp::injection::inject_into_pane(&mut state.panes, i, &notification) {
+        match target_index {
+            Some(idx) => {
+                match crate::mcp::injection::inject_into_pane(
+                    &mut state.panes,
+                    idx,
+                    &notification,
+                ) {
                     Ok(true) => {
-                        tracing::info!("Flushed queued injection to pane index {i}");
+                        tracing::info!(
+                            "Injected message from pane {} to pane {}",
+                            req.from_pane, req.to_pane
+                        );
                     }
                     Ok(false) => {
-                        // Still can't inject — re-queue.
-                        if let Some(pane) = state.panes.get_mut(i) {
-                            pane.pending_injections.push(notification);
-                        }
-                        break; // Stop flushing this pane.
+                        tracing::warn!(
+                            "Skipped injection to pane {} (approval pending or no PTY)",
+                            req.to_pane
+                        );
                     }
                     Err(e) => {
-                        tracing::warn!("Flushed injection to pane {i} failed: {e}");
+                        tracing::warn!("Injection to pane {} failed: {e}", req.to_pane);
                     }
                 }
+            }
+            None => {
+                tracing::warn!("Inject target pane {} not found", req.to_pane);
             }
         }
     }

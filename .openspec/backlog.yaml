@@ -153,7 +153,7 @@ tasks:
   - id: T-504
     title: "Session export (/export md|json|timeline)"
     status: open
-    phase: phase-5-sessions
+    phase: phase-6-commands
     description: |
       Slash commands to export current session. /export md produces a
       readable markdown transcript. /export json dumps raw events.
@@ -207,8 +207,9 @@ tasks:
 
   - id: T-601
     title: "Slash command system with autocomplete"
-    status: open
+    status: done
     phase: phase-6-commands
+    completed_at: "2026-03-27"
     description: |
       Detect leading / in input bar → enter command mode.
       Autocomplete dropdown above input. Built-in: /new, /sessions,
@@ -221,8 +222,9 @@ tasks:
 
   - id: T-602
     title: "Help overlay (?)"
-    status: open
+    status: done
     phase: phase-6-commands
+    completed_at: "2026-03-27"
     description: |
       ? toggles full-screen keybind reference overlay.
       Sections: Global, Input, Terminal, Navigation.
@@ -382,7 +384,7 @@ tasks:
       CodexAdapter: spawn codex CLI in interactive PTY mode, parse JSONL events
       (thread.started, turn.completed, item.started/completed). Full detect()
       with /opt/homebrew/bin/codex fallback. 36 unit tests.
-    completed_at: "2025-03-27"
+    completed_at: "2026-03-27"
 
   - id: T-802
     title: "Generic adapter (raw PTY passthrough)"
@@ -392,7 +394,7 @@ tasks:
       GenericAdapter already existed and is solid. Added build_command working
       dir test. OpenCode exposed as generic adapter in detect_agents() and
       agent picker overlay.
-    completed_at: "2025-03-27"
+    completed_at: "2026-03-27"
 
   - id: T-803
     title: "Agent picker overlay (/agent)"
@@ -404,7 +406,7 @@ tasks:
       Enter launches selected agent via spawn_agent_pane(). Left rail updated to show
       all detected agents dynamically. spawn_agent_pane() generalizes spawn_claude_pane()
       for claude/codex/generic adapters.
-    completed_at: "2025-03-27"
+    completed_at: "2026-03-27"
 
   - id: T-804
     title: "Agent profiles (config + .potato/profile.toml)"
@@ -415,7 +417,7 @@ tasks:
       ProfileLoader merges: auto-detected defaults < ~/.config/potato/profiles/*.toml
       < .potato/profile.toml. Supports single-profile TOML and [[profiles]] arrays.
       11 unit tests covering all load paths, TOML roundtrip, override behavior.
-    completed_at: "2025-03-27"
+    completed_at: "2026-03-27"
 
   # ─── Phase 9 — Polish + Distribution ──────────────────────────────────────────
 
