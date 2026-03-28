@@ -212,7 +212,7 @@ impl ChatPanel {
     // ── Rendering helpers ─────────────────────────────────────────────────────
 
     /// Build all visible [`Line`]s for the current transcript.
-    fn build_lines(&self, _width: u16) -> Vec<Line<'static>> {
+    fn build_lines(&self) -> Vec<Line<'static>> {
         let mut lines: Vec<Line<'static>> = Vec::new();
         let search_query = self.search.as_ref().and_then(|s| {
             if !s.query.is_empty() {
@@ -374,7 +374,7 @@ impl ChatPanel {
             return;
         }
 
-        let lines = self.build_lines(area.width);
+        let lines = self.build_lines();
         let total = lines.len() as u16;
         let height = area.height;
 
