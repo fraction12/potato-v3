@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "potato-0": {
+      "args": [
+        "mcp-server"
+      ],
+      "command": "potato",
+      "env": {
+        "POTATO_PANE_ID": "0",
+        "POTATO_SOCKET": "/tmp/potato-53934.sock"
+      }
+    }
+  }
+}

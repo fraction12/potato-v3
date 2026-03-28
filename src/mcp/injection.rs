@@ -21,17 +21,33 @@ use crate::app::state::AgentStatus;
 /// Hey, I finished the API design. Check shared context for the schema.
 /// [/Potato]
 /// ```
+/// Format a message notification for PTY injection.
+///
+/// Uses bracketed paste mode (`\x1b[200~`...`\x1b[201~`) so terminal TUIs
+/// (Claude Code, etc.) treat the entire block as a single paste rather than
+/// interpreting each `\n` as Enter.
+///
+/// After the paste, a `\r` (Enter) is appended to submit the message.
+///
+/// ```text
+/// [Potato: message from Pane 0 (architect)]
+/// Hey, I finished the API design. Check shared context for the schema.
+/// [/Potato]
+/// ```
 pub fn format_notification(from_pane: u64, from_role: Option<&str>, content: &str) -> String {
     let role_suffix = from_role
         .filter(|r| !r.is_empty())
         .map(|r| format!(" ({r})"))
         .unwrap_or_default();
 
-    format!(
-        "\n[Potato: message from Pane {from_pane}{role_suffix}]\n\
+    let body = format!(
+        "[Potato: message from Pane {from_pane}{role_suffix}]\n\
          {content}\n\
-         [/Potato]\n"
-    )
+         [/Potato]"
+    );
+
+    // Bracketed paste: \x1b[200~ ... \x1b[201~ then \r to submit.
+    format!("\x1b[200~{body}\x1b[201~\r")
 }
 
 /// Attempt to inject a formatted notification into a target pane's PTY.
@@ -98,14 +114,29 @@ mod tests {
     }
 
     #[test]
+    fn format_notification_uses_bracketed_paste() {
+        let msg = format_notification(0, None, "test content");
+        // Must start with bracketed paste start sequence
+        assert!(msg.starts_with("\x1b[200~"), "missing bracketed paste start");
+        // Must contain bracketed paste end before the final \r
+        assert!(msg.contains("\x1b[201~"), "missing bracketed paste end");
+        // Must end with \r to submit
+        assert!(msg.ends_with('\r'), "missing trailing carriage return");
+    }
+
+    #[test]
     fn format_notification_multiline_content() {
         let msg = format_notification(0, None, "line1\nline2\nline3");
         assert!(msg.contains("line1\nline2\nline3"));
-        // Should have opening and closing tags on separate lines
-        let lines: Vec<&str> = msg.lines().collect();
-        // First non-empty line is the opening tag
-        let first_content = lines.iter().find(|l| !l.is_empty()).unwrap();
-        assert!(first_content.starts_with("[Potato:"));
+        // Entire body is inside bracketed paste
+        let start = "\x1b[200~";
+        let end = "\x1b[201~";
+        let body_start = msg.find(start).unwrap() + start.len();
+        let body_end = msg.find(end).unwrap();
+        let body = &msg[body_start..body_end];
+        assert!(body.contains("[Potato:"));
+        assert!(body.contains("[/Potato]"));
+        assert!(body.contains("line1\nline2\nline3"));
     }
 
     #[test]
