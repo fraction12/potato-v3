@@ -169,6 +169,20 @@ impl CockpitFocus {
     }
 }
 
+// ── Overlay ───────────────────────────────────────────────────────────────────
+
+/// Which full-screen modal overlay (if any) is currently active.
+///
+/// The overlay renders on top of the cockpit and captures all keyboard input
+/// until dismissed with `?` or `Esc`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Overlay {
+    /// Keyboard shortcuts / commands reference sheet.
+    Help,
+    /// Session picker (stub — full implementation in a later phase).
+    Sessions,
+}
+
 // ── Session types ─────────────────────────────────────────────────────────────
 
 /// A transcript entry (message or tool event) shown in the session view.
@@ -279,6 +293,16 @@ pub struct SessionState {
     /// `0` means live-follow at the bottom. Larger values mean the user has
     /// scrolled up in the Claude pane.
     pub terminal_scroll: usize,
+
+    /// Currently active modal overlay, if any.
+    ///
+    /// When `Some`, the overlay is rendered over the cockpit and all key
+    /// events are dispatched to it instead of the cockpit widgets.
+    pub overlay: Option<Overlay>,
+
+    /// Index of the currently highlighted item in the slash-command autocomplete
+    /// popup. Reset to 0 whenever the input buffer changes or is cleared.
+    pub command_selected: usize,
 }
 
 impl SessionState {
@@ -302,6 +326,8 @@ impl SessionState {
             selected_agent: 0,
             selected_session: 0,
             terminal_scroll: 0,
+            overlay: None,
+            command_selected: 0,
         }
     }
 

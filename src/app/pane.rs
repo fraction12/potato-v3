@@ -28,6 +28,13 @@ pub struct Pane {
     pub log: Option<ClaudeSessionLogTracker>,
     /// Number of events already persisted (for incremental JSONL reading).
     pub persisted_event_count: u64,
+    /// Optional role name assigned to this pane (e.g. `"architect"`).
+    ///
+    /// Set via the `/role` command.  Broadcast as a notification to all other
+    /// panes so they know this pane's current context.
+    pub role_name: Option<String>,
+    /// Optional free-text description accompanying the role.
+    pub role_description: Option<String>,
 }
 
 impl Pane {
@@ -38,6 +45,8 @@ impl Pane {
             pty: None,
             log: None,
             persisted_event_count: 0,
+            role_name: None,
+            role_description: None,
         }
     }
 
