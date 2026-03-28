@@ -116,7 +116,7 @@ pub fn render_session(frame: &mut Frame, area: Rect, state: &mut AppState) {
     render_left_rail(frame, left_area, state, focus);
     render_input_bar(frame, input_area, session, focus);
     render_right_rail(frame, right_area, state, focus);
-    render_status_bar(frame, status_area, session, &state.model, focus);
+    render_status_bar(frame, status_area, session, &state.model, focus, state.panes.len());
 }
 
 // ── Left rail — agents + sessions ─────────────────────────────────────────────
@@ -765,6 +765,7 @@ fn render_status_bar(
     session: &SessionState,
     model: &str,
     focus: CockpitFocus,
+    pane_count: usize,
 ) {
     let sep = Span::styled(" │ ", Style::default().fg(STONE).bg(CHARCOAL));
 
@@ -794,8 +795,13 @@ fn render_status_bar(
         Style::default().fg(STONE).bg(CHARCOAL),
     );
 
+    let keys_text = if pane_count > 1 {
+        " Tab:cycle  Ctrl+←→:pane  Ctrl+J:term  Esc:close  Ctrl+Q:quit "
+    } else {
+        " Tab:cycle  Ctrl+J:term  Esc:input  Ctrl+Q:quit "
+    };
     let keys_span = Span::styled(
-        " Tab:cycle  Ctrl+J:term  Esc:input  Ctrl+Q:quit ",
+        keys_text,
         Style::default().fg(STONE).bg(CHARCOAL),
     );
 

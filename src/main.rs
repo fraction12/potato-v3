@@ -346,6 +346,21 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                         continue;
                     }
 
+                    // ── Ctrl+Left / Ctrl+Right — switch active pane ──────────
+                    if key.modifiers.contains(KeyModifiers::CONTROL) && state.panes.len() > 1 {
+                        match key.code {
+                            KeyCode::Left => {
+                                state.panes.focus_prev();
+                                continue;
+                            }
+                            KeyCode::Right => {
+                                state.panes.focus_next();
+                                continue;
+                            }
+                            _ => {}
+                        }
+                    }
+
                     // ── Esc — context-sensitive ───────────────────────────────
                     if key.code == KeyCode::Esc {
                         match current_focus {
