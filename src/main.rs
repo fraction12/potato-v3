@@ -418,6 +418,33 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                         continue;
                     }
 
+                    // ── ? — toggle help overlay ───────────────────────────────
+                    if key.code == KeyCode::Char('?') && !key.modifiers.contains(KeyModifiers::CONTROL) {
+                        if let AppScreen::Session(ref mut session) = state.screen {
+                            if session.overlay.is_some() {
+                                session.overlay = None;
+                            } else {
+                                session.overlay = Some(crate::app::state::Overlay::Help);
+                            }
+                        }
+                        continue;
+                    }
+
+                    // ── Overlay active — dispatch key to overlay ──────────────
+                    {
+                        let has_overlay = state.session().map(|s| s.overlay.is_some()).unwrap_or(false);
+                        if has_overlay {
+                            // Esc or ? dismisses the overlay; all other keys are consumed.
+                            if key.code == KeyCode::Esc || key.code == KeyCode::Char('?') {
+                                if let AppScreen::Session(ref mut session) = state.screen {
+                                    session.overlay = None;
+                                }
+                            }
+                            // Scroll within overlay (Up/Down/PageUp/PageDown) — stub for now.
+                            continue;
+                        }
+                    }
+
                     // ── Esc — context-sensitive ───────────────────────────────
                     if key.code == KeyCode::Esc {
                         match current_focus {
@@ -503,35 +530,148 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
 
                     // ── Input focus — Potato-owned text editing ───────────────
                     if current_focus == CockpitFocus::Input {
+                        // ── Autocomplete navigation (Up/Down/Tab) ────────────
+                        // Only active when input starts with `/`.
+                        let in_command_mode = state.session()
+                            .map(|s| s.input_buffer.starts_with('/'))
+                            .unwrap_or(false);
+
+                        if in_command_mode {
+                            match key.code {
+                                KeyCode::Up => {
+                                    if let AppScreen::Session(ref mut session) = state.screen {
+                                        let prefix = &session.input_buffer[1..];
+                                        let count = commands::registry::completions(prefix).len();
+                                        if count > 0 {
+                                            if session.command_selected == 0 {
+                                                session.command_selected = count - 1;
+                                            } else {
+                                                session.command_selected -= 1;
+                                            }
+                                        }
+                                    }
+                                    continue;
+                                }
+                                KeyCode::Down => {
+                                    if let AppScreen::Session(ref mut session) = state.screen {
+                                        let prefix = &session.input_buffer[1..];
+                                        let count = commands::registry::completions(prefix).len();
+                                        if count > 0 {
+                                            session.command_selected = (session.command_selected + 1) % count;
+                                        }
+                                    }
+                                    continue;
+                                }
+                                KeyCode::Tab => {
+                                    if let AppScreen::Session(ref mut session) = state.screen {
+                                        let prefix = session.input_buffer[1..].to_string();
+                                        let completions = commands::registry::completions(&prefix);
+                                        let idx = session.command_selected.min(completions.len().saturating_sub(1));
+                                        if let Some(cmd) = completions.get(idx) {
+                                            session.input_buffer = format!("/{}", cmd.name);
+                                            session.input_cursor = session.input_buffer.len();
+                                            session.command_selected = 0;
+                                        }
+                                    }
+                                    continue;
+                                }
+                                _ => {}
+                            }
+                        }
+
                         if let AppScreen::Session(ref mut session) = state.screen {
                             match key.code {
-                                // Enter — send input_buffer, then a real terminal Enter (CR) to PTY.
+                                // Enter — parse slash command or send to PTY.
                                 KeyCode::Enter => {
                                     let text = std::mem::take(&mut session.input_buffer);
                                     session.input_cursor = 0;
+                                    session.command_selected = 0;
                                     session.reset_terminal_scroll();
+
                                     if !text.is_empty() {
-                                        // Write to active pane's PTY.
-                                        let written = if let Some(pane) = state.panes.active_pane_mut() {
-                                            if let Some(ref mut pty) = pane.pty {
-                                                if let Err(e) = pty.write_input(text.as_bytes()) {
-                                                    tracing::warn!("PTY write_input (text): {e}");
-                                                    false
-                                                } else if let Err(e) = pty.write_input(b"\r") {
-                                                    tracing::warn!("PTY write_input (enter): {e}");
-                                                    false
-                                                } else {
-                                                    true
+                                        if text.starts_with('/') {
+                                            // ── Slash command dispatch ────────
+                                            use commands::registry::{CommandResult, OverlayKind};
+                                            match commands::registry::parse_command(&text) {
+                                                CommandResult::ShowOverlay(OverlayKind::Help) => {
+                                                    session.overlay = Some(crate::app::state::Overlay::Help);
                                                 }
-                                            } else { false }
-                                        } else { false };
-                                        // Legacy fallback.
-                                        if !written {
-                                            if let Some(ref mut pty) = state.real_pty {
-                                                if let Err(e) = pty.write_input(text.as_bytes()) {
-                                                    tracing::warn!("PTY write_input (text, legacy): {e}");
-                                                } else if let Err(e) = pty.write_input(b"\r") {
-                                                    tracing::warn!("PTY write_input (enter, legacy): {e}");
+                                                CommandResult::ShowOverlay(OverlayKind::Sessions) => {
+                                                    session.overlay = Some(crate::app::state::Overlay::Sessions);
+                                                }
+                                                CommandResult::NewSession { .. } => {
+                                                    pending_new_session = true;
+                                                }
+                                                CommandResult::SetRole { name, description } => {
+                                                    // Store role on the active pane.
+                                                    let active_idx = state.panes.active_index();
+                                                    let active_pane_id = state.panes.active_pane().map(|p| p.id);
+                                                    if let Some(pane) = state.panes.active_pane_mut() {
+                                                        pane.role_name = Some(name.clone());
+                                                        pane.role_description = description.clone();
+                                                        tracing::info!(
+                                                            "Pane {} role set to '{}': {:?}",
+                                                            pane.id, name, description
+                                                        );
+                                                    }
+                                                    // Inject notification into ALL other panes.
+                                                    if let Some(pid) = active_pane_id {
+                                                        let n_panes = state.panes.len();
+                                                        let role_ref: Option<&str> = Some(&name);
+                                                        let notification = crate::mcp::injection::format_notification(
+                                                            pid,
+                                                            role_ref,
+                                                            &description.clone().unwrap_or_default(),
+                                                        );
+                                                        for target in 0..n_panes {
+                                                            if state.panes.get(target).map(|p| p.id) != Some(pid) {
+                                                                if let Err(e) = crate::mcp::injection::inject_into_pane(
+                                                                    &mut state.panes,
+                                                                    target,
+                                                                    &notification,
+                                                                ) {
+                                                                    tracing::warn!("role inject to pane {target}: {e}");
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                CommandResult::Handled => {
+                                                    tracing::info!("Slash command handled: {}", text);
+                                                }
+                                                CommandResult::Unknown(cmd) => {
+                                                    state.set_error(
+                                                        format!("Unknown command: /{cmd}  (type /help for commands)"),
+                                                        80,
+                                                    );
+                                                }
+                                                CommandResult::PassThrough(_) => {
+                                                    // Should not happen since we checked starts_with('/').
+                                                }
+                                            }
+                                        } else {
+                                            // ── Normal PTY send ───────────────
+                                            let written = if let Some(pane) = state.panes.active_pane_mut() {
+                                                if let Some(ref mut pty) = pane.pty {
+                                                    if let Err(e) = pty.write_input(text.as_bytes()) {
+                                                        tracing::warn!("PTY write_input (text): {e}");
+                                                        false
+                                                    } else if let Err(e) = pty.write_input(b"\r") {
+                                                        tracing::warn!("PTY write_input (enter): {e}");
+                                                        false
+                                                    } else {
+                                                        true
+                                                    }
+                                                } else { false }
+                                            } else { false };
+                                            // Legacy fallback.
+                                            if !written {
+                                                if let Some(ref mut pty) = state.real_pty {
+                                                    if let Err(e) = pty.write_input(text.as_bytes()) {
+                                                        tracing::warn!("PTY write_input (text, legacy): {e}");
+                                                    } else if let Err(e) = pty.write_input(b"\r") {
+                                                        tracing::warn!("PTY write_input (enter, legacy): {e}");
+                                                    }
                                                 }
                                             }
                                         }
@@ -543,6 +683,8 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                                     if session.input_cursor > session.input_buffer.len() {
                                         session.input_cursor = session.input_buffer.len();
                                     }
+                                    // Reset autocomplete selection on buffer change.
+                                    session.command_selected = 0;
                                     continue;
                                 }
                                 KeyCode::Left => {
@@ -568,6 +710,8 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                                 KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                                     session.input_buffer.push(c);
                                     session.input_cursor = session.input_buffer.len();
+                                    // Reset autocomplete selection when buffer changes.
+                                    session.command_selected = 0;
                                     continue;
                                 }
                                 _ => {}
