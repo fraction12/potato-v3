@@ -9,6 +9,7 @@
 mod adapters;
 mod app;
 mod claude_log;
+mod commands;
 mod config;
 mod events;
 mod log;
