@@ -173,90 +173,14 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                         if !dash.available_agents.is_empty() {
                             let agent_info = dash.available_agents[dash.selected_agent].clone();
                             if agent_info.available {
-                                let binary = agent_info.binary_path.clone().unwrap();
-                                let agent_name = agent_info.name.clone();
-
-                                // ── RealPty cockpit launch ─────────────────────────────
-                                // Estimate PTY size from terminal dimensions.
-                                // The output panel is ~75% wide, and minus the status/
-                                // sessions/input bars (~7 lines) for height.
-                                let (term_cols, term_rows) =
-                                    crossterm::terminal::size().unwrap_or((120, 40));
-                                let pty_cols = (term_cols as u32 * 3 / 4).saturating_sub(2) as u16;
-                                let pty_rows = term_rows.saturating_sub(10);
-
-                                tracing::info!(
-                                    "Launching {} via RealPty at {}×{}",
-                                    agent_name, pty_cols, pty_rows,
-                                );
-
-                                let session_id = Uuid::new_v4().to_string();
-                                let session_args = ["--session-id", session_id.as_str()];
-                                let launch_cwd = std::env::current_dir().ok();
-
-                                match crate::pty::RealPty::spawn_in(
-                                    &binary.to_string_lossy(),
-                                    &session_args,
-                                    pty_cols.max(20),
-                                    pty_rows.max(5),
-                                    launch_cwd.as_deref(),
-                                ) {
-                                    Ok(real_pty) => {
-                                        // Subscribe to dirty notifications for re-render.
-                                        let mut _dirty_rx = real_pty.dirty_tx.subscribe();
-                                        state.real_pty = Some(real_pty);
-
-                                        // Transition to session screen.
-                                        state.enter_session(&session_id, &agent_name);
-
-                                        if let Some(home) = dirs::home_dir() {
-                                            let cwd = launch_cwd.as_deref().unwrap_or(&home);
-                                            let path = crate::claude_log::session_log_path(&home, cwd, &session_id);
-                                            tracing::info!("Claude log path: {}", path.display());
-                                            state.claude_log = Some(crate::claude_log::ClaudeSessionLogTracker::new(path));
-                                        }
-
-                                        // Mark session as idle (PTY is live).
-                                        if let Some(ref mut session) = state.session_mut() {
-                                            session.status = crate::app::state::AgentStatus::Idle;
-                                            session.claude_session_id = Some(session_id.clone());
-                                        }
-
-                                        // Create the session row in SQLite immediately.
-                                        if let Some(ref store) = state.store.clone() {
-                                            let project_dir = launch_cwd
-                                                .as_deref()
-                                                .map(crate::claude_log::project_dir_name)
-                                                .unwrap_or_default();
-                                            let cwd_str = launch_cwd
-                                                .as_deref()
-                                                .and_then(|p| p.to_str())
-                                                .map(str::to_string);
-                                            let now = unix_now();
-                                            if let Err(e) = store.upsert_session(
-                                                &session_id,
-                                                &project_dir,
-                                                "claude",
-                                                None,
-                                                "",
-                                                cwd_str.as_deref(),
-                                                0,
-                                                0,
-                                                0,
-                                                now,
-                                                now,
-                                            ) {
-                                                tracing::warn!("Failed to create session row: {e}");
-                                            }
-                                            // Reset persisted event count for new session.
-                                            state.persisted_event_count = 0;
-                                            refresh_rail(state, store);
-                                        }
+                                tracing::info!("Dashboard Enter: launching {}", agent_info.name);
+                                match spawn_claude_pane(state, None) {
+                                    Ok(id) => {
+                                        tracing::info!("Dashboard spawned pane for session: {}", id);
                                     }
                                     Err(e) => {
-                                        tracing::error!("RealPty spawn failed: {e}");
-                                        // Remain on dashboard; surface error via state.
-                                        state.set_error(format!("Failed to launch {}: {}", agent_name, e), 100);
+                                        tracing::error!("Dashboard spawn failed: {e}");
+                                        state.set_error(format!("Failed to launch {}: {}", agent_info.name, e), 100);
                                     }
                                 }
 
@@ -665,11 +589,14 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                 }
             }
             // Close dead panes (iterate in reverse to preserve indices).
+            let had_panes = !dead_indices.is_empty();
             for i in dead_indices.into_iter().rev() {
                 tracing::info!("Pane {} PTY exited, closing", i);
                 state.panes.close(i);
             }
-            if state.panes.is_empty() && matches!(state.screen, AppScreen::Session(_)) {
+            // Only bounce to dashboard if we just closed the last pane.
+            if had_panes && state.panes.is_empty() && matches!(state.screen, AppScreen::Session(_)) {
+                tracing::info!("All panes closed, returning to dashboard");
                 state.real_pty = None;
                 state.claude_log = None;
                 state.screen = AppScreen::Dashboard(DashboardState {
