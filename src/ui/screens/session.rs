@@ -960,7 +960,7 @@ fn render_status_bar(
     );
 
     let keys_text = if pane_count > 1 {
-        " Tab:cycle panes  Ctrl+J:term  Ctrl+W:close pane  Ctrl+\\:quit "
+        " Ctrl+[/]:switch pane  Ctrl+J:term  Ctrl+W:close pane  Ctrl+\\:quit "
     } else {
         " Tab:cycle  Ctrl+J:term  Ctrl+Q:exit term  Ctrl+W:close  ?:help "
     };

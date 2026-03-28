@@ -402,6 +402,21 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                         continue;
                     }
 
+                    // ── Ctrl+[ / Ctrl+] — switch active pane ──────────────
+                    // Note: Ctrl+[ is indistinguishable from Esc in most terminals,
+                    // so we also accept Alt+[ / Alt+] as a reliable fallback.
+                    if state.panes.len() > 1 {
+                        let is_ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+                        let is_alt = key.modifiers.contains(KeyModifiers::ALT);
+                        if is_ctrl || is_alt {
+                            match key.code {
+                                KeyCode::Char('[') => { state.panes.focus_prev(); continue; }
+                                KeyCode::Char(']') => { state.panes.focus_next(); continue; }
+                                _ => {}
+                            }
+                        }
+                    }
+
                     // Get current focus (without mutably borrowing state yet).
                     let current_focus = state
                         .session()
