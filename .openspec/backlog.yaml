@@ -205,70 +205,162 @@ tasks:
       - Filter by typing
       - Switching sessions tears down current PTY and launches new one
 
-  # ─── Phase 7 — Multi-Agent Support ────────────────────────────────────────────
+  # ─── Phase 7 — Inter-Session Communication ────────────────────────────────────
 
   - id: T-701
+    title: "MCP server subcommand + UDS bridge"
+    status: open
+    phase: phase-7-inter-session
+    description: |
+      Add `potato mcp-server` subcommand that speaks MCP stdio protocol
+      (JSON-RPC 2.0). Connects to main Potato process via Unix domain socket
+      at /tmp/potato-{pid}.sock. Main process runs UDS listener in tokio.
+      Pane identity passed via POTATO_PANE_ID env var.
+    acceptance:
+      - `potato mcp-server` starts and handles MCP initialize/list_tools
+      - UDS listener in main process accepts connections
+      - MCP server subprocess connects and can route tool calls to main process
+      - Pane identity correctly resolved from env var
+
+  - id: T-702
+    title: "Dynamic .mcp.json generation"
+    status: open
+    phase: phase-7-inter-session
+    description: |
+      When multi-pane is active, Potato writes/updates .mcp.json in the
+      project root with per-pane MCP server entries (potato-0, potato-1).
+      Merges with existing user MCP servers. Cleans up potato-* entries
+      when all panes close.
+    acceptance:
+      - .mcp.json created on second pane spawn
+      - Existing user MCP servers preserved
+      - potato-* entries removed on teardown
+      - Each pane gets its own POTATO_PANE_ID in env config
+
+  - id: T-703
+    title: "Read-only MCP tools (get_role, get_partner_status)"
+    status: open
+    phase: phase-7-inter-session
+    description: |
+      Implement potato_get_role and potato_get_partner_status MCP tools.
+      Role data from PaneState. Partner status from existing JSONL tailer
+      + PTY state. No synthetic data — only expose what Potato already knows.
+    acceptance:
+      - potato_get_role returns pane role + partner info
+      - potato_get_partner_status returns live metrics from JSONL tailer
+      - Returns clean error if inter-session not active
+
+  - id: T-704
+    title: "Messaging MCP tools + PTY injection"
+    status: open
+    phase: phase-7-inter-session
+    description: |
+      Implement potato_send_message and potato_get_messages. Message queues
+      in InterSessionState. PTY injection engine writes formatted notifications
+      into target pane stdin. Injection guard: never inject during approval_pending.
+      Urgent messages inject immediately if target is idle; normal messages
+      queue and inject at next idle transition (detected from JSONL TurnDone).
+    acceptance:
+      - potato_send_message enqueues and optionally injects
+      - potato_get_messages returns and marks read
+      - PTY injection correctly formatted with source attribution
+      - No injection during approval_pending state
+      - Message delivery visible in Potato UI (future: overlay/panel)
+
+  - id: T-705
+    title: "Shared context + task coordination MCP tools"
+    status: open
+    phase: phase-7-inter-session
+    description: |
+      Implement potato_shared_context (get/set/delete/list) and
+      potato_claim_task/potato_release_task. In-memory HashMap in main process,
+      optionally persisted to SQLite. Task claiming is mutex-like: returns
+      claimed=false if already held by another pane.
+    acceptance:
+      - Shared context readable/writable from both panes
+      - Task claims are exclusive per pane
+      - State accessible via UDS from MCP server subprocesses
+      - Optional SQLite persistence for crash recovery
+
+  - id: T-706
+    title: "Role assignment (/role command) + spawn injection"
+    status: open
+    phase: phase-7-inter-session
+    description: |
+      /role <name> [description] slash command to set current pane's role.
+      On second pane spawn, inject role context + partner info as a formatted
+      notification so both agents are immediately aware of the collaboration.
+      Roles stored in PaneState and exposed via potato_get_role.
+    acceptance:
+      - /role sets role name and description
+      - Role injection on spawn for second pane
+      - First pane gets notification when partner spawns with role
+      - Roles visible in sidebar or status bar
+
+  # ─── Phase 8 — Multi-Agent Support ──────────────────────────────────────────
+
+  - id: T-801
     title: "Codex adapter"
     status: open
-    phase: phase-7-multiagent
+    phase: phase-8-multiagent
     description: |
       CodexAdapter: spawn codex CLI, parse output or raw PTY passthrough.
       Detect structured output format if available.
 
-  - id: T-702
+  - id: T-802
     title: "Generic adapter (raw PTY passthrough)"
     status: open
-    phase: phase-7-multiagent
+    phase: phase-8-multiagent
     description: |
       GenericAdapter wraps any CLI. No metrics parsing — raw terminal only.
       Sidebar shows "no metrics" state gracefully.
 
-  - id: T-703
+  - id: T-803
     title: "Agent picker overlay (Ctrl+P)"
     status: open
-    phase: phase-7-multiagent
+    phase: phase-8-multiagent
     description: |
       Overlay listing detected agents + configured profiles.
       Enter to launch. Shows binary path and profile name.
 
-  - id: T-704
+  - id: T-804
     title: "Agent profiles (config + .potato/profile.toml)"
     status: open
-    phase: phase-7-multiagent
+    phase: phase-8-multiagent
     description: |
       Per-agent config: binary path, default args, env vars, cwd.
       Project-level .potato/profile.toml overrides global config.
 
-  # ─── Phase 8 — Polish + Distribution ──────────────────────────────────────────
+  # ─── Phase 9 — Polish + Distribution ──────────────────────────────────────────
 
-  - id: T-801
+  - id: T-901
     title: "Error handling + resilience"
     status: open
-    phase: phase-8-release
+    phase: phase-9-release
     description: |
       Agent crash recovery, PTY read errors, config validation.
       Error states visible in UI. Graceful degradation.
 
-  - id: T-802
+  - id: T-902
     title: "Responsive layouts + compact mode"
     status: open
-    phase: phase-8-release
+    phase: phase-9-release
     description: |
       Compact mode below 80x24. Breakpoints for panel collapse.
       Resize stress testing.
 
-  - id: T-803
+  - id: T-903
     title: "Distribution (cargo install + Homebrew + CI)"
     status: open
-    phase: phase-8-release
+    phase: phase-9-release
     description: |
       cargo install potato, Homebrew tap, GitHub Actions CI/CD,
       cross-compilation for macOS ARM/Intel + Linux x86/ARM.
 
-  - id: T-804
+  - id: T-904
     title: "README + screenshots + GIFs"
     status: open
-    phase: phase-8-release
+    phase: phase-9-release
     description: |
       README with hero GIF (vhs/asciinema), feature screenshots,
       install instructions, quickstart guide.

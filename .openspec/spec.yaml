@@ -26,6 +26,7 @@ links:
     tui_design: ~/Documents/Second Brain/Projects/Potato V3/TUI-DESIGN.md
     research: ~/Documents/Second Brain/Projects/Potato V3/RESEARCH.md
     plan: ~/Documents/Second Brain/Projects/Potato V3/PLAN.md
+    inter_session: ~/Documents/Second Brain/Projects/Potato V3/INTER-SESSION.md
 
 key_decisions:
   - Potato spawns real agents in a PTY — no LLM API calls, no tool execution
@@ -34,6 +35,8 @@ key_decisions:
   - Real embedded terminal viewport, not a rendered transcript
   - Dashboard-first launch → Enter to start cockpit session
   - Focus model: Input default → Tab cycles → Ctrl+J terminal → Esc returns
+  - Inter-session communication via MCP server + PTY injection — infrastructure, not orchestration
+  - Potato is the MCP server binary itself (potato mcp-server subcommand)
 
 phases:
   - id: phase-1-foundation
@@ -79,18 +82,27 @@ phases:
       Help overlay with keybind reference.
     tickets: [T-601, T-602, T-603]
 
-  - id: phase-7-multiagent
+  - id: phase-7-inter-session
+    title: "Inter-session communication via MCP"
+    status: planned
+    goal: >
+      Potato MCP server that both Claude panes connect to. Enables real-time
+      messaging, shared context, task coordination, and role assignment between
+      sessions. MCP tools + PTY injection for push notifications.
+    tickets: [T-701, T-702, T-703, T-704, T-705, T-706]
+
+  - id: phase-8-multiagent
     title: "Multi-agent support"
     status: planned
     goal: >
       Codex adapter, GenericAdapter for arbitrary CLIs, agent picker,
       agent profiles in config, project-level .potato/profile.toml.
-    tickets: [T-701, T-702, T-703, T-704]
+    tickets: [T-801, T-802, T-803, T-804]
 
-  - id: phase-8-release
+  - id: phase-9-release
     title: "Polish + distribution"
     status: planned
     goal: >
       Error handling, responsive layouts, compact mode, performance,
       cargo install / Homebrew, README with GIFs, CI/CD, cross-compilation.
-    tickets: [T-801, T-802, T-803, T-804]
+    tickets: [T-901, T-902, T-903, T-904]
