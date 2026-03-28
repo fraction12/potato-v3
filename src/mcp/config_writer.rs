@@ -10,16 +10,20 @@ use serde_json::{json, Map, Value};
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-/// Write (or merge) Potato's MCP server entries into `<project_dir>/.mcp.json`.
+/// Write (or merge) Potato's single MCP server entry into `<project_dir>/.mcp.json`.
 ///
-/// Each pane gets its own entry: `potato-<pane_id>`. The `socket_path` is
-/// passed to each server process via `POTATO_SOCKET` env var.
+/// Creates ONE shared `"potato"` entry. Each Claude session spawns its own
+/// `potato mcp-server` process (stdio is inherently 1:1). The process inherits
+/// `POTATO_PANE_ID` and `POTATO_SOCKET` from its parent Claude PTY process,
+/// so no per-pane config entries are needed.
 ///
-/// Existing entries that are NOT `potato-*` are preserved unchanged.
+/// Also cleans up any legacy `potato-*` per-pane entries from older versions.
+///
+/// Existing entries that are NOT `potato` or `potato-*` are preserved unchanged.
 pub fn write_mcp_config(
     project_dir: &Path,
-    pane_ids: &[u64],
-    socket_path: &str,
+    _pane_ids: &[u64],
+    _socket_path: &str,
 ) -> std::io::Result<()> {
     let config_path = mcp_config_path(project_dir);
 
@@ -35,14 +39,12 @@ pub fn write_mcp_config(
         .as_object_mut()
         .expect("mcpServers must be a JSON object");
 
-    // Remove stale potato-* entries.
+    // Remove legacy per-pane entries (potato-0, potato-1, etc.).
     servers.retain(|k, _| !k.starts_with("potato-"));
 
-    // Add one entry per pane.
-    for &pane_id in pane_ids {
-        let key = format!("potato-{pane_id}");
-        servers.insert(key, potato_server_entry(pane_id, socket_path));
-    }
+    // Write the single shared entry. POTATO_PANE_ID and POTATO_SOCKET
+    // are inherited from the Claude PTY process environment.
+    servers.insert("potato".into(), potato_server_entry());
 
     // Serialize and write.
     let pretty = serde_json::to_string_pretty(&config)
@@ -51,7 +53,9 @@ pub fn write_mcp_config(
     std::fs::write(&config_path, pretty + "\n")
 }
 
-/// Remove all `potato-*` entries from `<project_dir>/.mcp.json`.
+/// Remove Potato's MCP entry from `<project_dir>/.mcp.json`.
+///
+/// Removes both the shared `"potato"` entry and any legacy `potato-*` entries.
 ///
 /// If the file becomes empty (no `mcpServers` entries remaining) or only
 /// contains an empty `mcpServers` object, the file is deleted.
@@ -75,6 +79,7 @@ pub fn remove_mcp_config(project_dir: &Path) -> std::io::Result<()> {
         .and_then(Value::as_object_mut);
 
     if let Some(servers) = servers {
+        servers.remove("potato");
         servers.retain(|k, _| !k.starts_with("potato-"));
     }
 
@@ -115,14 +120,14 @@ fn load_config(path: &Path) -> Option<Value> {
     serde_json::from_str(&content).ok()
 }
 
-fn potato_server_entry(pane_id: u64, socket_path: &str) -> Value {
+fn potato_server_entry() -> Value {
+    // No env vars needed here — POTATO_PANE_ID and POTATO_SOCKET are
+    // inherited from the parent Claude PTY process, which Potato sets
+    // when spawning each pane. This means each Claude session's MCP
+    // server process automatically knows which pane it belongs to.
     json!({
         "command": "potato",
-        "args": ["mcp-server"],
-        "env": {
-            "POTATO_PANE_ID": pane_id.to_string(),
-            "POTATO_SOCKET": socket_path
-        }
+        "args": ["mcp-server"]
     })
 }
 
@@ -162,30 +167,31 @@ mod tests {
     #[test]
     fn creates_config_when_none_exists() {
         let dir = temp_test_dir("creates");
-        write_mcp_config(&dir, &[0, 1], "/tmp/potato-1234.sock").unwrap();
+        write_mcp_config(&dir, &[], "").unwrap();
         let config = read_config(&dir);
-        assert!(config["mcpServers"]["potato-0"].is_object());
-        assert!(config["mcpServers"]["potato-1"].is_object());
+        assert!(config["mcpServers"]["potato"].is_object());
+        // No per-pane entries.
+        let servers = config["mcpServers"].as_object().unwrap();
+        assert!(!servers.keys().any(|k| k.starts_with("potato-")));
         cleanup(&dir);
     }
 
     #[test]
     fn written_config_has_correct_structure() {
         let dir = temp_test_dir("structure");
-        write_mcp_config(&dir, &[0], "/tmp/potato-999.sock").unwrap();
+        write_mcp_config(&dir, &[], "").unwrap();
         let config = read_config(&dir);
-        let entry = &config["mcpServers"]["potato-0"];
+        let entry = &config["mcpServers"]["potato"];
         assert_eq!(entry["command"], "potato");
         assert_eq!(entry["args"], json!(["mcp-server"]));
-        assert_eq!(entry["env"]["POTATO_PANE_ID"], "0");
-        assert_eq!(entry["env"]["POTATO_SOCKET"], "/tmp/potato-999.sock");
+        // No env in config — inherited from parent process.
+        assert!(entry.get("env").is_none());
         cleanup(&dir);
     }
 
     #[test]
     fn merges_with_existing_config() {
         let dir = temp_test_dir("merge");
-        // Pre-populate with a user's MCP server.
         let existing = json!({
             "mcpServers": {
                 "my-server": {
@@ -199,82 +205,73 @@ mod tests {
             serde_json::to_string_pretty(&existing).unwrap(),
         ).unwrap();
 
-        write_mcp_config(&dir, &[0], "/tmp/potato.sock").unwrap();
+        write_mcp_config(&dir, &[], "").unwrap();
         let config = read_config(&dir);
 
         // User's server preserved.
         assert!(config["mcpServers"]["my-server"].is_object());
-        // Potato entry added.
-        assert!(config["mcpServers"]["potato-0"].is_object());
+        // Single potato entry added.
+        assert!(config["mcpServers"]["potato"].is_object());
         cleanup(&dir);
     }
 
     #[test]
-    fn overwrites_stale_potato_entries() {
-        let dir = temp_test_dir("stale");
-        // Write old potato-0 and potato-1.
-        write_mcp_config(&dir, &[0, 1], "/tmp/old.sock").unwrap();
-        // Now only pane 0 exists (pane 1 closed).
-        write_mcp_config(&dir, &[0], "/tmp/new.sock").unwrap();
+    fn cleans_legacy_per_pane_entries() {
+        let dir = temp_test_dir("legacy");
+        // Simulate old per-pane format.
+        let legacy = json!({
+            "mcpServers": {
+                "potato-0": {"command": "potato", "args": ["mcp-server"], "env": {"POTATO_PANE_ID": "0"}},
+                "potato-1": {"command": "potato", "args": ["mcp-server"], "env": {"POTATO_PANE_ID": "1"}}
+            }
+        });
+        fs::write(
+            dir.join(".mcp.json"),
+            serde_json::to_string_pretty(&legacy).unwrap(),
+        ).unwrap();
+
+        write_mcp_config(&dir, &[], "").unwrap();
         let config = read_config(&dir);
-        assert!(config["mcpServers"]["potato-0"].is_object());
-        assert!(config["mcpServers"]["potato-1"].is_null());
-        // Socket updated.
-        assert_eq!(config["mcpServers"]["potato-0"]["env"]["POTATO_SOCKET"], "/tmp/new.sock");
+        let servers = config["mcpServers"].as_object().unwrap();
+        // Legacy entries gone.
+        assert!(!servers.contains_key("potato-0"));
+        assert!(!servers.contains_key("potato-1"));
+        // Single shared entry present.
+        assert!(servers.contains_key("potato"));
         cleanup(&dir);
     }
 
     #[test]
     fn idempotent_write() {
         let dir = temp_test_dir("idempotent");
-        write_mcp_config(&dir, &[0, 1], "/tmp/potato.sock").unwrap();
-        write_mcp_config(&dir, &[0, 1], "/tmp/potato.sock").unwrap();
-        let config = read_config(&dir);
-        // Still exactly two potato entries.
-        let servers = config["mcpServers"].as_object().unwrap();
-        let potato_count = servers.keys().filter(|k| k.starts_with("potato-")).count();
-        assert_eq!(potato_count, 2);
-        cleanup(&dir);
-    }
-
-    #[test]
-    fn write_single_pane() {
-        let dir = temp_test_dir("single");
-        write_mcp_config(&dir, &[5], "/tmp/s.sock").unwrap();
-        let config = read_config(&dir);
-        assert!(config["mcpServers"]["potato-5"].is_object());
-        assert_eq!(config["mcpServers"]["potato-5"]["env"]["POTATO_PANE_ID"], "5");
-        cleanup(&dir);
-    }
-
-    #[test]
-    fn write_zero_panes_removes_potato_entries() {
-        let dir = temp_test_dir("zero_panes");
-        write_mcp_config(&dir, &[0, 1], "/tmp/s.sock").unwrap();
-        write_mcp_config(&dir, &[], "/tmp/s.sock").unwrap();
+        write_mcp_config(&dir, &[], "").unwrap();
+        write_mcp_config(&dir, &[], "").unwrap();
         let config = read_config(&dir);
         let servers = config["mcpServers"].as_object().unwrap();
-        assert!(!servers.keys().any(|k| k.starts_with("potato-")));
+        // Exactly one potato entry.
+        assert_eq!(servers.keys().filter(|k| k.starts_with("potato")).count(), 1);
+        assert!(servers.contains_key("potato"));
         cleanup(&dir);
     }
 
     // ── remove_mcp_config ────────────────────────────────────────────────────
 
     #[test]
-    fn remove_deletes_file_when_only_potato_entries() {
+    fn remove_deletes_file_when_only_potato_entry() {
         let dir = temp_test_dir("remove_all");
-        write_mcp_config(&dir, &[0, 1], "/tmp/s.sock").unwrap();
+        write_mcp_config(&dir, &[], "").unwrap();
         remove_mcp_config(&dir).unwrap();
         assert!(!dir.join(".mcp.json").exists());
         cleanup(&dir);
     }
 
     #[test]
-    fn remove_preserves_user_servers() {
-        let dir = temp_test_dir("remove_preserve");
+    fn remove_cleans_legacy_and_shared_entries() {
+        let dir = temp_test_dir("remove_legacy");
         let mixed = json!({
             "mcpServers": {
                 "user-server": {"command": "my-cmd", "args": []},
+                "potato": {"command": "potato", "args": ["mcp-server"]},
                 "potato-0": {"command": "potato", "args": ["mcp-server"], "env": {}}
             }
         });
@@ -283,9 +280,9 @@ mod tests {
             serde_json::to_string_pretty(&mixed).unwrap(),
         ).unwrap();
         remove_mcp_config(&dir).unwrap();
-        // File should still exist.
         let config = read_config(&dir);
         assert!(config["mcpServers"]["user-server"].is_object());
+        assert!(config["mcpServers"]["potato"].is_null());
         assert!(config["mcpServers"]["potato-0"].is_null());
         cleanup(&dir);
     }
@@ -293,7 +290,6 @@ mod tests {
     #[test]
     fn remove_is_noop_when_file_missing() {
         let dir = temp_test_dir("remove_noop");
-        // No error when file doesn't exist.
         remove_mcp_config(&dir).unwrap();
         cleanup(&dir);
     }
@@ -301,12 +297,11 @@ mod tests {
     #[test]
     fn remove_then_write_is_clean() {
         let dir = temp_test_dir("remove_write");
-        write_mcp_config(&dir, &[0], "/tmp/s.sock").unwrap();
+        write_mcp_config(&dir, &[], "").unwrap();
         remove_mcp_config(&dir).unwrap();
-        write_mcp_config(&dir, &[0, 1], "/tmp/s2.sock").unwrap();
+        write_mcp_config(&dir, &[], "").unwrap();
         let config = read_config(&dir);
-        assert!(config["mcpServers"]["potato-0"].is_object());
-        assert!(config["mcpServers"]["potato-1"].is_object());
+        assert!(config["mcpServers"]["potato"].is_object());
         cleanup(&dir);
     }
 
@@ -316,7 +311,7 @@ mod tests {
         let config = json!({
             "version": 1,
             "mcpServers": {
-                "potato-0": {"command": "potato", "args": ["mcp-server"], "env": {}}
+                "potato": {"command": "potato", "args": ["mcp-server"]}
             }
         });
         fs::write(
@@ -324,10 +319,9 @@ mod tests {
             serde_json::to_string_pretty(&config).unwrap(),
         ).unwrap();
         remove_mcp_config(&dir).unwrap();
-        // File should still exist because of the "version" key.
         let result = read_config(&dir);
         assert_eq!(result["version"], 1);
-        assert!(result["mcpServers"]["potato-0"].is_null());
+        assert!(result["mcpServers"]["potato"].is_null());
         cleanup(&dir);
     }
 }

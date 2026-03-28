@@ -1088,9 +1088,10 @@ fn spawn_claude_pane(
 
     let session_args_refs: Vec<&str> = session_args_owned.iter().map(|s| s.as_str()).collect();
 
-    // ── MCP env vars (2nd pane and beyond) ───────────────────────────────────
-    // When a socket is available and we're spawning pane 1+, pass env vars so
-    // Claude can connect to the MCP bridge.
+    // ── MCP env vars ──────────────────────────────────────────────────────────
+    // Set POTATO_PANE_ID and POTATO_SOCKET on every pane's PTY process.
+    // The MCP server inherits these from its parent (Claude PTY), so
+    // .mcp.json only needs a single shared "potato" entry.
     let pane_index_after_open = state.panes.len(); // 0-based index the new pane will occupy
     let mut pane_env: Vec<(String, String)> = Vec::new();
     if let Some(ref sock) = state.mcp_socket_path.clone() {
@@ -1182,16 +1183,16 @@ fn spawn_claude_pane(
     // that pane 0 has the config available if a 2nd pane is opened later
     // and Claude re-reads it on the next conversation turn.
     let wrote_mcp = if state.panes.len() >= 1 {
-        if let Some(ref sock) = state.mcp_socket_path.clone() {
+        if let Some(ref _sock) = state.mcp_socket_path.clone() {
             if let Some(ref cwd) = launch_cwd {
-                let pane_ids: Vec<u64> =
-                    (0..state.panes.len()).filter_map(|i| state.panes.get(i).map(|p| p.id)).collect();
-                let sock_str = sock.to_string_lossy();
-                if let Err(e) = crate::mcp::config_writer::write_mcp_config(cwd, &pane_ids, &sock_str) {
+                // Single shared "potato" MCP entry. Each Claude PTY inherits
+                // POTATO_PANE_ID + POTATO_SOCKET from its env, so the spawned
+                // MCP server process knows which pane it belongs to.
+                if let Err(e) = crate::mcp::config_writer::write_mcp_config(cwd, &[], "") {
                     tracing::warn!("Failed to write .mcp.json: {e}");
                     false
                 } else {
-                    tracing::info!("Wrote .mcp.json for panes: {:?}", pane_ids);
+                    tracing::info!("Wrote .mcp.json (shared potato MCP entry)");
                     true
                 }
             } else { false }
