@@ -257,25 +257,13 @@ impl ChatPanel {
                     continue;
                 }
 
-                let is_match = search_query.is_some()
-                    && all_matches
-                        .map(|m| m.contains(&(entry_idx, line_idx)))
-                        .unwrap_or(false);
-
-                let is_current_match = is_match && {
-                    let mut found = false;
-                    if let Some(matches) = all_matches {
-                        for (i, &(ei, li)) in matches.iter().enumerate() {
-                            if ei == entry_idx && li == line_idx {
-                                if current_match == Some(i) {
-                                    found = true;
-                                }
-                                break;
-                            }
-                        }
-                    }
-                    found
-                };
+                let match_index = search_query.as_ref().and_then(|_| {
+                    all_matches.and_then(|m| {
+                        m.iter().position(|&(ei, li)| ei == entry_idx && li == line_idx)
+                    })
+                });
+                let is_match = match_index.is_some();
+                let is_current_match = match_index == current_match;
 
                 let line = if in_code_block {
                     let mut spans: Vec<Span<'static>> = Vec::new();
