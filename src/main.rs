@@ -12,6 +12,7 @@ mod claude_log;
 mod config;
 mod events;
 mod log;
+mod mcp;
 mod metrics;
 mod pty;
 mod session;
