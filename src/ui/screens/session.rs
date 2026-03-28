@@ -138,6 +138,15 @@ pub fn render_session(frame: &mut Frame, area: Rect, state: &mut AppState) {
                 // Sessions overlay stub — show a simple "Coming soon" message.
                 render_sessions_overlay_stub(frame, area);
             }
+            Overlay::AgentPicker => {
+                let rows = crate::ui::overlays::agent_picker::build_agent_rows();
+                crate::ui::overlays::agent_picker::render_agent_picker(
+                    frame,
+                    area,
+                    &session.agent_picker,
+                    &rows,
+                );
+            }
         }
     }
 }
@@ -145,9 +154,11 @@ pub fn render_session(frame: &mut Frame, area: Rect, state: &mut AppState) {
 // ── Left rail — agents + sessions ─────────────────────────────────────────────
 
 fn render_left_rail(frame: &mut Frame, area: Rect, state: &AppState, focus: CockpitFocus) {
-    // Split the rail into Agents (top, fixed height) and Sessions (bottom, fill).
-    // Agents section: border (2) + 1 item row = 3 lines minimum.
-    let agents_height = 3u16;
+    // Detect agents for the rail display.
+    let agent_rows = crate::ui::overlays::agent_picker::build_agent_rows();
+    // Agents section: border (2) + N item rows, capped at 5.
+    let agent_row_count = agent_rows.len().min(3) as u16;
+    let agents_height = 2 + agent_row_count; // border top + bottom + rows
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -158,12 +169,18 @@ fn render_left_rail(frame: &mut Frame, area: Rect, state: &AppState, focus: Cock
     let agents_area = chunks[0];
     let sessions_area = chunks[1];
 
-    render_agents_section(frame, agents_area, state, focus);
+    render_agents_section(frame, agents_area, state, focus, &agent_rows);
     render_sessions_section(frame, sessions_area, state, focus);
 }
 
-/// Top part of the left rail — agent picker.
-fn render_agents_section(frame: &mut Frame, area: Rect, state: &AppState, focus: CockpitFocus) {
+/// Top part of the left rail — agent list with availability indicators.
+fn render_agents_section(
+    frame: &mut Frame,
+    area: Rect,
+    state: &AppState,
+    focus: CockpitFocus,
+    agent_rows: &[crate::ui::overlays::agent_picker::AgentRow],
+) {
     let focused = focus == CockpitFocus::Agents;
     let border_style = if focused {
         Style::default().fg(AMBER)
@@ -176,31 +193,56 @@ fn render_agents_section(frame: &mut Frame, area: Rect, state: &AppState, focus:
         Style::default().fg(TAN)
     };
 
-    // For now we only have Claude. This will expand later.
-    let agents = vec!["Claude"];
-
     let selected_idx = state
         .session()
         .map(|s| s.selected_agent)
         .unwrap_or(0);
 
-    let items: Vec<ListItem<'static>> = agents
+    let items: Vec<ListItem<'_>> = agent_rows
         .iter()
         .enumerate()
-        .map(|(idx, name)| {
+        .map(|(idx, row)| {
             let is_selected = idx == selected_idx && focused;
-            let style = if is_selected {
-                Style::default()
-                    .fg(CREAM)
-                    .add_modifier(Modifier::BOLD)
-                    .bg(Color::Rgb(45, 30, 20))
+            // Status indicator: ● for available, ○ for unavailable
+            let indicator = if row.available { "●" } else { "○" };
+            let indicator_color = if row.available {
+                Color::Rgb(100, 200, 100)
             } else {
-                Style::default().fg(TAN)
+                Color::Rgb(120, 80, 80)
             };
-            ListItem::new(Line::from(Span::styled(
-                format!(" + {}", name),
-                style,
-            )))
+            let name_color = if row.available {
+                if is_selected { CREAM } else { TAN }
+            } else {
+                STONE
+            };
+            let bg_color = if is_selected {
+                Color::Rgb(45, 30, 20)
+            } else {
+                BG
+            };
+
+            // Truncate name to fit the narrow rail.
+            let max_name = area.width.saturating_sub(5) as usize;
+            let display_name = if row.display_name.len() > max_name {
+                &row.display_name[..max_name]
+            } else {
+                &row.display_name
+            };
+
+            let line = Line::from(vec![
+                Span::styled(
+                    format!(" {indicator} "),
+                    Style::default().fg(indicator_color),
+                ),
+                Span::styled(
+                    display_name.to_string(),
+                    Style::default()
+                        .fg(name_color)
+                        .bg(bg_color)
+                        .add_modifier(if is_selected { Modifier::BOLD } else { Modifier::empty() }),
+                ),
+            ]);
+            ListItem::new(line)
         })
         .collect();
 

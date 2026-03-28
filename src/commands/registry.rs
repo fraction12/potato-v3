@@ -23,6 +23,8 @@ pub enum CommandCategory {
 pub enum OverlayKind {
     Help,
     Sessions,
+    /// Agent picker — list detected agents and launch one in a new pane.
+    AgentPicker,
 }
 
 // ── CommandResult ─────────────────────────────────────────────────────────────
@@ -160,7 +162,7 @@ pub fn parse_command(input: &str) -> CommandResult {
 
             "help" => CommandResult::ShowOverlay(OverlayKind::Help),
 
-            "agent" => CommandResult::Handled,
+            "agent" => CommandResult::ShowOverlay(OverlayKind::AgentPicker),
 
             "role" => {
                 if let Some(name) = arg1 {
@@ -342,12 +344,18 @@ mod tests {
 
     #[test]
     fn parse_agent() {
-        assert_eq!(parse_command("/agent"), CommandResult::Handled);
+        assert_eq!(
+            parse_command("/agent"),
+            CommandResult::ShowOverlay(OverlayKind::AgentPicker)
+        );
     }
 
     #[test]
     fn parse_agent_alias_a() {
-        assert_eq!(parse_command("/a"), CommandResult::Handled);
+        assert_eq!(
+            parse_command("/a"),
+            CommandResult::ShowOverlay(OverlayKind::AgentPicker)
+        );
     }
 
     // ── parse_command: /role ──────────────────────────────────────────────────

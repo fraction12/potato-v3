@@ -1,5 +1,6 @@
 //! Modal overlays that float above the panel layout.
 
+pub mod agent_picker;
 pub mod confirm;
 pub mod help;
 pub mod model_picker;

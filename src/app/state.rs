@@ -181,6 +181,17 @@ pub enum Overlay {
     Help,
     /// Session picker (stub — full implementation in a later phase).
     Sessions,
+    /// Agent picker — select which agent to launch in a new pane.
+    AgentPicker,
+}
+
+// ── AgentPickerState ──────────────────────────────────────────────────────────
+
+/// State for the agent picker overlay.
+#[derive(Debug, Clone, Default)]
+pub struct AgentPickerState {
+    /// Currently highlighted row index.
+    pub selected: usize,
 }
 
 // ── Session types ─────────────────────────────────────────────────────────────
@@ -303,6 +314,9 @@ pub struct SessionState {
     /// Index of the currently highlighted item in the slash-command autocomplete
     /// popup. Reset to 0 whenever the input buffer changes or is cleared.
     pub command_selected: usize,
+
+    /// State for the agent picker overlay.
+    pub agent_picker: AgentPickerState,
 }
 
 impl SessionState {
@@ -328,6 +342,7 @@ impl SessionState {
             terminal_scroll: 0,
             overlay: None,
             command_selected: 0,
+            agent_picker: AgentPickerState::default(),
         }
     }
 
@@ -599,6 +614,8 @@ mod tests {
     #[test]
     fn overlay_enum_variants_are_distinct() {
         assert_ne!(Overlay::Help, Overlay::Sessions);
+        assert_ne!(Overlay::Help, Overlay::AgentPicker);
+        assert_ne!(Overlay::Sessions, Overlay::AgentPicker);
     }
 
     #[test]
@@ -610,7 +627,23 @@ mod tests {
         s.overlay = Some(Overlay::Sessions);
         assert_eq!(s.overlay, Some(Overlay::Sessions));
 
+        s.overlay = Some(Overlay::AgentPicker);
+        assert_eq!(s.overlay, Some(Overlay::AgentPicker));
+
         s.overlay = None;
         assert!(s.overlay.is_none());
+    }
+
+    #[test]
+    fn agent_picker_state_defaults_to_selected_zero() {
+        let s = SessionState::new("id", "agent");
+        assert_eq!(s.agent_picker.selected, 0);
+    }
+
+    #[test]
+    fn agent_picker_state_selected_can_be_changed() {
+        let mut state = AgentPickerState::default();
+        state.selected = 2;
+        assert_eq!(state.selected, 2);
     }
 }
