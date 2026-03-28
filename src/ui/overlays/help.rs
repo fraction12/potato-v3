@@ -35,36 +35,45 @@ struct Section {
 // ── Keybind data ──────────────────────────────────────────────────────────────
 
 static GLOBAL_ENTRIES: &[KeyEntry] = &[
-    KeyEntry::new("Ctrl+Q",     "Quit Potato"),
-    KeyEntry::new("Tab",        "Focus next panel"),
-    KeyEntry::new("Shift+Tab",  "Focus previous panel"),
-    KeyEntry::new("Ctrl+1-4",   "Jump to panel 1–4"),
-    KeyEntry::new("/",          "Open command menu"),
-    KeyEntry::new("?",          "Show this help"),
+    KeyEntry::new("q / Ctrl+C",  "Quit"),
+    KeyEntry::new("Tab",         "Next focus panel"),
+    KeyEntry::new("Shift+Tab",   "Previous focus panel"),
+    KeyEntry::new("?",           "Toggle help"),
 ];
 
-static CHAT_ENTRIES: &[KeyEntry] = &[
-    KeyEntry::new("j / ↓",  "Scroll down"),
-    KeyEntry::new("k / ↑",  "Scroll up"),
-    KeyEntry::new("G",      "Jump to bottom"),
-    KeyEntry::new("Enter",  "Submit message"),
+static INPUT_ENTRIES: &[KeyEntry] = &[
+    KeyEntry::new("Enter",  "Send to Claude / Execute command"),
+    KeyEntry::new("/",      "Start command mode"),
+    KeyEntry::new("Esc",    "Close active pane"),
 ];
 
-static TOOLS_ENTRIES: &[KeyEntry] = &[
-    KeyEntry::new("Enter",  "Toggle expand tool output"),
-    KeyEntry::new("C",      "Clear tool output"),
+static TERMINAL_ENTRIES: &[KeyEntry] = &[
+    KeyEntry::new("Ctrl+J",     "Focus terminal"),
+    KeyEntry::new("Esc",        "Return to input"),
+    KeyEntry::new("PgUp/PgDn",  "Scroll terminal"),
+    KeyEntry::new("End",        "Jump to bottom"),
 ];
 
-static NAV_ENTRIES: &[KeyEntry] = &[
-    KeyEntry::new("Ctrl+P",  "Open file search"),
-    KeyEntry::new("Ctrl+N",  "New session"),
+static NAVIGATION_ENTRIES: &[KeyEntry] = &[
+    KeyEntry::new("Tab",        "Next focus panel"),
+    KeyEntry::new("Shift+Tab",  "Previous focus panel"),
+];
+
+static COMMAND_ENTRIES: &[KeyEntry] = &[
+    KeyEntry::new("/new",          "New Claude session"),
+    KeyEntry::new("/sessions",     "Session picker"),
+    KeyEntry::new("/export",       "Export session"),
+    KeyEntry::new("/help",         "Show this help"),
+    KeyEntry::new("/role <name>",  "Set pane role"),
+    KeyEntry::new("/agent",        "Agent info"),
 ];
 
 static SECTIONS: &[Section] = &[
     Section { title: "Global",     entries: GLOBAL_ENTRIES },
-    Section { title: "Chat",       entries: CHAT_ENTRIES },
-    Section { title: "Tools",      entries: TOOLS_ENTRIES },
-    Section { title: "Navigation", entries: NAV_ENTRIES },
+    Section { title: "Input",      entries: INPUT_ENTRIES },
+    Section { title: "Terminal",   entries: TERMINAL_ENTRIES },
+    Section { title: "Navigation", entries: NAVIGATION_ENTRIES },
+    Section { title: "Commands",   entries: COMMAND_ENTRIES },
 ];
 
 // ── HelpOverlay ───────────────────────────────────────────────────────────────
@@ -269,5 +278,28 @@ mod tests {
         let lines = h.build_lines();
         // Should contain at least one line per section + entries.
         assert!(lines.len() >= SECTIONS.len());
+    }
+
+    #[test]
+    fn test_help_sections_include_commands() {
+        // Verify the Commands section is present in SECTIONS.
+        let has_commands = SECTIONS.iter().any(|s| s.title == "Commands");
+        assert!(has_commands, "SECTIONS should include a 'Commands' section");
+    }
+
+    #[test]
+    fn test_help_sections_include_input_and_terminal() {
+        let has_input = SECTIONS.iter().any(|s| s.title == "Input");
+        let has_terminal = SECTIONS.iter().any(|s| s.title == "Terminal");
+        assert!(has_input, "SECTIONS should include 'Input'");
+        assert!(has_terminal, "SECTIONS should include 'Terminal'");
+    }
+
+    #[test]
+    fn test_help_commands_section_has_role_entry() {
+        // /role <name> should appear in the Commands section entries.
+        let commands_section = SECTIONS.iter().find(|s| s.title == "Commands").unwrap();
+        let has_role = commands_section.entries.iter().any(|e| e.keybind.contains("/role"));
+        assert!(has_role, "Commands section should have a /role entry");
     }
 }
