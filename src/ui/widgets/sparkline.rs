@@ -97,9 +97,10 @@ impl Widget for &TokenSparkline {
 
         for (i, ch) in chars.iter().take(visible).enumerate() {
             let col = area.left() + i as u16;
-            let cell = buf.get_mut(col, row);
-            cell.set_char(*ch);
-            cell.set_style(style);
+            if let Some(cell) = buf.cell_mut((col, row)) {
+                cell.set_char(*ch);
+                cell.set_style(style);
+            }
         }
     }
 }

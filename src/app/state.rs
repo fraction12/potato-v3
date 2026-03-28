@@ -8,9 +8,7 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 
-use crate::claude_log::ClaudeSessionLogTracker;
 use crate::metrics::SessionMetrics;
-use crate::pty::RealPty;
 use crate::session::store::{SessionInfo, SessionStore};
 use crate::ui::focus::FocusRing;
 use crate::ui::layout::LayoutManager;
@@ -419,20 +417,6 @@ pub struct AppState {
     /// PTY and log tracker.
     pub panes: crate::app::pane::PaneManager,
 
-    // ── Legacy single-PTY fields (kept temporarily for migration) ────────────
-    /// Live PTY session wrapping the Claude Code process.
-    ///
-    /// `Some` while an interactive session is active; `None` on the dashboard
-    /// or after the session exits.  Set when the user presses Enter on the
-    /// dashboard and a `RealPty::spawn` succeeds.
-    pub real_pty: Option<RealPty>,
-
-    /// Claude's own persisted session ledger for the active PTY session.
-    ///
-    /// Potato tails this JSONL file and uses it as the source of truth for the
-    /// sidebar metrics/tool data instead of inferring from terminal text.
-    pub claude_log: Option<ClaudeSessionLogTracker>,
-
     // ── Session store (cockpit persistence) ───────────────────────────────────
     /// Shared SQLite session store. `Arc` so it can be passed to async helpers
     /// without borrowing AppState.
@@ -470,8 +454,7 @@ impl Default for AppState {
             chat_panel: ChatPanel::new(Vec::new()),
             tool_output_panel: ToolOutputPanel::new(),
             panes: crate::app::pane::PaneManager::new(),
-            real_pty: None,
-            claude_log: None,
+
             store: None,
             rail_sessions: Vec::new(),
             last_rail_refresh: 0,

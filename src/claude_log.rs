@@ -157,22 +157,19 @@ impl ClaudeSessionLogTracker {
             if let Some(model) = message.get("model").and_then(Value::as_str) {
                 if !model.is_empty() && model != "<synthetic>" {
                     self.model = Some(model.to_string());
-                    changed = true;
                 }
             }
 
             if let Some(stop_reason) = message.get("stop_reason").and_then(Value::as_str) {
                 if !stop_reason.is_empty() {
                     self.last_stop_reason = Some(stop_reason.to_string());
-                    changed = true;
                 }
             }
 
-            if self.apply_usage(message.get("usage")) {
-                changed = true;
-            }
+            self.apply_usage(message.get("usage"));
 
             self.turns = self.turns.saturating_add(1);
+            // Any assistant message is a change.
             changed = true;
 
             if let Some(content) = message.get("content").and_then(Value::as_array) {

@@ -494,100 +494,19 @@ fn render_pane_viewport(
     }
 }
 
-/// Legacy single-PTY viewport (used during migration when panes are empty).
-fn render_pty_viewport_legacy(frame: &mut Frame, area: Rect, state: &mut AppState, focus: CockpitFocus) {
-    let focused = focus == CockpitFocus::Terminal;
-    let border_style = if focused {
-        Style::default().fg(AMBER)
-    } else {
-        Style::default().fg(BRASS)
-    };
-    let title_style = if focused {
-        Style::default().fg(AMBER).add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(TAN).add_modifier(Modifier::BOLD)
-    };
-
-    // Inner area available to the PTY (minus border).
-    let inner_cols = area.width.saturating_sub(2);
-    let inner_rows = area.height.saturating_sub(2);
-    let desired_scroll = state.session().map(|s| s.terminal_scroll).unwrap_or(0);
-
-    let mut synced_scroll = None;
-
-    if let Some(ref pty) = state.real_pty {
-        // Resize PTY every frame so it matches the exact output rect.
-        let _ = pty.resize(inner_cols.max(1), inner_rows.max(1));
-        let actual_scroll = pty.set_scrollback(desired_scroll);
-        synced_scroll = Some(actual_scroll);
-
-        let title = if actual_scroll > 0 {
-            Span::styled(format!(" Claude ↑{} ", actual_scroll), title_style)
-        } else {
-            Span::styled(" Claude ", title_style)
-        };
-
-        if let Ok(parser) = pty.screen.try_lock() {
-            use tui_term::widget::PseudoTerminal;
-            let widget = PseudoTerminal::new(parser.screen()).block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(border_style)
-                    .title(title.clone()),
-            );
-            frame.render_widget(widget, area);
-        } else {
-            // Parser locked by reader thread — show busy hint.
-            let busy = Paragraph::new("…")
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .border_style(border_style)
-                        .title(title),
-                )
-                .style(Style::default().fg(STONE));
-            frame.render_widget(busy, area);
-        }
-    } else {
-        // No active PTY — placeholder.
-        let placeholder = Paragraph::new(
-            "\n  No active session.\n  Select an agent on the dashboard and press Enter.",
-        )
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(BRASS))
-                .title(Span::styled(" Claude ", Style::default().fg(STONE))),
-        )
-        .style(Style::default().fg(STONE));
-        frame.render_widget(placeholder, area);
-    }
-
-    if let Some(actual_scroll) = synced_scroll {
-        if let Some(session) = state.session_mut() {
-            session.terminal_scroll = actual_scroll;
-        }
-    }
-
-    // Render "TERMINAL" focus indicator in top-right corner of the block when
-    // terminal focus is active so the user can see the mode clearly.
-    if focused && area.height > 2 && area.width > 14 {
-        let hint = Span::styled(
-            " [TERM] ",
-            Style::default()
-                .fg(BG)
-                .bg(AMBER)
-                .add_modifier(Modifier::BOLD),
-        );
-        let hint_line = Line::from(vec![hint]);
-        let hint_area = Rect {
-            x: area.x + area.width.saturating_sub(10),
-            y: area.y,
-            width: 9,
-            height: 1,
-        };
-        frame.render_widget(Paragraph::new(hint_line), hint_area);
-    }
+/// Placeholder shown when no panes are active (zero PTYs).
+fn render_pty_viewport_legacy(frame: &mut Frame, area: Rect, _state: &mut AppState, _focus: CockpitFocus) {
+    let placeholder = Paragraph::new(
+        "\n  No active session.\n  Select an agent above and press Enter.",
+    )
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(BRASS))
+            .title(Span::styled(" Terminal ", Style::default().fg(STONE))),
+    )
+    .style(Style::default().fg(STONE));
+    frame.render_widget(placeholder, area);
 }
 
 // ── Center bottom — input bar ─────────────────────────────────────────────────
@@ -796,7 +715,6 @@ fn render_right_rail(frame: &mut Frame, area: Rect, state: &AppState, focus: Coc
         .panes
         .active_pane()
         .and_then(|p| p.log.as_ref())
-        .or(state.claude_log.as_ref())
         .map(|t| t.snapshot())
         .unwrap_or_default();
 

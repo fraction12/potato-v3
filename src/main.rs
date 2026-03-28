@@ -388,10 +388,7 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                             }
                         }
 
-                        // Clear legacy fields.
                         turn_handle = None;
-                        state.real_pty = None;
-                        state.claude_log = None;
 
                         if state.panes.is_empty() {
                             state.screen = AppScreen::Dashboard(DashboardState {
@@ -611,11 +608,6 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                                         tracing::warn!("PTY write_input (terminal focus): {e}");
                                     }
                                 }
-                            } else if let Some(ref mut pty) = state.real_pty {
-                                // Legacy fallback.
-                                if let Err(e) = pty.write_input(&raw_bytes) {
-                                    tracing::warn!("PTY write_input (terminal focus, legacy): {e}");
-                                }
                             }
                         }
                         continue;
@@ -696,7 +688,14 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                                                     session.overlay = Some(crate::app::state::Overlay::AgentPicker);
                                                 }
                                                 CommandResult::NewSession { .. } => {
-                                                    pending_new_session = true;
+                                                    let agent_rows = crate::ui::overlays::agent_picker::build_agent_rows();
+                                                    let sel = state.session().map(|s| s.selected_agent).unwrap_or(0);
+                                                    let adapter = agent_rows.get(sel).map(|r| r.adapter_name.as_str()).unwrap_or("claude");
+                                                    match spawn_agent_pane(state, adapter, None) {
+                                                        Ok(id) => tracing::info!("New {} pane spawned: {}", adapter, id),
+                                                        Err(e) => state.set_error(e, 100),
+                                                    }
+                                                    continue;
                                                 }
                                                 CommandResult::SetRole { name, description } => {
                                                     // Store role on the active pane.
@@ -760,15 +759,8 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                                                     }
                                                 } else { false }
                                             } else { false };
-                                            // Legacy fallback.
                                             if !written {
-                                                if let Some(ref mut pty) = state.real_pty {
-                                                    if let Err(e) = pty.write_input(text.as_bytes()) {
-                                                        tracing::warn!("PTY write_input (text, legacy): {e}");
-                                                    } else if let Err(e) = pty.write_input(b"\r") {
-                                                        tracing::warn!("PTY write_input (enter, legacy): {e}");
-                                                    }
-                                                }
+                                                tracing::warn!("No active pane PTY to write input");
                                             }
                                         }
                                     }
@@ -1015,8 +1007,6 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
             // Only bounce to dashboard if we just closed the last pane.
             if had_panes && state.panes.is_empty() && matches!(state.screen, AppScreen::Session(_)) {
                 tracing::info!("All panes closed, returning to dashboard");
-                state.real_pty = None;
-                state.claude_log = None;
                 state.screen = AppScreen::Dashboard(DashboardState {
                     available_agents: detect_agents(),
                     ..DashboardState::default()
@@ -1047,94 +1037,6 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
     }
 
     Ok(())
-}
-
-/// Apply a PTY event to the application state.
-///
-/// Delegates to the pure [`app::session_reducer::apply_event`] function so all
-/// state-transition logic is unit-testable without a terminal or PTY.
-fn sync_claude_log(state: &mut AppState) {
-    let Some(tracker) = state.claude_log.as_mut() else { return; };
-    let Ok(changed) = tracker.poll() else { return; };
-    if !changed {
-        return;
-    }
-
-    let snapshot = tracker.snapshot();
-
-    // ── Update live sidebar metrics ───────────────────────────────────────────
-    if let Some(session) = state.session_mut() {
-        session.metrics.input_tokens = snapshot.usage.input_tokens;
-        session.metrics.output_tokens = snapshot.usage.output_tokens;
-        session.tokens_used = snapshot.usage.total_tokens();
-    }
-
-    // ── Persist to SQLite ─────────────────────────────────────────────────────
-    let store = match state.store.clone() {
-        Some(s) => s,
-        None => return,
-    };
-
-    let session_id = state
-        .session()
-        .and_then(|s| s.claude_session_id.clone())
-        .unwrap_or_default();
-    if session_id.is_empty() {
-        return;
-    }
-
-    let project_dir = if let Some(home) = dirs::home_dir() {
-        let cwd = std::env::current_dir().ok().unwrap_or_else(|| home.clone());
-        crate::claude_log::project_dir_name(&cwd)
-    } else {
-        String::new()
-    };
-
-    let now = unix_now();
-
-    // Use the title from the JSONL tracker (first user prompt).
-    // Fall back to existing rail title if the tracker hasn't seen one yet.
-    let title = if !snapshot.title.is_empty() {
-        snapshot.title.clone()
-    } else {
-        state
-            .rail_sessions
-            .iter()
-            .find(|s| s.id == session_id)
-            .map(|s| s.title.clone())
-            .unwrap_or_default()
-    };
-
-    // Track whether title changed so we can force a rail refresh.
-    let old_title = state
-        .rail_sessions
-        .iter()
-        .find(|s| s.id == session_id)
-        .map(|s| s.title.clone())
-        .unwrap_or_default();
-    let title_changed = title != old_title;
-
-    if let Err(e) = store.upsert_session(
-        &session_id,
-        &project_dir,
-        "claude",
-        snapshot.model.as_deref(),
-        &title,
-        std::env::current_dir().ok().as_deref().and_then(|p| p.to_str()),
-        snapshot.usage.input_tokens,
-        snapshot.usage.output_tokens,
-        snapshot.turns,
-        now, // created_at — ON CONFLICT keeps the original via MAX
-        now,
-    ) {
-        tracing::warn!("sync_claude_log: upsert_session failed: {e}");
-    }
-
-    // Refresh the rail on title change, or every 30 s, or on first run.
-    let elapsed = now - state.last_rail_refresh;
-    if title_changed || elapsed >= 30 || state.last_rail_refresh == 0 {
-        refresh_rail(state, &store);
-    }
 }
 
 /// Spawn a Claude PTY session into the pane manager.
@@ -1226,15 +1128,6 @@ fn spawn_claude_pane(
         let path = crate::claude_log::session_log_path(&home, cwd, &session_id);
         tracing::info!("Claude session log: {}", path.display());
         pane.log = Some(crate::claude_log::ClaudeSessionLogTracker::new(path));
-    }
-
-    // Mirror to legacy fields for compatibility during migration.
-    // TODO: remove once all reads go through panes.
-    let active_idx = state.panes.active_index();
-    if let Some(p) = state.panes.get(active_idx) {
-        // We can't easily move the PTY, so clone the log state and leave real_pty as the
-        // primary on the pane. For legacy code paths that read state.real_pty, we skip
-        // the mirror — they'll be migrated next.
     }
 
     // Ensure we're on the session screen.
@@ -1522,9 +1415,6 @@ fn sync_all_panes(state: &mut AppState) {
             }
         }
     }
-
-    // Also sync legacy single tracker during migration.
-    sync_claude_log(state);
 
     if any_title_changed {
         if let Some(ref store) = state.store.clone() {
