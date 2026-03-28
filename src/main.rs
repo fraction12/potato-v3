@@ -286,6 +286,9 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
         // Deliver messages enqueued by the MCP bridge into target pane PTYs.
         drain_inject_requests(state);
 
+        // ── Sync MCP roles → pane titles ─────────────────────────────────────
+        sync_mcp_roles_to_panes(state);
+
         // ── Input / message wait ──────────────────────────────────────────────
         let msg = tokio::select! {
             Some(m) = event_rx.recv() => Some(m),
@@ -1457,6 +1460,32 @@ fn drain_inject_requests(state: &mut AppState) {
             }
             None => {
                 tracing::warn!("Inject target pane {} not found", req.to_pane);
+            }
+        }
+    }
+}
+
+/// Sync role names from MCP InterSessionState into pane.role_name so the UI
+/// reflects roles claimed via MCP tools (not just the /role slash command).
+fn sync_mcp_roles_to_panes(state: &mut AppState) {
+    let roles: Vec<(u64, crate::mcp::state::PaneRole)> = match state.inter_session_state {
+        Some(ref inter) => match inter.lock() {
+            Ok(st) => st.list_roles().into_iter().map(|(id, r)| (id, r.clone())).collect(),
+            Err(_) => return,
+        },
+        None => return,
+    };
+
+    for (pane_id, role) in roles {
+        // Find the pane by id and update if changed.
+        for i in 0..state.panes.len() {
+            if let Some(pane) = state.panes.get_mut(i) {
+                if pane.id == pane_id && pane.role_name.as_deref() != Some(&role.name) {
+                    pane.role_name = Some(role.name.clone());
+                    if !role.description.is_empty() {
+                        pane.role_description = Some(role.description.clone());
+                    }
+                }
             }
         }
     }
