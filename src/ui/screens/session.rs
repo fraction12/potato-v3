@@ -184,16 +184,7 @@ fn render_agents_section(
     agent_rows: &[crate::ui::overlays::agent_picker::AgentRow],
 ) {
     let focused = focus == CockpitFocus::Agents;
-    let border_style = if focused {
-        Style::default().fg(AMBER)
-    } else {
-        Style::default().fg(BRASS)
-    };
-    let title_style = if focused {
-        Style::default().fg(AMBER).add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(TAN)
-    };
+    let (border_style, title_style) = focus_styles(focused, TAN);
 
     let selected_idx = state
         .session()
@@ -263,16 +254,7 @@ fn render_agents_section(
 /// Bottom part of the left rail — historical session list.
 fn render_sessions_section(frame: &mut Frame, area: Rect, state: &AppState, focus: CockpitFocus) {
     let focused = focus == CockpitFocus::Sessions;
-    let border_style = if focused {
-        Style::default().fg(AMBER)
-    } else {
-        Style::default().fg(BRASS)
-    };
-    let title_style = if focused {
-        Style::default().fg(AMBER).add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(TAN)
-    };
+    let (border_style, title_style) = focus_styles(focused, TAN);
 
     let active_session_id = state
         .session()
@@ -544,16 +526,7 @@ fn render_input_bar(frame: &mut Frame, area: Rect, session: &SessionState, focus
             .style(Style::default().bg(BG));
         frame.render_widget(para, area);
     } else {
-        let border_style = if focused {
-            Style::default().fg(AMBER)
-        } else {
-            Style::default().fg(BRASS)
-        };
-        let title_style = if focused {
-            Style::default().fg(AMBER).add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(STONE)
-        };
+        let (border_style, title_style) = focus_styles(focused, STONE);
 
         let prompt = "❯ ";
         let buf = &session.input_buffer;
@@ -910,6 +883,24 @@ fn render_status_bar(
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+/// Returns `(border_style, title_style)` for a section based on focus state.
+///
+/// `unfocused_title_fg` controls the title color when not focused (commonly
+/// `TAN` or `STONE`).
+fn focus_styles(focused: bool, unfocused_title_fg: Color) -> (Style, Style) {
+    if focused {
+        (
+            Style::default().fg(AMBER),
+            Style::default().fg(AMBER).add_modifier(Modifier::BOLD),
+        )
+    } else {
+        (
+            Style::default().fg(BRASS),
+            Style::default().fg(unfocused_title_fg),
+        )
+    }
+}
 
 /// Word-wrap `text` into lines of at most `width` characters.
 ///
