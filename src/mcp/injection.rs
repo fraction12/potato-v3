@@ -39,11 +39,9 @@ pub struct InjectRequest {
 /// ```
 /// Format a message notification for PTY injection.
 ///
-/// Uses bracketed paste mode (`\x1b[200~`...`\x1b[201~`) so terminal TUIs
-/// (Claude Code, etc.) treat the entire block as a single paste rather than
-/// interpreting each `\n` as Enter.
-///
-/// After the paste, a `\r` (Enter) is appended to submit the message.
+/// Sends raw text followed by `\r` (Enter) to submit. Bracketed paste
+/// is intentionally NOT used because Claude Code's Ink raw mode does not
+/// treat bracketed paste as a submit trigger (see broadcast fix 112096f).
 ///
 /// ```text
 /// [Potato: message from Pane 0 (architect)]
@@ -62,8 +60,10 @@ pub fn format_notification(from_pane: u64, from_role: Option<&str>, content: &st
          [/Potato]"
     );
 
-    // Bracketed paste: \x1b[200~ ... \x1b[201~ then \r to submit.
-    format!("\x1b[200~{body}\x1b[201~\r")
+    // Raw text + \r (Enter) to submit. Bracketed paste does NOT trigger
+    // submit in Claude Code's Ink raw mode — same root cause as the
+    // broadcast fix (commit 112096f).
+    format!("{body}\r")
 }
 
 /// Attempt to inject a formatted notification into a target pane's PTY.
@@ -130,29 +130,26 @@ mod tests {
     }
 
     #[test]
-    fn format_notification_uses_bracketed_paste() {
+    fn format_notification_sends_raw_text_with_enter() {
         let msg = format_notification(0, None, "test content");
-        // Must start with bracketed paste start sequence
-        assert!(msg.starts_with("\x1b[200~"), "missing bracketed paste start");
-        // Must contain bracketed paste end before the final \r
-        assert!(msg.contains("\x1b[201~"), "missing bracketed paste end");
-        // Must end with \r to submit
+        // Must NOT use bracketed paste (Claude Code Ink doesn't submit on paste).
+        assert!(!msg.contains("\x1b[200~"), "must not use bracketed paste");
+        assert!(!msg.contains("\x1b[201~"), "must not use bracketed paste");
+        // Must end with \r to submit.
         assert!(msg.ends_with('\r'), "missing trailing carriage return");
+        // Must contain the notification body.
+        assert!(msg.contains("[Potato:"));
+        assert!(msg.contains("test content"));
+        assert!(msg.contains("[/Potato]"));
     }
 
     #[test]
     fn format_notification_multiline_content() {
         let msg = format_notification(0, None, "line1\nline2\nline3");
         assert!(msg.contains("line1\nline2\nline3"));
-        // Entire body is inside bracketed paste
-        let start = "\x1b[200~";
-        let end = "\x1b[201~";
-        let body_start = msg.find(start).unwrap() + start.len();
-        let body_end = msg.find(end).unwrap();
-        let body = &msg[body_start..body_end];
-        assert!(body.contains("[Potato:"));
-        assert!(body.contains("[/Potato]"));
-        assert!(body.contains("line1\nline2\nline3"));
+        assert!(msg.contains("[Potato:"));
+        assert!(msg.contains("[/Potato]"));
+        assert!(msg.ends_with('\r'));
     }
 
     #[test]
