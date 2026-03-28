@@ -49,7 +49,8 @@ static INPUT_ENTRIES: &[KeyEntry] = &[
 
 static TERMINAL_ENTRIES: &[KeyEntry] = &[
     KeyEntry::new("Ctrl+J",     "Focus terminal"),
-    KeyEntry::new("Esc",        "Return to input"),
+    KeyEntry::new("Ctrl+Q",     "Exit terminal focus"),
+    KeyEntry::new("Esc",        "Passes through to agent"),
     KeyEntry::new("PgUp/PgDn",  "Scroll terminal"),
     KeyEntry::new("End",        "Jump to bottom"),
 ];

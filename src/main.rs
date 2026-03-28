@@ -506,7 +506,9 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                     }
 
                     // ── Esc — context-sensitive ───────────────────────────────
-                    if key.code == KeyCode::Esc {
+                    // When terminal is focused, Esc passes through to the agent PTY
+                    // (agents like Claude Code need Esc). Use Ctrl+Q to leave terminal.
+                    if key.code == KeyCode::Esc && current_focus != CockpitFocus::Terminal {
                         match current_focus {
                             // Esc from Input = close active pane; return to dashboard if no panes left.
                             CockpitFocus::Input => {
@@ -533,6 +535,7 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                                 }
                                 continue;
                             }
+                            CockpitFocus::Terminal => unreachable!(), // guarded above
                             // Esc from anything else = return focus to Input.
                             _ => {
                                 if let AppScreen::Session(ref mut session) = state.screen {
@@ -541,6 +544,17 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                                 continue;
                             }
                         }
+                    }
+
+                    // ── Ctrl+Q — leave terminal focus back to Input ───────────
+                    if key.code == KeyCode::Char('q')
+                        && key.modifiers.contains(KeyModifiers::CONTROL)
+                        && current_focus == CockpitFocus::Terminal
+                    {
+                        if let AppScreen::Session(ref mut session) = state.screen {
+                            session.cockpit_focus = CockpitFocus::Input;
+                        }
+                        continue;
                     }
 
                     // ── Terminal focus — viewport scroll first, PTY keys second ──

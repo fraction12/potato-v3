@@ -21,7 +21,8 @@
 //! `Tab` cycles: Sessions → Input → Terminal → Sidebar → Sessions.
 //! `Shift+Tab` reverses.
 //! `Ctrl+J` jumps directly to Terminal.
-//! `Esc` returns to Input.
+//! `Ctrl+Q` leaves terminal focus back to Input.
+//! `Esc` passes through to agent PTY when terminal is focused.
 //!
 //! - **Input** focus: characters go into `session.input_buffer`; Enter sends
 //!   the buffered text plus a real terminal carriage return to the PTY stdin.
@@ -959,9 +960,9 @@ fn render_status_bar(
     );
 
     let keys_text = if pane_count > 1 {
-        " Tab:cycle panes  Ctrl+J:term  Esc:close  Ctrl+Q:quit "
+        " Tab:cycle panes  Ctrl+J:term  Ctrl+Q:exit term  Esc:close "
     } else {
-        " Tab:cycle  Ctrl+J:term  Esc:input  Ctrl+Q:quit "
+        " Tab:cycle  Ctrl+J:term  Ctrl+Q:exit term  ?:help "
     };
     let keys_span = Span::styled(
         keys_text,
