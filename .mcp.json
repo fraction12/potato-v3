@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "potato": {
+      "args": [
+        "mcp-server"
+      ],
+      "command": "potato"
+    }
+  }
+}

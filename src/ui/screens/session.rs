@@ -429,7 +429,9 @@ fn render_pane_viewport(
             let actual_scroll = pty.set_scrollback(desired_scroll);
 
             let active_marker = if is_active { " ●" } else { "" };
-            let pane_label = format!(" Claude {}{} ", pane_idx + 1, active_marker);
+            let fallback = format!("Claude {}", pane_idx + 1);
+            let display_name = pane.role_name.as_deref().unwrap_or(&fallback);
+            let pane_label = format!(" {display_name}{active_marker} ");
             let title = if actual_scroll > 0 {
                 Span::styled(format!("{} ↑{} ", pane_label.trim(), actual_scroll), title_style)
             } else {
@@ -463,12 +465,14 @@ fn render_pane_viewport(
             }
         } else {
             // Pane exists but no PTY — starting up.
+            let fallback_title = format!("Claude {}", pane_idx + 1);
+            let starting_name = pane.role_name.as_deref().unwrap_or(&fallback_title);
             let placeholder = Paragraph::new("  Starting…")
                 .block(
                     Block::default()
                         .borders(Borders::ALL)
                         .border_style(border_style)
-                        .title(Span::styled(format!(" Claude {} ", pane_idx + 1), title_style)),
+                        .title(Span::styled(format!(" {starting_name} "), title_style)),
                 )
                 .style(Style::default().fg(STONE));
             frame.render_widget(placeholder, area);
