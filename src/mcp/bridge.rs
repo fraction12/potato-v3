@@ -27,6 +27,9 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
 use tokio::task::JoinHandle;
 
+use tokio::sync::mpsc::UnboundedSender;
+
+use crate::mcp::injection::InjectRequest;
 use crate::mcp::server::McpServer;
 use crate::mcp::state::InterSessionState;
 
@@ -64,18 +67,23 @@ impl McpBridge {
     ///
     /// Returns `(McpBridge, socket_path)` — pass the path to pane env vars
     /// via `POTATO_SOCKET`.
-    pub fn start(state: Arc<Mutex<InterSessionState>>) -> Result<(Self, PathBuf)> {
+    pub fn start(
+        state: Arc<Mutex<InterSessionState>>,
+        inject_tx: UnboundedSender<InjectRequest>,
+    ) -> Result<(Self, PathBuf)> {
         let pid = std::process::id();
         let socket_path = PathBuf::from(format!("/tmp/potato-{pid}.sock"));
-        Self::start_at(state, socket_path)
+        Self::start_at(state, socket_path, Some(inject_tx))
     }
 
     /// Start the bridge listener at the given socket path.
     ///
-    /// Exposed for tests so we can use a unique path per test.
+    /// `inject_tx` is optional for backward-compatible tests; pass `None`
+    /// to disable push delivery (messages just enqueue).
     pub fn start_at(
         state: Arc<Mutex<InterSessionState>>,
         socket_path: PathBuf,
+        inject_tx: Option<UnboundedSender<InjectRequest>>,
     ) -> Result<(Self, PathBuf)> {
         // Remove a stale socket file from a previous crash.
         let _ = std::fs::remove_file(&socket_path);
@@ -86,7 +94,7 @@ impl McpBridge {
         let path_for_task = socket_path.clone();
 
         let task = tokio::spawn(async move {
-            run_listener(listener, state, path_for_task).await;
+            run_listener(listener, state, inject_tx, path_for_task).await;
         });
 
         let returned_path = socket_path.clone();
@@ -122,14 +130,16 @@ impl Drop for McpBridge {
 async fn run_listener(
     listener: UnixListener,
     state: Arc<Mutex<InterSessionState>>,
+    inject_tx: Option<UnboundedSender<InjectRequest>>,
     socket_path: PathBuf,
 ) {
     loop {
         match listener.accept().await {
             Ok((stream, _addr)) => {
                 let state_clone = Arc::clone(&state);
+                let tx_clone = inject_tx.clone();
                 tokio::spawn(async move {
-                    handle_connection(stream, state_clone).await;
+                    handle_connection(stream, state_clone, tx_clone).await;
                 });
             }
             Err(e) => {
@@ -147,6 +157,7 @@ async fn run_listener(
 async fn handle_connection(
     stream: tokio::net::UnixStream,
     state: Arc<Mutex<InterSessionState>>,
+    inject_tx: Option<UnboundedSender<InjectRequest>>,
 ) {
     let (read_half, mut write_half) = stream.into_split();
     let mut reader = BufReader::new(read_half);
@@ -166,7 +177,7 @@ async fn handle_connection(
                     continue;
                 }
 
-                let response_json = dispatch_request(trimmed, &state);
+                let response_json = dispatch_request(trimmed, &state, &inject_tx);
                 let mut response_line = response_json;
                 response_line.push('\n');
 
@@ -181,12 +192,15 @@ async fn handle_connection(
 
 /// Parse a `BridgeRequest`, dispatch through `McpServer`, and return a
 /// serialised `BridgeResponse` line (no trailing newline).
-fn dispatch_request(line: &str, state: &Arc<Mutex<InterSessionState>>) -> String {
+fn dispatch_request(
+    line: &str,
+    state: &Arc<Mutex<InterSessionState>>,
+    inject_tx: &Option<UnboundedSender<InjectRequest>>,
+) -> String {
     let bridge_req: BridgeRequest = match serde_json::from_str(line) {
         Ok(r) => r,
         Err(e) => {
             tracing::warn!("McpBridge: invalid request line: {e}");
-            // Return a JSON-RPC parse error.
             let resp = BridgeResponse {
                 response: format!(
                     r#"{{"jsonrpc":"2.0","id":null,"error":{{"code":-32700,"message":"Parse error: {e}"}}}}"#
@@ -196,13 +210,66 @@ fn dispatch_request(line: &str, state: &Arc<Mutex<InterSessionState>>) -> String
         }
     };
 
+    // Check if this is a send_message call — we'll need to fire injection after.
+    let is_send_message = is_send_message_call(&bridge_req.request);
+
     let server = McpServer::new(bridge_req.pane_id, Arc::clone(state));
     let rpc_response = server.handle_request(&bridge_req.request);
+
+    // After a successful send_message, push an injection request so the
+    // main event loop writes the message into the target pane's PTY.
+    if is_send_message {
+        if let Some(tx) = inject_tx {
+            if let Some(inject) = build_inject_request(bridge_req.pane_id, &bridge_req.request, state) {
+                if let Err(e) = tx.send(inject) {
+                    tracing::warn!("Failed to send inject request: {e}");
+                }
+            }
+        }
+    }
 
     let resp = BridgeResponse {
         response: rpc_response,
     };
     serde_json::to_string(&resp).unwrap_or_default()
+}
+
+/// Check whether a JSON-RPC request is a `tools/call` for `potato_send_message`.
+fn is_send_message_call(rpc_request: &str) -> bool {
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(rpc_request) {
+        v.get("method").and_then(|m| m.as_str()) == Some("tools/call")
+            && v.pointer("/params/name").and_then(|n| n.as_str()) == Some("potato_send_message")
+    } else {
+        false
+    }
+}
+
+/// Extract injection details from a send_message RPC request.
+fn build_inject_request(
+    from_pane: u64,
+    rpc_request: &str,
+    state: &Arc<Mutex<InterSessionState>>,
+) -> Option<InjectRequest> {
+    let v: serde_json::Value = serde_json::from_str(rpc_request).ok()?;
+    let args = v.pointer("/params/arguments")?;
+    let message = args.get("message")?.as_str()?;
+
+    let to_pane: u64 = match args.get("to").and_then(|t| t.as_str()) {
+        Some("partner") | None => from_pane ^ 1, // same logic as tools.rs
+        Some(id_str) => id_str.parse().ok()?,
+    };
+
+    let from_role = state
+        .lock()
+        .ok()
+        .and_then(|st| st.roles.get(&from_pane).map(|r| r.name.clone()));
+
+    Some(InjectRequest {
+        from_pane,
+        from_role,
+        to_pane,
+        content: message.to_string(),
+    })
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -235,7 +302,7 @@ mod tests {
     #[test]
     fn dispatch_invalid_json_returns_parse_error() {
         let state = fresh_state();
-        let result = dispatch_request("not json", &state);
+        let result = dispatch_request("not json", &state, &None);
         let v: Value = serde_json::from_str(&result).expect("must be valid JSON");
         // BridgeResponse wraps the response string
         let inner: Value = serde_json::from_str(v["response"].as_str().unwrap()).unwrap();
@@ -249,7 +316,7 @@ mod tests {
             "pane_id": 0,
             "request": r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}"#
         });
-        let result = dispatch_request(&req.to_string(), &state);
+        let result = dispatch_request(&req.to_string(), &state, &None);
         let v: Value = serde_json::from_str(&result).expect("valid JSON");
         let inner: Value = serde_json::from_str(v["response"].as_str().unwrap()).unwrap();
         assert_eq!(
@@ -265,7 +332,7 @@ mod tests {
             "pane_id": 0,
             "request": r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#
         });
-        let result = dispatch_request(&req.to_string(), &state);
+        let result = dispatch_request(&req.to_string(), &state, &None);
         let v: Value = serde_json::from_str(&result).expect("valid JSON");
         let inner: Value = serde_json::from_str(v["response"].as_str().unwrap()).unwrap();
         assert!(inner["result"]["tools"].is_array());
@@ -279,7 +346,7 @@ mod tests {
             "pane_id": 0,
             "request": r#"{"jsonrpc":"2.0","id":3,"method":"unknown/method"}"#
         });
-        let result = dispatch_request(&req.to_string(), &state);
+        let result = dispatch_request(&req.to_string(), &state, &None);
         let v: Value = serde_json::from_str(&result).expect("valid JSON");
         let inner: Value = serde_json::from_str(v["response"].as_str().unwrap()).unwrap();
         assert_eq!(inner["error"]["code"], crate::mcp::protocol::METHOD_NOT_FOUND);
@@ -291,7 +358,7 @@ mod tests {
     async fn bridge_start_and_connect() {
         let state = fresh_state();
         let sock = test_socket("start");
-        let (_bridge, path) = McpBridge::start_at(state, sock).unwrap();
+        let (_bridge, path) = McpBridge::start_at(state, sock, None).unwrap();
 
         // Connect and immediately disconnect.
         let stream = UnixStream::connect(&path).await.expect("connect failed");
@@ -302,7 +369,7 @@ mod tests {
     async fn bridge_initialize_roundtrip() {
         let state = fresh_state();
         let sock = test_socket("init-rt");
-        let (_bridge, path) = McpBridge::start_at(state, sock).unwrap();
+        let (_bridge, path) = McpBridge::start_at(state, sock, None).unwrap();
 
         let stream = UnixStream::connect(&path).await.expect("connect");
         let (read_half, mut write_half) = stream.into_split();
@@ -331,7 +398,7 @@ mod tests {
     async fn bridge_multiple_requests_same_connection() {
         let state = fresh_state();
         let sock = test_socket("multi-req");
-        let (_bridge, path) = McpBridge::start_at(state, sock).unwrap();
+        let (_bridge, path) = McpBridge::start_at(state, sock, None).unwrap();
 
         let stream = UnixStream::connect(&path).await.expect("connect");
         let (read_half, mut write_half) = stream.into_split();
@@ -371,7 +438,7 @@ mod tests {
     async fn bridge_simultaneous_connections() {
         let state = fresh_state();
         let sock = test_socket("simultaneous");
-        let (_bridge, path) = McpBridge::start_at(Arc::clone(&state), sock).unwrap();
+        let (_bridge, path) = McpBridge::start_at(Arc::clone(&state), sock, None).unwrap();
 
         // Two concurrent connections from pane 0 and pane 1.
         let path0 = path.clone();
@@ -421,7 +488,7 @@ mod tests {
     async fn bridge_shutdown_removes_socket() {
         let state = fresh_state();
         let sock = test_socket("shutdown");
-        let (bridge, path) = McpBridge::start_at(state, sock).unwrap();
+        let (bridge, path) = McpBridge::start_at(state, sock, None).unwrap();
         assert!(path.exists());
         bridge.shutdown();
         // Give the OS a moment to process.
@@ -433,7 +500,7 @@ mod tests {
     async fn bridge_drop_removes_socket() {
         let state = fresh_state();
         let sock = test_socket("drop");
-        let (bridge, path) = McpBridge::start_at(state, sock).unwrap();
+        let (bridge, path) = McpBridge::start_at(state, sock, None).unwrap();
         assert!(path.exists());
         drop(bridge);
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
@@ -449,7 +516,7 @@ mod tests {
 
         let state = fresh_state();
         // Should succeed even though the file exists.
-        let (_bridge, path) = McpBridge::start_at(state, sock).unwrap();
+        let (_bridge, path) = McpBridge::start_at(state, sock, None).unwrap();
         // Should be connectable.
         UnixStream::connect(&path).await.expect("connect after stale removal");
     }
@@ -458,7 +525,7 @@ mod tests {
     async fn bridge_cross_pane_messaging() {
         let state = fresh_state();
         let sock = test_socket("cross-pane");
-        let (_bridge, path) = McpBridge::start_at(Arc::clone(&state), sock).unwrap();
+        let (_bridge, path) = McpBridge::start_at(Arc::clone(&state), sock, None).unwrap();
 
         // Pane 0 sends a message to pane 1.
         let stream0 = UnixStream::connect(&path).await.unwrap();

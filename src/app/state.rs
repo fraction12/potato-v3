@@ -442,6 +442,12 @@ pub struct AppState {
     ///
     /// Arc<Mutex<>> so it can be shared with the MCP bridge and read from UI.
     pub inter_session_state: Option<Arc<std::sync::Mutex<crate::mcp::state::InterSessionState>>>,
+
+    /// Receiver for MCP injection requests (messages to push into pane PTYs).
+    ///
+    /// The bridge sends `InjectRequest`s after `send_message`; the main loop
+    /// drains this each tick and writes into the target pane's PTY.
+    pub inject_rx: Option<tokio::sync::mpsc::UnboundedReceiver<crate::mcp::injection::InjectRequest>>,
 }
 
 impl Default for AppState {
@@ -466,6 +472,7 @@ impl Default for AppState {
             persisted_event_count: 0,
             mcp_socket_path: None,
             inter_session_state: None,
+            inject_rx: None,
         }
     }
 }

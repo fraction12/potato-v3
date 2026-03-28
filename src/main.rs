@@ -282,6 +282,10 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
         // ── Claude session log drain (direct sidebar source-of-truth) ───────
         sync_all_panes(state);
 
+        // ── MCP injection drain ──────────────────────────────────────────────
+        // Deliver messages enqueued by the MCP bridge into target pane PTYs.
+        drain_inject_requests(state);
+
         // ── Input / message wait ──────────────────────────────────────────────
         let msg = tokio::select! {
             Some(m) = event_rx.recv() => Some(m),
@@ -1406,6 +1410,58 @@ fn spawn_agent_pane(
 }
 
 /// Sync all pane JSONL trackers and update sidebar metrics.
+/// Drain pending injection requests from the MCP bridge and write formatted
+/// notifications into target pane PTYs so agents actually "see" messages.
+fn drain_inject_requests(state: &mut AppState) {
+    let rx = match state.inject_rx.as_mut() {
+        Some(rx) => rx,
+        None => return,
+    };
+
+    // Drain all pending requests (non-blocking).
+    while let Ok(req) = rx.try_recv() {
+        let notification = crate::mcp::injection::format_notification(
+            req.from_pane,
+            req.from_role.as_deref(),
+            &req.content,
+        );
+
+        // Find the target pane by id (not index). Walk the pane list to match.
+        let target_index = (0..state.panes.len())
+            .find(|&i| state.panes.get(i).map(|p| p.id) == Some(req.to_pane));
+
+        match target_index {
+            Some(idx) => {
+                match crate::mcp::injection::inject_into_pane(
+                    &mut state.panes,
+                    idx,
+                    &notification,
+                ) {
+                    Ok(true) => {
+                        tracing::info!(
+                            "Injected message from pane {} to pane {}",
+                            req.from_pane,
+                            req.to_pane
+                        );
+                    }
+                    Ok(false) => {
+                        tracing::warn!(
+                            "Skipped injection to pane {} (approval pending or no PTY)",
+                            req.to_pane
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!("Injection to pane {} failed: {e}", req.to_pane);
+                    }
+                }
+            }
+            None => {
+                tracing::warn!("Inject target pane {} not found", req.to_pane);
+            }
+        }
+    }
+}
+
 fn sync_all_panes(state: &mut AppState) {
     let store = state.store.clone();
     let now = unix_now();
@@ -1603,7 +1659,8 @@ async fn main() -> Result<()> {
 
     // Start MCP bridge (UDS listener for inter-session communication).
     let inter_state = Arc::new(std::sync::Mutex::new(mcp::state::InterSessionState::new()));
-    let (_mcp_bridge, mcp_socket_path) = mcp::bridge::McpBridge::start(Arc::clone(&inter_state))?;
+    let (inject_tx, inject_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (_mcp_bridge, mcp_socket_path) = mcp::bridge::McpBridge::start(Arc::clone(&inter_state), inject_tx)?;
 
     let mut state = AppState {
         model,
@@ -1616,6 +1673,7 @@ async fn main() -> Result<()> {
         last_rail_refresh: unix_now(),
         mcp_socket_path: Some(mcp_socket_path),
         inter_session_state: Some(inter_state),
+        inject_rx: Some(inject_rx),
         ..AppState::default()
     };
 

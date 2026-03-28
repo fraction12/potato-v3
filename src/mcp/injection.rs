@@ -11,6 +11,22 @@
 use crate::app::pane::PaneManager;
 use crate::app::state::AgentStatus;
 
+/// A request to inject a message into a target pane's PTY.
+///
+/// Sent from the MCP bridge (async/tokio) to the main event loop which
+/// owns the `PaneManager` and PTY handles.
+#[derive(Debug, Clone)]
+pub struct InjectRequest {
+    /// Source pane id.
+    pub from_pane: u64,
+    /// Source pane role (if any).
+    pub from_role: Option<String>,
+    /// Target pane id.
+    pub to_pane: u64,
+    /// Message content.
+    pub content: String,
+}
+
 /// Format a message notification for PTY injection.
 ///
 /// The format uses a clearly delimited block so Claude can distinguish it
