@@ -1,209 +1,191 @@
 # 🥔 Potato
 
-**A terminal cockpit for coding agents.**
+**Give your coding agents teammates.**
 
-Potato doesn't replace your agents — it gives them a home. Spawn Claude Code, Codex, or any CLI agent inside real embedded terminals, then watch them work side by side with live observability and built-in coordination.
+Run Claude Code, Codex, or any coding agent side by side in real embedded terminals — and let them collaborate through MCP.
 
-> *Think of it as mission control for the agents doing your actual coding.*
+> Potato doesn't replace your agents. It gives them a shared workspace, coordination tools, and a mission control you can actually watch.
 
 [![Rust](https://img.shields.io/badge/Rust-1.86+-orange?logo=rust)](https://www.rust-lang.org/)
 [![Tests](https://img.shields.io/badge/tests-663_passing-brightgreen)]()
-[![Status](https://img.shields.io/badge/status-alpha-yellow)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
+<!-- TODO: Replace with actual screen recording -->
+<!-- ![Potato Demo](docs/assets/demo.gif) -->
 
 ---
 
-## Why Potato?
+## The Problem
 
-You already have great coding agents. What you don't have is a way to **run two of them on the same project**, see what they're both doing, and let them talk to each other.
+You have Claude Code. Maybe Codex too. They're great — individually.
 
-Potato fixes that:
+But when you want an architect and an implementer working the same codebase? You're alt-tabbing between terminals, copy-pasting context, and playing human router between agents that can't see each other.
 
-- 🖥️ **Real terminals** — agents run in actual PTYs, not simulated chat. Every keystroke, every tool call, exactly as if you ran them directly.
-- 📊 **Live observability** — token usage, tool calls, model info, and session metrics parsed from agent logs in real time.
-- 🤝 **Agent coordination** — built-in MCP server lets agents send messages, share context, and claim tasks through Potato.
-- 🔀 **Side-by-side panes** — run an architect and an implementer simultaneously on the same codebase.
-- 📜 **Session history** — browse, resume, and export past sessions. Never lose context.
+## What Potato Does
+
+Potato is a native terminal app (Rust + [ratatui](https://github.com/ratatui/ratatui)) that embeds your real coding agents inside managed PTY sessions and connects them through MCP coordination tools.
+
+**🖥️ Real terminals, not simulation** — Agents run in actual PTYs. Every keystroke, every tool call, exactly as if you ran them directly. No wrappers, no abstractions over their behavior.
+
+**🤝 MCP-native coordination** — Potato runs an MCP server per session. Agents get tools like `send_message`, `claim_task`, `shared_context`, and `get_partner_status` — automatically, without prompting.
+
+**📊 Live observability** — Token usage, tool calls, model info, and session metrics parsed from Claude/Codex JSONL logs in real time. Not estimates — actual agent data.
+
+**🔀 Side-by-side panes** — Two agents, one screen. Assign roles (`/role architect`, `/role implementer`), and they see each other's status and coordinate through Potato.
+
+**📜 Persistent sessions** — Browse and resume past sessions. Pick up where you left off.
 
 ## Quick Start
 
 ```bash
 # Build from source
-git clone https://github.com/nicholasengleman/potato.git
-cd potato
+git clone https://github.com/fraction12/potato-v3.git
+cd potato-v3
 cargo build --release
 
 # Launch in your project directory
 cd ~/my-project
-potato
+./target/release/potato
 ```
 
 **Requirements:**
-- Rust 1.86+ (edition 2024)
-- At least one supported agent: [Claude Code](https://code.claude.com), [Codex](https://github.com/openai/codex), or any CLI tool
+- Rust 1.86+
+- At least one agent: [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), or any CLI tool
+
+## How It Works
+
+```
+┌─────────────────────────────────────────────────────┐
+│                                                     │
+│   ┌─────────────┐            ┌─────────────┐       │
+│   │ Claude Code  │◄── MCP ──►│ Claude Code  │       │
+│   │ (Architect)  │   tools   │(Implementer) │       │
+│   └──────┬───────┘           └──────┬───────┘       │
+│          │                          │               │
+│          │    ┌──────────────┐      │               │
+│          └───►│    Potato     │◄────┘               │
+│               │              │                      │
+│               │ • messages   │                      │
+│               │ • tasks      │                      │
+│               │ • context    │                      │
+│               │ • roles      │                      │
+│               └──────────────┘                      │
+│                                                     │
+│   Agents talk to each other through Potato.         │
+│   You watch it happen.                              │
+│                                                     │
+└─────────────────────────────────────────────────────┘
+```
+
+Each agent gets MCP tools automatically when Potato launches them:
+
+| Tool | What it does |
+|------|-------------|
+| `potato_send_message` | Send a message to the other agent |
+| `potato_get_messages` | Check your inbox |
+| `potato_get_partner_status` | See what the other agent is doing |
+| `potato_claim_task` | Take ownership of a task |
+| `potato_release_task` | Release a task for someone else |
+| `potato_shared_context` | Read/write shared key-value state |
+| `potato_get_role` | Look up who's who |
+
+No configuration needed. Potato writes the MCP config, injects environment variables, and manages the coordination state.
 
 ## The Cockpit
 
 ```
-┌─────────┬───────────────────────────────┬───────────┐
-│ Agents  │                               │           │
-│ ● Claude│   Embedded Agent Terminal     │ Coordin.  │
-│ ○ Codex │   (real PTY — not a sim)      │ ────────  │
-│         │                               │ ◉ Arch.   │
-│─────────│                               │ ◎ Impl.   │
-│ Sessions│                               │           │
-│ ▸ refac.│                               │ Activity  │
-│   fix l.│                               │ ────────  │
-│   add t.│                               │ ↔ msg...  │
-│         ├───────────────────────────────┤ ✓ task..  │
-│         │ > describe the auth flow_     │           │
-├─────────┴───────────────────────────────┴───────────┤
-│ ● Claude · sonnet-4 · Idle · 12.4k tokens  [Input] │
-└─────────────────────────────────────────────────────┘
+┌──────────┬──────────────────────────────┬──────────┐
+│ Agents   │                              │          │
+│ ● Claude │   Real Embedded Terminal     │ Agents   │
+│ ○ Codex  │   (actual PTY output)        │ ● Arch.  │
+│          │                              │ ◎ Impl.  │
+│──────────│                              │          │
+│ Sessions │                              │ Activity │
+│ ▸ refac..│                              │ ↔ msg..  │
+│   fix l..│                              │ ✓ task.. │
+│          ├──────────────────────────────┤          │
+│          │ > your prompt here_          │ Metrics  │
+├──────────┴──────────────────────────────┴──────────┤
+│ ● Claude · sonnet-4 · Idle · 12.4k tokens [Input] │
+└───────────────────────────────────────────────────────┘
 ```
 
-**Left rail** — Agent launcher + session history  
-**Center** — Real embedded terminal (supports scrollback, mouse, full TUI)  
-**Right rail** — Coordination status + activity feed + metrics  
-**Bottom** — Input bar + status  
+- **Left** — Agent launcher + session history
+- **Center** — Real embedded terminal with independent scrollback
+- **Right** — Coordination status, activity feed, session metrics
+- **Bottom** — Input + status bar
 
 ## Supported Agents
 
-| Agent | Adapter | Live Metrics | Resume | Notes |
-|-------|---------|:---:|:---:|-------|
-| [Claude Code](https://code.claude.com) | `claude` | ✅ | ✅ | First-class. Full JSONL log parsing. |
-| [Codex](https://github.com/openai/codex) | `codex` | ✅ | ✅ | Interactive PTY mode. |
-| Any CLI | `generic` | — | — | Wraps any terminal command as an agent. |
-
-## Multi-Agent Coordination
-
-Run two agents side by side and let them collaborate through Potato's MCP layer:
-
-```
-┌──────────────────┐    MCP     ┌──────────────────┐
-│   Claude (Arch)  │◄──tools───►│     Potato       │◄──tools───►│  Claude (Impl)  │
-│                  │            │  coordination    │            │                 │
-│ potato_send_msg  │            │  ┌────────────┐  │            │ potato_send_msg │
-│ potato_get_role  │            │  │ messages   │  │            │ potato_get_role │
-│ potato_claim_task│            │  │ tasks      │  │            │ potato_claim_task│
-│ potato_shared_ctx│            │  │ context    │  │            │ potato_shared_ctx│
-└──────────────────┘            │  │ roles      │  │            └─────────────────┘
-                                │  └────────────┘  │
-                                └──────────────────┘
-```
-
-1. `/role architect` and `/role implementer` — assign responsibilities
-2. Agents discover each other's roles and status via MCP tools
-3. `potato_send_message` — direct messaging between agents, injected into PTY
-4. `potato_shared_context` — shared key-value store for decisions and specs
-5. `potato_claim_task` / `potato_release_task` — mutex-like task ownership
-
-Agents coordinate through Potato, not through ad-hoc file passing.
+| Agent | Adapter | Live Metrics | Session Resume |
+|-------|---------|:---:|:---:|
+| [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | `claude` | ✅ Full (JSONL) | ✅ |
+| [Codex](https://github.com/openai/codex) | `codex` | ✅ Full (JSONL) | ✅ |
+| Any CLI | `generic` | — | — |
 
 ## Keyboard Shortcuts
 
-| Key | Context | Action |
-|-----|---------|--------|
-| `Tab` / `Shift+Tab` | Global | Cycle focus: Agents → Sessions → Input → Terminal → Sidebar |
-| `Ctrl+J` | Any | Jump to terminal pane |
-| `Ctrl+Q` | Terminal | Return to input |
-| `Ctrl+W` | Any | Close active pane |
-| `Ctrl+\` | Any | Quit Potato |
-| `Esc` | Input | Clear input buffer |
-| `?` | Any | Toggle help overlay |
-| `/` | Input | Enter command mode |
-| `PgUp` / `PgDn` | Terminal | Scroll terminal independently |
-| `End` | Terminal | Jump to live bottom |
-| `Alt+[` / `Alt+]` | Any | Switch between panes |
+| Key | Action |
+|-----|--------|
+| `Tab` / `Shift+Tab` | Cycle focus across panels |
+| `Ctrl+J` | Focus terminal |
+| `Ctrl+Q` | Exit terminal focus |
+| `Ctrl+W` | Close active pane |
+| `Alt+[` / `Alt+]` | Switch between panes |
+| `/` | Slash commands |
+| `?` | Help overlay |
+| `Ctrl+\` | Quit |
 
 ## Slash Commands
 
 | Command | Description |
 |---------|-------------|
 | `/new` | New agent session |
-| `/agent` | Agent picker overlay |
-| `/role <name> [desc]` | Assign role to current pane |
-| `/help` | Keybind reference |
-| `/sessions` | Browse session history |
-| `/export` | Export current session |
+| `/agent` | Agent picker |
+| `/role <name>` | Assign role to current pane |
+| `/help` | Keyboard shortcuts |
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────┐
-│             TUI (ratatui)               │
-│   Dashboard · Session · Overlays        │
-├─────────────────────────────────────────┤
-│        App State (Elm-style)            │
-│   Pure reducer · Panes · Focus · Metrics│
-├──────────┬────────────┬─────────────────┤
-│ Adapters │  PTY Layer │   MCP Server    │
-│ Claude   │  spawn     │   UDS bridge    │
-│ Codex    │  read/write│   tools/state   │
-│ Generic  │  resize    │   injection     │
-├──────────┴────────────┴─────────────────┤
-│   Session Store (SQLite WAL)            │
-│   Claude/Codex JSONL Log Trackers       │
-└─────────────────────────────────────────┘
+┌──────────────────────────────────────────┐
+│            TUI (ratatui)                 │
+├──────────────────────────────────────────┤
+│         App State (Elm-style)            │
+│    Pure reducer · Panes · Focus          │
+├───────────┬───────────┬──────────────────┤
+│  Adapters │ PTY Layer │   MCP Server     │
+│  Claude   │ spawn     │   UDS bridge     │
+│  Codex    │ read/write│   coordination   │
+│  Generic  │ resize    │   tools/state    │
+├───────────┴───────────┴──────────────────┤
+│     SQLite WAL · Agent Log Trackers      │
+└──────────────────────────────────────────┘
 ```
 
-**Design principles:**
-- **Agents own conversation truth** — Potato reads agent artifacts, never invents state
-- **PTY-first** — real terminals, not simulated chat
-- **Elm-style state** — pure reducer, side-effect-free rendering
-- **Truth-first observability** — metrics from agent log files, not estimates
+**Design:**
+- **Agents own truth** — Claude's JSONL logs are authoritative for session identity, usage, and tool calls. Potato reads them, never invents state.
+- **PTY-first** — Real terminals. Not rendered transcripts.
+- **Pure state** — Elm-style reducer. Side-effect-free rendering.
+- **MCP-native** — Coordination through the standard Model Context Protocol, not custom IPC.
 
-## Configuration
+## What's Next
 
-```toml
-# ~/.config/potato/config.toml
-
-[default]
-adapter = "claude"
-model = "claude-sonnet-4-20250514"
-```
-
-Project-level overrides in `.potato/profile.toml`:
-
-```toml
-[[profiles]]
-name = "architect"
-adapter = "claude"
-extra_args = ["--permission-mode", "bypassPermissions"]
-
-[[profiles]]
-name = "implementer"
-adapter = "claude"
-extra_args = ["--permission-mode", "bypassPermissions"]
-```
+- [ ] Per-project state (`.potato/` — roles, context, tasks persist between sessions)
+- [ ] Project-scoped agent roster
+- [ ] Coordination observatory sidebar
+- [ ] `cargo install potato`
+- [ ] Homebrew tap
 
 ## Development
 
 ```bash
-# Run the test suite (663 tests)
-cargo test
-
-# Run with debug tracing
-RUST_LOG=debug cargo run
-
-# Release build
+cargo test          # 663 tests
 cargo build --release
+RUST_LOG=debug cargo run
 ```
 
-**Stats:** ~25k lines of Rust across 66 modules. 663 tests passing.
-
-## Roadmap
-
-- [x] Real PTY embedding with Claude Code + Codex
-- [x] Side-by-side multi-pane cockpit
-- [x] Live observability from agent JSONL logs
-- [x] Inter-agent MCP coordination (messaging, tasks, shared context)
-- [x] Session history, resume, and discovery
-- [x] Agent profiles and multi-adapter support
-- [ ] Coordination observatory sidebar
-- [ ] Per-project persistent state (`.potato/`)
-- [ ] Project-scoped agent roster
-- [ ] `cargo install` + Homebrew distribution
+~25k lines of Rust · 66 modules · 663 tests
 
 ## License
 
