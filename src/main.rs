@@ -9,6 +9,7 @@
 mod adapters;
 mod app;
 mod claude_log;
+mod codex_log;
 mod commands;
 mod config;
 mod events;
@@ -42,7 +43,7 @@ use config::load_config;
 use session::{SessionStore, discover_historical_sessions, unix_now};
 use terminal::events::event_stream;
 use terminal::panic_hook::install_panic_hook;
-use adapters::{AgentAdapter, claude::ClaudeAdapter, generic::GenericAdapter};
+use adapters::{AgentAdapter, claude::ClaudeAdapter, codex::CodexAdapter, generic::GenericAdapter};
 use app::state::{AgentInfo, DashboardState};
 use ui::screens::{dashboard::render_dashboard, session::render_session};
 use crate::pty::{TurnHandle, key_event_to_bytes};
@@ -207,20 +208,32 @@ fn detect_agents() -> Vec<AgentInfo> {
 
     // Claude Code
     let claude = ClaudeAdapter;
+    let claude_path = claude.detect();
     agents.push(AgentInfo {
         name: "Claude Code".to_string(),
         adapter: "claude".to_string(),
-        binary_path: claude.detect(),
-        available: claude.detect().is_some(),
+        available: claude_path.is_some(),
+        binary_path: claude_path,
     });
 
-    // Codex (generic adapter for now)
-    let codex = GenericAdapter::new("codex");
+    // Codex — use real CodexAdapter now
+    let codex = CodexAdapter;
+    let codex_path = codex.detect();
     agents.push(AgentInfo {
         name: "Codex".to_string(),
         adapter: "codex".to_string(),
-        binary_path: codex.detect(),
-        available: codex.detect().is_some(),
+        available: codex_path.is_some(),
+        binary_path: codex_path,
+    });
+
+    // OpenCode (generic fallback)
+    let opencode = GenericAdapter::new("opencode");
+    let opencode_path = opencode.detect();
+    agents.push(AgentInfo {
+        name: "OpenCode".to_string(),
+        adapter: "opencode".to_string(),
+        available: opencode_path.is_some(),
+        binary_path: opencode_path,
     });
 
     agents
@@ -432,16 +445,63 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
 
                     // ── Overlay active — dispatch key to overlay ──────────────
                     {
-                        let has_overlay = state.session().map(|s| s.overlay.is_some()).unwrap_or(false);
-                        if has_overlay {
-                            // Esc or ? dismisses the overlay; all other keys are consumed.
-                            if key.code == KeyCode::Esc || key.code == KeyCode::Char('?') {
-                                if let AppScreen::Session(ref mut session) = state.screen {
-                                    session.overlay = None;
+                        let overlay_kind = state.session().and_then(|s| s.overlay.clone());
+                        if overlay_kind.is_some() {
+                            match &overlay_kind {
+                                Some(crate::app::state::Overlay::AgentPicker) => {
+                                    match key.code {
+                                        KeyCode::Esc => {
+                                            if let AppScreen::Session(ref mut session) = state.screen {
+                                                session.overlay = None;
+                                            }
+                                        }
+                                        KeyCode::Up | KeyCode::Char('k') => {
+                                            if let AppScreen::Session(ref mut session) = state.screen {
+                                                if session.agent_picker.selected > 0 {
+                                                    session.agent_picker.selected -= 1;
+                                                }
+                                            }
+                                        }
+                                        KeyCode::Down | KeyCode::Char('j') => {
+                                            // 3 agents: Claude, Codex, OpenCode
+                                            const MAX_AGENTS: usize = 2;
+                                            if let AppScreen::Session(ref mut session) = state.screen {
+                                                if session.agent_picker.selected < MAX_AGENTS {
+                                                    session.agent_picker.selected += 1;
+                                                }
+                                            }
+                                        }
+                                        KeyCode::Enter => {
+                                            // Launch the selected agent.
+                                            let selected = state.session()
+                                                .map(|s| s.agent_picker.selected)
+                                                .unwrap_or(0);
+                                            let agent_names = ["claude", "codex", "opencode"];
+                                            let adapter = agent_names.get(selected)
+                                                .copied()
+                                                .unwrap_or("claude");
+                                            if let AppScreen::Session(ref mut session) = state.screen {
+                                                session.overlay = None;
+                                            }
+                                            match spawn_agent_pane(state, adapter, None) {
+                                                Ok(id) => tracing::info!("Agent picker launched {} pane: {}", adapter, id),
+                                                Err(e) => state.set_error(format!("Failed to launch {adapter}: {e}"), 100),
+                                            }
+                                        }
+                                        _ => {}
+                                    }
+                                    continue;
+                                }
+                                _ => {
+                                    // Esc or ? dismisses all other overlays; all keys are consumed.
+                                    if key.code == KeyCode::Esc || key.code == KeyCode::Char('?') {
+                                        if let AppScreen::Session(ref mut session) = state.screen {
+                                            session.overlay = None;
+                                        }
+                                    }
+                                    continue;
                                 }
                             }
-                            // Scroll within overlay (Up/Down/PageUp/PageDown) — stub for now.
-                            continue;
                         }
                     }
 
@@ -598,6 +658,9 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                                                 }
                                                 CommandResult::ShowOverlay(OverlayKind::Sessions) => {
                                                     session.overlay = Some(crate::app::state::Overlay::Sessions);
+                                                }
+                                                CommandResult::ShowOverlay(OverlayKind::AgentPicker) => {
+                                                    session.overlay = Some(crate::app::state::Overlay::AgentPicker);
                                                 }
                                                 CommandResult::NewSession { .. } => {
                                                     pending_new_session = true;
@@ -1165,6 +1228,162 @@ fn spawn_claude_pane(
 
     tracing::info!("Opened Claude pane for session: {}", session_id);
     Ok(session_id)
+}
+
+/// Spawn a PTY session for any supported agent adapter.
+///
+/// Delegates to `spawn_claude_pane` for the `"claude"` adapter.
+/// For `"codex"`, spawns Codex in interactive PTY mode.
+/// For anything else, uses a generic PTY spawn.
+///
+/// Returns the session id on success.
+fn spawn_agent_pane(
+    state: &mut AppState,
+    adapter: &str,
+    resume_id: Option<&str>,
+) -> Result<String, String> {
+    match adapter {
+        "claude" => spawn_claude_pane(state, resume_id),
+        "codex" => {
+            use crate::adapters::codex::CodexAdapter;
+            use crate::adapters::AgentAdapter;
+
+            let codex = CodexAdapter;
+            let binary = codex
+                .detect()
+                .ok_or_else(|| "Codex binary not found".to_string())?;
+
+            if !state.panes.can_open() {
+                return Err("Maximum panes already open".to_string());
+            }
+
+            let (term_cols, term_rows) = crossterm::terminal::size().unwrap_or((120, 40));
+            let n_panes = state.panes.len() + 1;
+            let center_cols = (term_cols as u32 * 3 / 4).saturating_sub(2);
+            let pty_cols = (center_cols / n_panes as u32).max(20) as u16;
+            let pty_rows = term_rows.saturating_sub(10);
+
+            let launch_cwd = std::env::current_dir().ok();
+
+            let (session_id, spawn_args_owned): (String, Vec<String>) = if let Some(rid) = resume_id {
+                (rid.to_string(), vec!["resume".into(), rid.into()])
+            } else {
+                let id = uuid::Uuid::new_v4().to_string();
+                (id, vec![])
+            };
+
+            let spawn_args_refs: Vec<&str> = spawn_args_owned.iter().map(|s| s.as_str()).collect();
+
+            let real_pty = crate::pty::RealPty::spawn_in(
+                binary.to_str().unwrap_or("codex"),
+                &spawn_args_refs,
+                pty_cols.max(20),
+                pty_rows.max(5),
+                launch_cwd.as_deref(),
+            )
+            .map_err(|e| format!("PTY spawn failed: {e}"))?;
+
+            let pane = state
+                .panes
+                .open(&session_id, "codex")
+                .ok_or_else(|| "Failed to open pane".to_string())?;
+
+            pane.pty = Some(real_pty);
+            pane.session.status = crate::app::state::AgentStatus::Idle;
+            pane.session.claude_session_id = Some(session_id.clone());
+
+            // Set up Codex JSONL log tracker.
+            if let Some(home) = dirs::home_dir() {
+                if let Some(path) = crate::codex_log::find_session_log(&home, &session_id) {
+                    tracing::info!("Codex session log: {}", path.display());
+                }
+                // Note: Codex session file is created after first prompt, so we
+                // can't set up the tracker here. It will be discovered on next poll.
+            }
+
+            // Transition to session screen.
+            if !matches!(state.screen, AppScreen::Session(_)) {
+                state.enter_session(&session_id, "codex");
+            }
+            if let Some(ref mut session) = state.session_mut() {
+                session.status = crate::app::state::AgentStatus::Idle;
+                session.claude_session_id = Some(session_id.clone());
+            }
+
+            // Persist to SQLite.
+            if let Some(ref store) = state.store.clone() {
+                let project_dir = launch_cwd
+                    .as_deref()
+                    .map(crate::claude_log::project_dir_name)
+                    .unwrap_or_default();
+                let now = crate::session::unix_now();
+                if let Err(e) = store.upsert_session(
+                    &session_id,
+                    &project_dir,
+                    "codex",
+                    None,
+                    "",
+                    launch_cwd.as_deref().and_then(|p| p.to_str()),
+                    0, 0, 0,
+                    now, now,
+                ) {
+                    tracing::warn!("Failed to create codex session row: {e}");
+                }
+                refresh_rail(state, store);
+            }
+
+            tracing::info!("Opened Codex pane for session: {}", session_id);
+            Ok(session_id)
+        }
+        other => {
+            // Generic adapter — spawn the binary directly as a PTY.
+            use crate::adapters::generic::GenericAdapter;
+            use crate::adapters::AgentAdapter;
+
+            let generic = GenericAdapter::new(other);
+            let binary = generic
+                .detect()
+                .ok_or_else(|| format!("{other} binary not found"))?;
+
+            if !state.panes.can_open() {
+                return Err("Maximum panes already open".to_string());
+            }
+
+            let (term_cols, term_rows) = crossterm::terminal::size().unwrap_or((120, 40));
+            let n_panes = state.panes.len() + 1;
+            let center_cols = (term_cols as u32 * 3 / 4).saturating_sub(2);
+            let pty_cols = (center_cols / n_panes as u32).max(20) as u16;
+            let pty_rows = term_rows.saturating_sub(10);
+
+            let launch_cwd = std::env::current_dir().ok();
+            let session_id = uuid::Uuid::new_v4().to_string();
+
+            let real_pty = crate::pty::RealPty::spawn_in(
+                binary.to_str().unwrap_or(other),
+                &[],
+                pty_cols.max(20),
+                pty_rows.max(5),
+                launch_cwd.as_deref(),
+            )
+            .map_err(|e| format!("PTY spawn failed: {e}"))?;
+
+            let pane = state
+                .panes
+                .open(&session_id, other)
+                .ok_or_else(|| "Failed to open pane".to_string())?;
+
+            pane.pty = Some(real_pty);
+            pane.session.status = crate::app::state::AgentStatus::Idle;
+            pane.session.claude_session_id = Some(session_id.clone());
+
+            if !matches!(state.screen, AppScreen::Session(_)) {
+                state.enter_session(&session_id, other);
+            }
+
+            tracing::info!("Opened {} pane for session: {}", other, session_id);
+            Ok(session_id)
+        }
+    }
 }
 
 /// Sync all pane JSONL trackers and update sidebar metrics.
