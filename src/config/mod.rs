@@ -6,6 +6,7 @@
 //! 3. Built-in defaults ([`Config::default`]).
 
 pub mod keybinds;
+pub mod profiles;
 pub mod schema;
 
 pub use schema::Config;
