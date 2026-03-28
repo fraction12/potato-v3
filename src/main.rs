@@ -1104,11 +1104,7 @@ fn spawn_claude_pane(
     if let Some(ref sock) = state.mcp_socket_path.clone() {
         // Always provide the socket path and the future pane id to every pane.
         // The pane id matches `PaneManager::next_id` — we can read it from the manager.
-        // PaneManager doesn't expose next_id directly, so we derive it:
-        // after open(), `len()` panes exist and active pane has id == (old_len).
-        // We'll set the env now and the id is the value of `state.panes.len()` since
-        // ids are monotonically allocated from 0 and never reused in a single session.
-        let pane_id: u64 = state.panes.len() as u64; // speculative — matches next_id
+        let pane_id: u64 = state.panes.next_id();
         pane_env.push(("POTATO_PANE_ID".into(), pane_id.to_string()));
         pane_env.push(("POTATO_SOCKET".into(), sock.to_string_lossy().into_owned()));
     }
