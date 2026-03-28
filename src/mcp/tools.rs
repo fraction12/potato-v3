@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::{json, Value};
 
 use crate::mcp::protocol::{CallToolResult, ToolInfo};
-use crate::mcp::state::{ClaimResult, InterSessionState, MessagePriority, PaneRole};
+use crate::mcp::state::{ClaimResult, InterSessionState, MessagePriority, PaneRole, RoleClaimResult};
 
 // ── Tool names ────────────────────────────────────────────────────────────────
 
@@ -18,6 +18,7 @@ pub const TOOL_GET_PARTNER_STATUS: &str = "potato_get_partner_status";
 pub const TOOL_SHARED_CONTEXT: &str = "potato_shared_context";
 pub const TOOL_CLAIM_TASK: &str = "potato_claim_task";
 pub const TOOL_RELEASE_TASK: &str = "potato_release_task";
+pub const TOOL_CLAIM_ROLE: &str = "potato_claim_role";
 pub const TOOL_GET_ROLE: &str = "potato_get_role";
 
 // ── Tool definitions ──────────────────────────────────────────────────────────
@@ -128,8 +129,29 @@ pub fn tool_definitions() -> Vec<ToolInfo> {
             }),
         },
         ToolInfo {
+            name: TOOL_CLAIM_ROLE.into(),
+            description: "Claim a role for this session. If another agent already holds this role \
+                name, the claim is rejected — pick a different role. Use potato_get_role first to \
+                see which roles are already taken.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "role": {
+                        "type": "string",
+                        "description": "The role name to claim (e.g. 'architect', 'implementer', 'reviewer')."
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "A short description of what this role does in the current collaboration."
+                    }
+                },
+                "required": ["role"]
+            }),
+        },
+        ToolInfo {
             name: TOOL_GET_ROLE.into(),
-            description: "Get this session's assigned role and identity within the Potato cockpit.".into(),
+            description: "Get this session's assigned role and see all roles currently claimed across panes. \
+                Check this before claiming a role to avoid conflicts.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {}
@@ -156,6 +178,7 @@ pub fn handle_tool_call(
         TOOL_SHARED_CONTEXT => handle_shared_context(args, state),
         TOOL_CLAIM_TASK => handle_claim_task(args, pane_id, state),
         TOOL_RELEASE_TASK => handle_release_task(args, pane_id, state),
+        TOOL_CLAIM_ROLE => handle_claim_role(args, pane_id, state),
         TOOL_GET_ROLE => handle_get_role(pane_id, state),
         unknown => CallToolResult::failure(format!("Unknown tool: {unknown}")),
     }
@@ -406,6 +429,55 @@ fn handle_release_task(
     }
 }
 
+fn handle_claim_role(
+    args: &Value,
+    pane_id: u64,
+    state: &Arc<Mutex<InterSessionState>>,
+) -> CallToolResult {
+    let role_name = match args.get("role").and_then(Value::as_str) {
+        Some(r) => r.to_string(),
+        None => return CallToolResult::failure("Missing required field: role"),
+    };
+    let description = args
+        .get("description")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+
+    let mut st = match state.lock() {
+        Ok(g) => g,
+        Err(_) => return CallToolResult::failure("State lock poisoned"),
+    };
+
+    let role = PaneRole { name: role_name.clone(), description };
+    match st.claim_role(pane_id, role) {
+        RoleClaimResult::Claimed => {
+            // Build list of all current roles for context.
+            let all_roles: Vec<Value> = st.list_roles().iter().map(|(id, r)| {
+                json!({"pane_id": id, "role": r.name, "description": r.description})
+            }).collect();
+            CallToolResult::success(serde_json::to_string_pretty(&json!({
+                "claimed": true,
+                "role": role_name,
+                "all_roles": all_roles
+            })).unwrap_or_default())
+        }
+        RoleClaimResult::AlreadyClaimed { held_by } => {
+            // Tell the agent which roles are taken so it can pick another.
+            let all_roles: Vec<Value> = st.list_roles().iter().map(|(id, r)| {
+                json!({"pane_id": id, "role": r.name, "description": r.description})
+            }).collect();
+            CallToolResult::success(serde_json::to_string_pretty(&json!({
+                "claimed": false,
+                "role": role_name,
+                "held_by": format!("pane-{held_by}"),
+                "reason": format!("Role '{}' is already claimed by pane {}. Pick a different role.", role_name, held_by),
+                "all_roles": all_roles
+            })).unwrap_or_default())
+        }
+    }
+}
+
 fn handle_get_role(
     pane_id: u64,
     state: &Arc<Mutex<InterSessionState>>,
@@ -415,18 +487,22 @@ fn handle_get_role(
         Err(_) => return CallToolResult::failure("State lock poisoned"),
     };
     let role = st.get_role(pane_id);
-    let partners = st.get_partner_status(pane_id);
 
-    let partner_roles: Vec<Value> = partners
-        .iter()
-        .map(|p| json!({"pane_id": p.pane_id, "role": p.role.name}))
-        .collect();
+    // Show ALL roles, not just partners — so agents see the full picture.
+    let all_roles: Vec<Value> = st.list_roles().iter().map(|(id, r)| {
+        json!({
+            "pane_id": id,
+            "role": r.name,
+            "description": r.description,
+            "is_self": *id == pane_id
+        })
+    }).collect();
 
     let result = json!({
         "pane_id": pane_id,
-        "role": role.map(|r| r.name.clone()).unwrap_or_else(|| "unassigned".to_string()),
-        "role_description": role.map(|r| r.description.clone()).unwrap_or_default(),
-        "partner_roles": partner_roles
+        "your_role": role.map(|r| r.name.clone()).unwrap_or_else(|| "unassigned".to_string()),
+        "your_role_description": role.map(|r| r.description.clone()).unwrap_or_default(),
+        "all_roles": all_roles
     });
 
     CallToolResult::success(serde_json::to_string_pretty(&result).unwrap_or_default())
@@ -458,7 +534,7 @@ mod tests {
     #[test]
     fn tool_definitions_returns_all_tools() {
         let tools = tool_definitions();
-        assert_eq!(tools.len(), 7); // 6 spec tools + get_role
+        assert_eq!(tools.len(), 8); // 6 spec tools + claim_role + get_role
     }
 
     #[test]
@@ -480,6 +556,7 @@ mod tests {
         assert!(names.contains(&TOOL_SHARED_CONTEXT));
         assert!(names.contains(&TOOL_CLAIM_TASK));
         assert!(names.contains(&TOOL_RELEASE_TASK));
+        assert!(names.contains(&TOOL_CLAIM_ROLE));
         assert!(names.contains(&TOOL_GET_ROLE));
     }
 
@@ -780,6 +857,66 @@ mod tests {
         let result = handle_tool_call(TOOL_RELEASE_TASK, &json!({}), 0, &state);
         assert!(result.is_error);
         assert!(result.content[0].text.contains("Missing required field: task_id"));
+    }
+
+    // ── potato_claim_role ──────────────────────────────────────────────────────
+
+    #[test]
+    fn claim_role_success() {
+        let state = make_state();
+        let result = handle_tool_call(TOOL_CLAIM_ROLE, &json!({"role": "architect", "description": "Designs"}), 0, &state);
+        assert!(!result.is_error);
+        let parsed: Value = serde_json::from_str(&result.content[0].text).unwrap();
+        assert_eq!(parsed["claimed"], true);
+        assert_eq!(parsed["role"], "architect");
+    }
+
+    #[test]
+    fn claim_role_rejected_when_taken() {
+        let state = make_state();
+        handle_tool_call(TOOL_CLAIM_ROLE, &json!({"role": "architect"}), 0, &state);
+        let result = handle_tool_call(TOOL_CLAIM_ROLE, &json!({"role": "architect"}), 1, &state);
+        assert!(!result.is_error);
+        let parsed: Value = serde_json::from_str(&result.content[0].text).unwrap();
+        assert_eq!(parsed["claimed"], false);
+        assert!(parsed["held_by"].as_str().unwrap().contains("pane-0"));
+    }
+
+    #[test]
+    fn claim_role_case_insensitive() {
+        let state = make_state();
+        handle_tool_call(TOOL_CLAIM_ROLE, &json!({"role": "Architect"}), 0, &state);
+        let result = handle_tool_call(TOOL_CLAIM_ROLE, &json!({"role": "architect"}), 1, &state);
+        let parsed: Value = serde_json::from_str(&result.content[0].text).unwrap();
+        assert_eq!(parsed["claimed"], false);
+    }
+
+    #[test]
+    fn claim_role_idempotent_same_pane() {
+        let state = make_state();
+        handle_tool_call(TOOL_CLAIM_ROLE, &json!({"role": "architect"}), 0, &state);
+        let result = handle_tool_call(TOOL_CLAIM_ROLE, &json!({"role": "architect", "description": "updated"}), 0, &state);
+        let parsed: Value = serde_json::from_str(&result.content[0].text).unwrap();
+        assert_eq!(parsed["claimed"], true);
+    }
+
+    #[test]
+    fn claim_role_missing_name() {
+        let state = make_state();
+        let result = handle_tool_call(TOOL_CLAIM_ROLE, &json!({}), 0, &state);
+        assert!(result.is_error);
+    }
+
+    #[test]
+    fn claim_different_roles_succeeds() {
+        let state = make_state();
+        handle_tool_call(TOOL_CLAIM_ROLE, &json!({"role": "architect"}), 0, &state);
+        let result = handle_tool_call(TOOL_CLAIM_ROLE, &json!({"role": "implementer"}), 1, &state);
+        let parsed: Value = serde_json::from_str(&result.content[0].text).unwrap();
+        assert_eq!(parsed["claimed"], true);
+        // Both roles should appear in all_roles.
+        let all = parsed["all_roles"].as_array().unwrap();
+        assert_eq!(all.len(), 2);
     }
 
     // ── potato_get_role ───────────────────────────────────────────────────────

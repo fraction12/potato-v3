@@ -757,12 +757,12 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                                             }
                                         } else {
                                             // ── Broadcast to all panes ────────
-                                            // Wrap in bracketed paste so
-                                            // Claude Code treats multiline
-                                            // as a single paste, then \r
-                                            // to submit.
+                                            // Send raw text + newline.
+                                            // Bracketed paste doesn't
+                                            // trigger submit in Claude
+                                            // Code interactive mode.
                                             let payload = format!(
-                                                "\x1b[200~{text}\x1b[201~\r"
+                                                "{text}\n"
                                             );
                                             let n_panes = state.panes.len();
                                             let mut any_written = false;
@@ -1237,9 +1237,13 @@ fn build_collaboration_prompt(state: &AppState) -> String {
         "You are in a multi-agent collaboration managed by Potato. \
          Active panes: {}. \
          You have Potato MCP tools available: \
+         potato_claim_role (claim a role — MUST check potato_get_role first, roles are exclusive), \
+         potato_get_role (see all claimed roles), \
          potato_send_message, potato_get_messages, potato_get_partner_status, \
-         potato_shared_context, potato_claim_task, potato_release_task, potato_get_role. \
-         Use these to coordinate with your partner. Pick a role and get started.",
+         potato_shared_context, potato_claim_task, potato_release_task. \
+         IMPORTANT: Before picking a role, call potato_get_role to see what's taken. \
+         Then call potato_claim_role with a DIFFERENT role than your partner. \
+         Coordinate and get started.",
         pane_labels.join(", ")
     )
 }

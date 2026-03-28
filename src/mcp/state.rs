@@ -51,6 +51,15 @@ pub struct PaneRole {
     pub description: String,
 }
 
+/// Result of attempting to claim a role.
+#[derive(Debug, Clone, PartialEq)]
+pub enum RoleClaimResult {
+    /// Role was claimed successfully.
+    Claimed,
+    /// Role name is already held by another pane.
+    AlreadyClaimed { held_by: u64 },
+}
+
 // ── Claim result ──────────────────────────────────────────────────────────────
 
 /// Result of attempting to claim a task.
@@ -134,7 +143,23 @@ impl InterSessionState {
 
     // ── Roles ─────────────────────────────────────────────────────────────────
 
-    /// Assign a role to a pane.
+    /// Attempt to claim a role. If the role name is already held by a
+    /// different pane, the claim is rejected. Same pane re-claiming the
+    /// same role name is idempotent (updates description).
+    pub fn claim_role(&mut self, pane_id: u64, role: PaneRole) -> RoleClaimResult {
+        // Check if any other pane already holds this role name.
+        for (&existing_pane, existing_role) in &self.roles {
+            if existing_pane != pane_id
+                && existing_role.name.eq_ignore_ascii_case(&role.name)
+            {
+                return RoleClaimResult::AlreadyClaimed { held_by: existing_pane };
+            }
+        }
+        self.roles.insert(pane_id, role);
+        RoleClaimResult::Claimed
+    }
+
+    /// Assign a role to a pane unconditionally (for internal/slash-command use).
     pub fn set_role(&mut self, pane_id: u64, role: PaneRole) {
         self.roles.insert(pane_id, role);
     }
@@ -142,6 +167,11 @@ impl InterSessionState {
     /// Get the role assigned to a pane, if any.
     pub fn get_role(&self, pane_id: u64) -> Option<&PaneRole> {
         self.roles.get(&pane_id)
+    }
+
+    /// List all currently claimed roles.
+    pub fn list_roles(&self) -> Vec<(u64, &PaneRole)> {
+        self.roles.iter().map(|(&id, r)| (id, r)).collect()
     }
 
     /// Get summary status of all panes except `exclude_pane_id`.
@@ -330,6 +360,49 @@ mod tests {
     fn get_role_returns_none_if_unset() {
         let state = make_state();
         assert!(state.get_role(42).is_none());
+    }
+
+    #[test]
+    fn claim_role_succeeds_when_unclaimed() {
+        let mut state = make_state();
+        let role = PaneRole { name: "architect".into(), description: "Designs".into() };
+        let result = state.claim_role(0, role);
+        assert_eq!(result, RoleClaimResult::Claimed);
+        assert_eq!(state.get_role(0).unwrap().name, "architect");
+    }
+
+    #[test]
+    fn claim_role_rejected_when_taken_by_other() {
+        let mut state = make_state();
+        state.claim_role(0, PaneRole { name: "architect".into(), description: "".into() });
+        let result = state.claim_role(1, PaneRole { name: "architect".into(), description: "".into() });
+        assert_eq!(result, RoleClaimResult::AlreadyClaimed { held_by: 0 });
+        // Pane 1 should not have a role.
+        assert!(state.get_role(1).is_none());
+    }
+
+    #[test]
+    fn claim_role_case_insensitive_rejection() {
+        let mut state = make_state();
+        state.claim_role(0, PaneRole { name: "Architect".into(), description: "".into() });
+        let result = state.claim_role(1, PaneRole { name: "architect".into(), description: "".into() });
+        assert_eq!(result, RoleClaimResult::AlreadyClaimed { held_by: 0 });
+    }
+
+    #[test]
+    fn claim_role_idempotent_same_pane() {
+        let mut state = make_state();
+        state.claim_role(0, PaneRole { name: "architect".into(), description: "v1".into() });
+        let result = state.claim_role(0, PaneRole { name: "architect".into(), description: "v2".into() });
+        assert_eq!(result, RoleClaimResult::Claimed);
+        assert_eq!(state.get_role(0).unwrap().description, "v2");
+    }
+
+    #[test]
+    fn claim_different_roles_both_succeed() {
+        let mut state = make_state();
+        assert_eq!(state.claim_role(0, PaneRole { name: "architect".into(), description: "".into() }), RoleClaimResult::Claimed);
+        assert_eq!(state.claim_role(1, PaneRole { name: "implementer".into(), description: "".into() }), RoleClaimResult::Claimed);
     }
 
     #[test]
