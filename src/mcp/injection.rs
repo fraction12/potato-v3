@@ -54,16 +54,11 @@ pub fn format_notification(from_pane: u64, from_role: Option<&str>, content: &st
         .map(|r| format!(" ({r})"))
         .unwrap_or_default();
 
-    let body = format!(
-        "[Potato: message from Pane {from_pane}{role_suffix}]\n\
-         {content}\n\
-         [/Potato]"
-    );
-
-    // Raw text + \r (Enter) to submit. Bracketed paste does NOT trigger
-    // submit in Claude Code's Ink raw mode — same root cause as the
-    // broadcast fix (commit 112096f).
-    format!("{body}\r")
+    // Flatten to a single line — Claude Code's Ink raw mode doesn't handle
+    // embedded \n bytes correctly in the input buffer. Only \r triggers submit.
+    // This matches how broadcast works: plain text + \r.
+    let flat_content = content.replace('\n', " | ");
+    format!("[Potato: Pane {from_pane}{role_suffix}] {flat_content}\r")
 }
 
 /// Attempt to inject a formatted notification into a target pane's PTY.
@@ -110,45 +105,40 @@ mod tests {
     #[test]
     fn format_notification_basic() {
         let msg = format_notification(0, None, "hello from pane 0");
-        assert!(msg.contains("[Potato: message from Pane 0]"));
+        assert!(msg.contains("[Potato: Pane 0]"));
         assert!(msg.contains("hello from pane 0"));
-        assert!(msg.contains("[/Potato]"));
+        assert!(msg.ends_with('\r'));
     }
 
     #[test]
     fn format_notification_with_role() {
         let msg = format_notification(1, Some("architect"), "the schema is ready");
-        assert!(msg.contains("[Potato: message from Pane 1 (architect)]"));
+        assert!(msg.contains("[Potato: Pane 1 (architect)]"));
         assert!(msg.contains("the schema is ready"));
     }
 
     #[test]
     fn format_notification_empty_role_is_omitted() {
         let msg = format_notification(0, Some(""), "test");
-        assert!(msg.contains("[Potato: message from Pane 0]"));
+        assert!(msg.contains("[Potato: Pane 0]"));
         assert!(!msg.contains("()"));
     }
 
     #[test]
-    fn format_notification_sends_raw_text_with_enter() {
+    fn format_notification_single_line_no_newlines() {
         let msg = format_notification(0, None, "test content");
-        // Must NOT use bracketed paste (Claude Code Ink doesn't submit on paste).
-        assert!(!msg.contains("\x1b[200~"), "must not use bracketed paste");
-        assert!(!msg.contains("\x1b[201~"), "must not use bracketed paste");
-        // Must end with \r to submit.
+        // Must not contain any \n — only \r at the end to submit.
+        assert!(!msg.contains('\n'), "must be single-line for Claude Code raw mode");
         assert!(msg.ends_with('\r'), "missing trailing carriage return");
-        // Must contain the notification body.
         assert!(msg.contains("[Potato:"));
         assert!(msg.contains("test content"));
-        assert!(msg.contains("[/Potato]"));
     }
 
     #[test]
-    fn format_notification_multiline_content() {
+    fn format_notification_multiline_flattened() {
         let msg = format_notification(0, None, "line1\nline2\nline3");
-        assert!(msg.contains("line1\nline2\nline3"));
-        assert!(msg.contains("[Potato:"));
-        assert!(msg.contains("[/Potato]"));
+        assert!(!msg.contains('\n'), "newlines must be flattened");
+        assert!(msg.contains("line1 | line2 | line3"));
         assert!(msg.ends_with('\r'));
     }
 
