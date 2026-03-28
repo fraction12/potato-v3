@@ -4,6 +4,7 @@
 //! [`AgentEvent`] stream.  They also handle process construction and I/O formatting.
 
 pub mod claude;
+pub mod codex;
 pub mod generic;
 
 use std::path::PathBuf;
@@ -93,6 +94,7 @@ mod tests {
     use super::*;
     use crate::adapters::generic::GenericAdapter;
     use crate::adapters::claude::ClaudeAdapter;
+    use crate::adapters::codex::CodexAdapter;
 
     #[test]
     fn generic_adapter_name() {
@@ -159,6 +161,39 @@ mod tests {
     fn claude_adapter_format_approval_no() {
         let a = ClaudeAdapter;
         assert_eq!(a.format_approval(false), Some("n\n".to_string()));
+    }
+
+    #[test]
+    fn codex_adapter_name() {
+        let a = CodexAdapter;
+        assert_eq!(a.name(), "codex");
+    }
+
+    #[test]
+    fn codex_adapter_capabilities_structured_and_resumable() {
+        let a = CodexAdapter;
+        let caps = a.capabilities();
+        assert!(caps.structured_output);
+        assert!(caps.session_resumable);
+        assert!(!caps.approval_intercept);
+        assert!(caps.tool_events);
+    }
+
+    #[test]
+    fn generic_adapter_build_command_sets_working_dir() {
+        let a = GenericAdapter::new("myagent");
+        let config = AdapterConfig {
+            working_dir: std::path::PathBuf::from("/var/test"),
+            model: None,
+            resume_session_id: None,
+            extra_flags: vec![],
+        };
+        let cmd = a.build_command(&config);
+        assert_eq!(
+            cmd.as_std().get_current_dir(),
+            Some(std::path::Path::new("/var/test")),
+            "GenericAdapter build_command must set working dir"
+        );
     }
 
     #[test]
