@@ -677,18 +677,38 @@ fn render_right_rail(frame: &mut Frame, area: Rect, state: &AppState, focus: Coc
     let label = Style::default().fg(STONE);
     let value = Style::default().fg(CREAM);
 
-    // Inner width for truncation (border + 1 char padding each side).
     let inner_w = area.width.saturating_sub(4) as usize;
 
-    // Split sidebar vertically: Metrics | Tools | Totals
-    let [metrics_area, tools_area, totals_area] = Layout::vertical([
-        Constraint::Length(9),
-        Constraint::Min(5),
-        Constraint::Length(6),
-    ])
-    .areas(area);
+    // ── Gather team/task/context data from MCP state ──────────────────────────
+    let (roles, task_claims, ctx_keys, unread_counts) = match state.inter_session_state {
+        Some(ref iss) => match iss.lock() {
+            Ok(st) => {
+                let roles: Vec<(u64, String, String)> = st.list_roles()
+                    .into_iter()
+                    .map(|(id, r)| (id, r.name.clone(), r.description.clone()))
+                    .collect();
+                let tasks: Vec<(String, String, u64)> = st.task_board
+                    .values()
+                    .map(|t| (t.task_id.clone(), t.description.clone(), t.claimed_by))
+                    .collect();
+                let ctx: Vec<String> = st.shared_context_list();
+                let unread: std::collections::HashMap<u64, usize> = st.inboxes
+                    .iter()
+                    .map(|(&id, q)| (id, q.iter().filter(|m| !m.read).count()))
+                    .collect();
+                (roles, tasks, ctx, unread)
+            }
+            Err(_) => (Vec::new(), Vec::new(), Vec::new(), std::collections::HashMap::new()),
+        },
+        None => (Vec::new(), Vec::new(), Vec::new(), std::collections::HashMap::new()),
+    };
 
-    // Read metrics from the active pane's log tracker (or fall back to legacy).
+    // ── Gather OpenSpec tasks ─────────────────────────────────────────────────
+    let openspec_tasks = state.openspec.as_ref()
+        .map(|os| os.open_tasks())
+        .unwrap_or_default();
+
+    // Read metrics from the active pane's log tracker.
     let sidebar = state
         .panes
         .active_pane()
@@ -696,8 +716,27 @@ fn render_right_rail(frame: &mut Frame, area: Rect, state: &AppState, focus: Coc
         .map(|t| t.snapshot())
         .unwrap_or_default();
 
-    // ── Metrics ───────────────────────────────────────────────────────────────
+    // ── Adaptive layout ───────────────────────────────────────────────────────
+    // Claude (compact 5 lines) | Team | Tasks | Context
+    let has_tasks = !openspec_tasks.is_empty() || !task_claims.is_empty();
+    let has_context = !ctx_keys.is_empty();
 
+    let task_height = if has_tasks {
+        (openspec_tasks.len().max(task_claims.len()) as u16).clamp(3, 8) + 2
+    } else { 4 };
+    let ctx_height = if has_context {
+        (ctx_keys.len() as u16).clamp(2, 5) + 2
+    } else { 4 };
+
+    let [claude_area, team_area, tasks_area, ctx_area] = Layout::vertical([
+        Constraint::Length(5),   // Claude compact
+        Constraint::Length(((roles.len().max(1)) as u16) * 2 + 3), // Team
+        Constraint::Length(task_height),  // Tasks
+        Constraint::Min(ctx_height),     // Context (fills remaining)
+    ])
+    .areas(area);
+
+    // ── Claude (compact) ──────────────────────────────────────────────────────
     let model_short = sidebar
         .model
         .as_deref()
@@ -705,72 +744,174 @@ fn render_right_rail(frame: &mut Frame, area: Rect, state: &AppState, focus: Coc
         .strip_prefix("claude-")
         .unwrap_or(sidebar.model.as_deref().unwrap_or("—"));
 
-    let metrics_text = vec![
+    let total_tokens = sidebar.usage.total_tokens();
+    let claude_text = vec![
         Line::from(Span::raw("")),
         metric_line(" Model", model_short, label, value),
-        metric_line(" Turns", &sidebar.turns.to_string(), label, value),
-        metric_line(" In",    &fmt_tokens(sidebar.usage.input_tokens), label, value),
-        metric_line(" Out",   &fmt_tokens(sidebar.usage.output_tokens), label, value),
-        metric_line(" Cache", &fmt_tokens(sidebar.usage.cache_read_input_tokens), label, value),
-        metric_line(" Stop",  sidebar.last_stop_reason.as_deref().unwrap_or("—"), label, value),
+        metric_line(
+            " Tkns",
+            &format!("{}↓ {}↑ {}Σ",
+                fmt_tokens(sidebar.usage.input_tokens),
+                fmt_tokens(sidebar.usage.output_tokens),
+                fmt_tokens(total_tokens),
+            ),
+            label, value,
+        ),
     ];
 
     frame.render_widget(
-        Paragraph::new(metrics_text)
+        Paragraph::new(claude_text)
             .block(sidebar_block(" Claude ", title_color, border_fg))
             .style(Style::default().bg(BG)),
-        metrics_area,
+        claude_area,
     );
 
-    // ── Tools ─────────────────────────────────────────────────────────────────
-
-    let max_tools = tools_area.height.saturating_sub(2) as usize; // minus borders
-
-    let tools_text: Vec<Line> = if sidebar.tools.is_empty() {
+    // ── Team ──────────────────────────────────────────────────────────────────
+    let team_text: Vec<Line> = if roles.is_empty() {
         vec![
             Line::from(Span::raw("")),
-            Line::from(Span::styled(" waiting…", Style::default().fg(STONE))),
+            Line::from(Span::styled(" no agents", Style::default().fg(STONE))),
         ]
     } else {
-        sidebar
-            .tools
-            .iter()
-            .rev()
-            .take(max_tools)
-            .map(|e| {
-                let icon = match e.status {
-                    ClaudeToolStatus::Done    => Span::styled(" ✓ ", Style::default().fg(SPROUT)),
-                    ClaudeToolStatus::Error   => Span::styled(" ✗ ", Style::default().fg(ROSE)),
-                    ClaudeToolStatus::Running => Span::styled(" ⏳", Style::default().fg(AMBER)),
-                };
-                let max_name = inner_w.saturating_sub(3);
-                let name = truncate_str(&e.name, max_name);
-                Line::from(vec![icon, Span::styled(name, value)])
-            })
-            .collect()
+        let mut lines = vec![Line::from(Span::raw(""))];
+        for (pane_id, name, _desc) in &roles {
+            let unread = unread_counts.get(pane_id).copied().unwrap_or(0);
+            let active = state.panes.active_pane()
+                .is_some_and(|p| p.id == *pane_id);
+            let indicator = if active {
+                Span::styled(" ● ", Style::default().fg(SPROUT))
+            } else {
+                Span::styled(" ● ", Style::default().fg(AMBER))
+            };
+            let max_name = inner_w.saturating_sub(8);
+            let display_name = truncate_str(name, max_name);
+            let pane_label = format!("P{pane_id}");
+            let mut spans = vec![
+                indicator,
+                Span::styled(display_name, value),
+                Span::styled(format!(" {pane_label}"), label),
+            ];
+            if unread > 0 {
+                spans.push(Span::styled(
+                    format!(" ✉{unread}"),
+                    Style::default().fg(AMBER),
+                ));
+            }
+            lines.push(Line::from(spans));
+        }
+        lines
     };
 
     frame.render_widget(
-        Paragraph::new(tools_text)
-            .block(sidebar_block(" Tools ", title_color, border_fg))
+        Paragraph::new(team_text)
+            .block(sidebar_block(" Team ", title_color, border_fg))
             .style(Style::default().bg(BG)),
-        tools_area,
+        team_area,
     );
 
-    // ── Totals ────────────────────────────────────────────────────────────────
+    // ── Tasks ─────────────────────────────────────────────────────────────────
+    // Merge OpenSpec tasks with MCP task claims.
+    let max_tasks = tasks_area.height.saturating_sub(2) as usize;
+    let tasks_text: Vec<Line> = if openspec_tasks.is_empty() && task_claims.is_empty() {
+        vec![
+            Line::from(Span::raw("")),
+            Line::from(Span::styled(" no tasks", Style::default().fg(STONE))),
+        ]
+    } else {
+        let mut lines: Vec<Line> = Vec::new();
 
-    let totals_text = vec![
-        Line::from(Span::raw("")),
-        metric_line(" Total", &fmt_tokens(sidebar.usage.total_tokens()), label, value),
-        metric_line(" Web",   &format!("{}s {}f", sidebar.usage.web_search_requests, sidebar.usage.web_fetch_requests), label, value),
-        metric_line(" New$",  &fmt_tokens(sidebar.usage.cache_creation_input_tokens), label, value),
-    ];
+        // Show OpenSpec tasks first (they're the canonical source).
+        for task in openspec_tasks.iter().take(max_tasks) {
+            let claimed_by = task_claims.iter()
+                .find(|(id, _, _)| *id == task.id)
+                .map(|(_, _, pane)| *pane);
+
+            let (icon, status_style) = match task.status {
+                crate::openspec::TaskStatus::Claimed => {
+                    let pane_label = claimed_by
+                        .map(|p| format!(" P{p}"))
+                        .unwrap_or_default();
+                    (
+                        format!(" ●{pane_label}"),
+                        Style::default().fg(AMBER),
+                    )
+                }
+                crate::openspec::TaskStatus::InProgress => (
+                    " ◐".to_string(),
+                    Style::default().fg(AMBER),
+                ),
+                crate::openspec::TaskStatus::Blocked => (
+                    " ✗".to_string(),
+                    Style::default().fg(ROSE),
+                ),
+                _ => (
+                    " ○".to_string(),
+                    Style::default().fg(STONE),
+                ),
+            };
+            let max_title = inner_w.saturating_sub(icon.len() + task.id.len() + 2);
+            let title = truncate_str(&task.title, max_title);
+            lines.push(Line::from(vec![
+                Span::styled(icon, status_style),
+                Span::styled(format!(" {}", task.id), label),
+                Span::styled(format!(" {title}"), value),
+            ]));
+        }
+
+        if lines.is_empty() {
+            // Fall back to showing raw MCP task claims if no OpenSpec.
+            for (id, desc, pane_id) in task_claims.iter().take(max_tasks) {
+                let max_desc = inner_w.saturating_sub(id.len() + 6);
+                let desc_short = truncate_str(desc, max_desc);
+                lines.push(Line::from(vec![
+                    Span::styled(format!(" ● P{pane_id}"), Style::default().fg(AMBER)),
+                    Span::styled(format!(" {id}"), label),
+                    Span::styled(format!(" {desc_short}"), value),
+                ]));
+            }
+        }
+
+        lines
+    };
 
     frame.render_widget(
-        Paragraph::new(totals_text)
-            .block(sidebar_block(" Totals ", title_color, border_fg))
+        Paragraph::new(tasks_text)
+            .block(sidebar_block(" Tasks ", title_color, border_fg))
             .style(Style::default().bg(BG)),
-        totals_area,
+        tasks_area,
+    );
+
+    // ── Context ───────────────────────────────────────────────────────────────
+    let max_ctx = ctx_area.height.saturating_sub(2) as usize;
+    let ctx_text: Vec<Line> = if ctx_keys.is_empty() {
+        vec![
+            Line::from(Span::raw("")),
+            Line::from(Span::styled(" no shared context", Style::default().fg(STONE))),
+        ]
+    } else {
+        let mut lines: Vec<Line> = Vec::new();
+        for key in ctx_keys.iter().take(max_ctx) {
+            let max_key = inner_w.saturating_sub(4);
+            let display = truncate_str(key, max_key);
+            lines.push(Line::from(vec![
+                Span::styled(" ◆ ", Style::default().fg(BRASS)),
+                Span::styled(display, value),
+            ]));
+        }
+        if ctx_keys.len() > max_ctx {
+            lines.push(Line::from(Span::styled(
+                format!("   +{} more", ctx_keys.len() - max_ctx),
+                label,
+            )));
+        }
+        lines
+    };
+
+    frame.render_widget(
+        Paragraph::new(ctx_text)
+            .block(sidebar_block(" Context ", title_color, border_fg))
+            .style(Style::default().bg(BG)),
+        ctx_area,
     );
 }
 

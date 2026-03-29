@@ -486,6 +486,9 @@ pub struct AppState {
     /// The bridge sends `InjectRequest`s after `send_message`; the main loop
     /// drains this each tick and writes into the target pane's PTY.
     pub inject_rx: Option<tokio::sync::mpsc::UnboundedReceiver<crate::mcp::injection::InjectRequest>>,
+
+    /// OpenSpec watcher — tracks `.openspec/backlog.yaml` for live task data.
+    pub openspec: Option<crate::openspec::OpenSpecWatcher>,
 }
 
 impl Default for AppState {
@@ -511,6 +514,7 @@ impl Default for AppState {
             mcp_socket_path: None,
             inter_session_state: None,
             inject_rx: None,
+            openspec: None,
         }
     }
 }

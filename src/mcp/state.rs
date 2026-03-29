@@ -104,6 +104,31 @@ pub struct InterSessionState {
     /// When present, shared_context and task_board mutations write through.
     /// Behind a Mutex because `rusqlite::Connection` is Send but not Sync.
     pub backing_store: Option<Arc<std::sync::Mutex<ProjectStore>>>,
+
+    /// Pending task events for the main loop to sync to OpenSpec.
+    /// Drained by the main loop each tick.
+    pub pending_task_events: Vec<TaskEvent>,
+
+    /// Snapshot of OpenSpec backlog tasks (refreshed by main loop).
+    /// Agents can read this via `potato_list_tasks`.
+    pub openspec_tasks: Vec<OpenSpecTaskSnapshot>,
+}
+
+/// Task lifecycle events emitted by claim/release for external sync (e.g. OpenSpec).
+#[derive(Debug, Clone)]
+pub enum TaskEvent {
+    Claimed { task_id: String, pane_id: u64 },
+    Released { task_id: String },
+}
+
+/// Lightweight snapshot of an OpenSpec task for MCP tool access.
+#[derive(Debug, Clone, Serialize)]
+pub struct OpenSpecTaskSnapshot {
+    pub id: String,
+    pub title: String,
+    pub status: String,
+    pub phase: Option<String>,
+    pub severity: Option<String>,
 }
 
 impl InterSessionState {
@@ -133,6 +158,11 @@ impl InterSessionState {
         }
 
         state
+    }
+
+    /// Drain pending task events (called by the main loop each tick).
+    pub fn drain_task_events(&mut self) -> Vec<TaskEvent> {
+        std::mem::take(&mut self.pending_task_events)
     }
 
     /// Register a pane as live.
@@ -328,6 +358,10 @@ impl InterSessionState {
                 }
             }
         }
+        self.pending_task_events.push(TaskEvent::Claimed {
+            task_id: task_id.clone(),
+            pane_id,
+        });
         self.task_board.insert(
             task_id.clone(),
             TaskClaim {
@@ -352,6 +386,9 @@ impl InterSessionState {
                         }
                     }
                 }
+                self.pending_task_events.push(TaskEvent::Released {
+                    task_id: task_id.to_string(),
+                });
                 self.task_board.remove(task_id);
                 true
             }

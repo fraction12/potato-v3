@@ -16,6 +16,7 @@ mod events;
 mod log;
 mod mcp;
 mod metrics;
+mod openspec;
 mod pty;
 mod session;
 mod terminal;
@@ -288,6 +289,9 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
 
         // ── Sync MCP roles → pane titles ─────────────────────────────────────
         sync_mcp_roles_to_panes(state);
+
+        // ── OpenSpec sync ────────────────────────────────────────────────────
+        sync_openspec(state);
 
         // ── Input / message wait ──────────────────────────────────────────────
         let msg = tokio::select! {
@@ -1318,6 +1322,8 @@ fn build_collaboration_prompt(state: &AppState) -> String {
          potato_shared_context, potato_claim_task, potato_release_task. \
          IMPORTANT: Before picking a role, call potato_get_role to see what's taken. \
          Then call potato_claim_role with a DIFFERENT role than your partner. \
+         When given work, use potato_claim_task with the OpenSpec ticket ID (e.g. T-810) \
+         to register what you're working on. Release tasks when done. \
          After claiming roles, WAIT for the user to give you a task. \
          Do NOT start working on anything until the user tells you what to do. \
          Introduce yourself briefly, claim a role, and stand by.",
@@ -1590,6 +1596,66 @@ fn sync_mcp_roles_to_panes(state: &mut AppState) {
     }
 }
 
+/// Sync OpenSpec: drain task events → write back to YAML, poll watcher for file changes.
+fn sync_openspec(state: &mut AppState) {
+    // 1. Drain task events from InterSessionState and write back to OpenSpec.
+    if let (Some(iss), Some(openspec)) = (&state.inter_session_state, &state.openspec) {
+        let events = match iss.lock() {
+            Ok(mut st) => st.drain_task_events(),
+            Err(_) => Vec::new(),
+        };
+
+        for event in events {
+            match event {
+                mcp::state::TaskEvent::Claimed { ref task_id, .. } => {
+                    if let Err(e) = openspec.update_task_status(
+                        task_id,
+                        openspec::TaskStatus::Claimed,
+                    ) {
+                        tracing::warn!("Failed to write claim for {task_id} to OpenSpec: {e}");
+                    }
+                }
+                mcp::state::TaskEvent::Released { ref task_id } => {
+                    if let Err(e) = openspec.update_task_status(
+                        task_id,
+                        openspec::TaskStatus::Open,
+                    ) {
+                        tracing::warn!("Failed to write release for {task_id} to OpenSpec: {e}");
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Poll watcher for file-change notifications (non-blocking).
+    let mut backlog_changed = false;
+    if let Some(ref mut openspec) = state.openspec {
+        while openspec.rx.try_recv().is_ok() {
+            backlog_changed = true;
+        }
+    }
+
+    // 3. Refresh the OpenSpec snapshot in InterSessionState (on change or first tick).
+    if backlog_changed {
+        if let (Some(openspec), Some(iss)) = (&state.openspec, &state.inter_session_state) {
+            let tasks = openspec.open_tasks();
+            let snapshots: Vec<mcp::state::OpenSpecTaskSnapshot> = tasks.iter().map(|t| {
+                mcp::state::OpenSpecTaskSnapshot {
+                    id: t.id.clone(),
+                    title: t.title.clone(),
+                    status: t.status.to_string(),
+                    phase: t.phase.clone(),
+                    severity: t.severity.clone(),
+                }
+            }).collect();
+            if let Ok(mut st) = iss.lock() {
+                st.openspec_tasks = snapshots;
+            }
+            tracing::debug!("OpenSpec task snapshot refreshed ({} open tasks)", tasks.len());
+        }
+    }
+}
+
 fn sync_all_panes(state: &mut AppState) {
     let store = state.store.clone();
     let now = unix_now();
@@ -1812,6 +1878,11 @@ async fn main() -> Result<()> {
     let (inject_tx, inject_rx) = tokio::sync::mpsc::unbounded_channel();
     let (_mcp_bridge, mcp_socket_path) = mcp::bridge::McpBridge::start(Arc::clone(&inter_state), inject_tx)?;
 
+    // Initialize OpenSpec watcher if `.openspec/backlog.yaml` exists.
+    let openspec_watcher = std::env::current_dir()
+        .ok()
+        .and_then(|cwd| openspec::OpenSpecWatcher::new(&cwd));
+
     let mut state = AppState {
         model,
         screen: AppScreen::Dashboard(DashboardState {
@@ -1824,8 +1895,26 @@ async fn main() -> Result<()> {
         mcp_socket_path: Some(mcp_socket_path),
         inter_session_state: Some(inter_state),
         inject_rx: Some(inject_rx),
+        openspec: openspec_watcher,
         ..AppState::default()
     };
+
+    // Seed OpenSpec snapshot into InterSessionState so agents can read it immediately.
+    if let (Some(openspec), Some(iss)) = (&state.openspec, &state.inter_session_state) {
+        let tasks = openspec.open_tasks();
+        let snapshots: Vec<mcp::state::OpenSpecTaskSnapshot> = tasks.iter().map(|t| {
+            mcp::state::OpenSpecTaskSnapshot {
+                id: t.id.clone(),
+                title: t.title.clone(),
+                status: t.status.to_string(),
+                phase: t.phase.clone(),
+                severity: t.severity.clone(),
+            }
+        }).collect();
+        if let Ok(mut st) = iss.lock() {
+            st.openspec_tasks = snapshots;
+        }
+    }
 
     // Enter TUI.
     let _guard = TerminalGuard::enter()?;

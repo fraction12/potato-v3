@@ -20,6 +20,7 @@ pub const TOOL_CLAIM_TASK: &str = "potato_claim_task";
 pub const TOOL_RELEASE_TASK: &str = "potato_release_task";
 pub const TOOL_CLAIM_ROLE: &str = "potato_claim_role";
 pub const TOOL_GET_ROLE: &str = "potato_get_role";
+pub const TOOL_LIST_TASKS: &str = "potato_list_tasks";
 
 // ── Tool definitions ──────────────────────────────────────────────────────────
 
@@ -157,6 +158,20 @@ pub fn tool_definitions() -> Vec<ToolInfo> {
                 "properties": {}
             }),
         },
+        ToolInfo {
+            name: TOOL_LIST_TASKS.into(),
+            description: "List all open/actionable tasks from the project's OpenSpec backlog (.openspec/backlog.yaml). \
+                Use this to see what tickets are available to work on. Claim a task by ID with potato_claim_task.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "status": {
+                        "type": "string",
+                        "description": "Optional filter: 'open', 'claimed', 'in-progress', 'blocked'. Default: all non-done."
+                    }
+                }
+            }),
+        },
     ]
 }
 
@@ -180,6 +195,7 @@ pub fn handle_tool_call(
         TOOL_RELEASE_TASK => handle_release_task(args, pane_id, state),
         TOOL_CLAIM_ROLE => handle_claim_role(args, pane_id, state),
         TOOL_GET_ROLE => handle_get_role(pane_id, state),
+        TOOL_LIST_TASKS => handle_list_tasks(args, state),
         unknown => CallToolResult::failure(format!("Unknown tool: {unknown}")),
     }
 }
@@ -503,6 +519,44 @@ fn handle_get_role(
     CallToolResult::success(serde_json::to_string_pretty(&result).unwrap_or_default())
 }
 
+fn handle_list_tasks(
+    args: &Value,
+    state: &Arc<Mutex<InterSessionState>>,
+) -> CallToolResult {
+    let st = lock_state!(state);
+    let status_filter = args.get("status").and_then(|v| v.as_str());
+
+    let tasks: Vec<&crate::mcp::state::OpenSpecTaskSnapshot> = st.openspec_tasks
+        .iter()
+        .filter(|t| {
+            match status_filter {
+                Some(filter) => t.status == filter,
+                None => true,
+            }
+        })
+        .collect();
+
+    // Annotate with claim info from the task board.
+    let annotated: Vec<Value> = tasks.iter().map(|t| {
+        let claimed_by = st.task_board.get(&t.id).map(|c| c.claimed_by);
+        json!({
+            "id": t.id,
+            "title": t.title,
+            "status": t.status,
+            "phase": t.phase,
+            "severity": t.severity,
+            "claimed_by_pane": claimed_by,
+        })
+    }).collect();
+
+    let result = json!({
+        "total": annotated.len(),
+        "tasks": annotated,
+    });
+
+    CallToolResult::success(serde_json::to_string_pretty(&result).unwrap_or_default())
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -535,7 +589,7 @@ mod tests {
     #[test]
     fn tool_definitions_returns_all_tools() {
         let tools = tool_definitions();
-        assert_eq!(tools.len(), 8); // 6 spec tools + claim_role + get_role
+        assert_eq!(tools.len(), 9); // 6 spec tools + claim_role + get_role + list_tasks
     }
 
     #[test]
