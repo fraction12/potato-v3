@@ -54,10 +54,15 @@ pub fn format_notification(from_pane: u64, from_role: Option<&str>, content: &st
         .map(|r| format!(" ({r})"))
         .unwrap_or_default();
 
-    // Flatten to a single line — Claude Code's Ink raw mode doesn't handle
-    // embedded \n bytes correctly in the input buffer. Only \r triggers submit.
-    // This matches how broadcast works: plain text + \r.
-    let flat_content = content.replace('\n', " | ");
+    // Sanitize control characters from content to prevent injection attacks.
+    // A \r in the content would submit arbitrary input to Claude's PTY.
+    // A \n would be mishandled by Claude Code's Ink raw mode.
+    // Strip all C0 control chars, then re-add only the trailing \r to submit.
+    let sanitized: String = content
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+    let flat_content = sanitized.replace("  ", " ");
     format!("[Potato: Pane {from_pane}{role_suffix}] {flat_content}\r")
 }
 
@@ -138,8 +143,30 @@ mod tests {
     fn format_notification_multiline_flattened() {
         let msg = format_notification(0, None, "line1\nline2\nline3");
         assert!(!msg.contains('\n'), "newlines must be flattened");
-        assert!(msg.contains("line1 | line2 | line3"));
+        // Control chars become spaces, double spaces collapsed
+        assert!(msg.contains("line1 line2 line3"));
         assert!(msg.ends_with('\r'));
+    }
+
+    #[test]
+    fn format_notification_strips_carriage_returns() {
+        // \r in content could submit arbitrary commands to Claude's PTY
+        let msg = format_notification(0, None, "safe\rpwned\rtext");
+        let inner = &msg[..msg.len() - 1]; // everything before trailing \r
+        assert!(!inner.contains('\r'), "\\r in content must be sanitized");
+        assert!(msg.ends_with('\r'), "trailing submit \\r must remain");
+        assert!(msg.contains("safe"));
+        assert!(msg.contains("pwned"));
+    }
+
+    #[test]
+    fn format_notification_strips_all_control_chars() {
+        let msg = format_notification(0, None, "hello\x00world\x1b[31m\ttabs");
+        let inner = &msg[..msg.len() - 1];
+        assert!(
+            !inner.chars().any(|c| c.is_control()),
+            "no control chars should survive in content"
+        );
     }
 
     #[test]

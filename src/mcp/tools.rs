@@ -191,7 +191,10 @@ macro_rules! lock_state {
     ($state:expr) => {
         match $state.lock() {
             Ok(g) => g,
-            Err(_) => return CallToolResult::failure("State lock poisoned"),
+            Err(e) => {
+                tracing::error!("InterSessionState mutex poisoned: {e}");
+                return CallToolResult::failure("State lock poisoned");
+            }
         }
     };
 }
