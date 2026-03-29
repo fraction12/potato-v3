@@ -502,8 +502,14 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                                 DashboardFocus::Menu if dash.selected_menu > 0 => {
                                     dash.selected_menu -= 1;
                                 }
-                                DashboardFocus::Detail if dash.selected_detail > 0 => {
-                                    dash.selected_detail -= 1;
+                                DashboardFocus::Detail => {
+                                    use crate::app::state::DashboardMenuItem;
+                                    let menu_item = DashboardMenuItem::ALL[dash.selected_menu];
+                                    if menu_item == DashboardMenuItem::Settings {
+                                        dash.settings_scroll = dash.settings_scroll.saturating_sub(1);
+                                    } else if dash.selected_detail > 0 {
+                                        dash.selected_detail -= 1;
+                                    }
                                 }
                                 _ => {}
                             }
@@ -520,13 +526,18 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                                     // Bound by context — sessions list, roles list, etc.
                                     use crate::app::state::DashboardMenuItem;
                                     let menu_item = DashboardMenuItem::ALL[dash.selected_menu];
-                                    let max = match menu_item {
-                                        DashboardMenuItem::DefineRoles => dash.roles.len().saturating_sub(1),
-                                        DashboardMenuItem::RoastPotato => dash.recent_sessions.len().saturating_sub(1),
-                                        _ => usize::MAX,
-                                    };
-                                    if dash.selected_detail < max {
-                                        dash.selected_detail += 1;
+                                    if menu_item == DashboardMenuItem::Settings {
+                                        // Settings uses its own scroll offset (no max — render clamps).
+                                        dash.settings_scroll = dash.settings_scroll.saturating_add(1);
+                                    } else {
+                                        let max = match menu_item {
+                                            DashboardMenuItem::DefineRoles => dash.roles.len().saturating_sub(1),
+                                            DashboardMenuItem::RoastPotato => dash.recent_sessions.len().saturating_sub(1),
+                                            _ => usize::MAX,
+                                        };
+                                        if dash.selected_detail < max {
+                                            dash.selected_detail += 1;
+                                        }
                                     }
                                 }
                             }
@@ -2010,6 +2021,7 @@ async fn main() -> Result<()> {
 
     let mut state = AppState {
         model,
+        config: cfg.clone(),
         screen: AppScreen::Dashboard(DashboardState {
             available_agents: agents,
             roles: project_roles,

@@ -592,11 +592,152 @@ fn render_detail_integrations(frame: &mut Frame, area: Rect, state: &AppState) {
 
 // ── Detail: Settings ──────────────────────────────────────────────────────────
 
+/// Build all content lines for the Settings detail panel.
+///
+/// Extracted so it can be tested without a `Frame`.
+pub(crate) fn build_settings_lines(state: &AppState) -> Vec<Line<'static>> {
+    let dash = match &state.screen {
+        AppScreen::Dashboard(d) => d,
+        _ => return Vec::new(),
+    };
+    let cfg = &state.config;
+
+    let header = |text: &str| -> Line<'static> {
+        Line::from(Span::styled(
+            format!("  {}", text),
+            Style::default().fg(BRASS).add_modifier(Modifier::BOLD),
+        ))
+    };
+    let kv = |key: &str, val: &str| -> Line<'static> {
+        Line::from(vec![
+            Span::styled(format!("    {}: ", key), Style::default().fg(STONE)),
+            Span::styled(val.to_string(), Style::default().fg(CREAM)),
+        ])
+    };
+    let separator = || -> Line<'static> { Line::from("") };
+
+    let mut lines: Vec<Line<'static>> = Vec::new();
+
+    // ── GENERAL ──────────────────────────────────────────────────────────────
+    lines.push(header("GENERAL"));
+    lines.push(kv("Default Agent", &cfg.default_agent));
+    lines.push(kv("Theme", &cfg.theme));
+    lines.push(kv("Tick Rate", &format!("{}ms", cfg.tick_rate_ms)));
+    lines.push(kv("Model", &state.model));
+    lines.push(separator());
+
+    // ── AGENTS ───────────────────────────────────────────────────────────────
+    lines.push(header("AGENTS"));
+    if dash.available_agents.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "    No agents detected.".to_string(),
+            Style::default().fg(MUTED),
+        )));
+    } else {
+        for agent in &dash.available_agents {
+            let (indicator, fg) = if agent.available {
+                ("●", SPROUT)
+            } else {
+                ("○", MUTED)
+            };
+            let binary = agent
+                .binary_path
+                .as_ref()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| "—".to_string());
+            lines.push(Line::from(vec![
+                Span::styled(format!("    {} ", indicator), Style::default().fg(fg)),
+                Span::styled(
+                    agent.name.clone(),
+                    Style::default().fg(if agent.available { CREAM } else { MUTED }),
+                ),
+            ]));
+            lines.push(kv("      Adapter", &agent.adapter));
+            lines.push(kv("      Binary", &binary));
+        }
+    }
+    lines.push(separator());
+
+    // ── KEYBINDS ─────────────────────────────────────────────────────────────
+    lines.push(header("KEYBINDS"));
+    let kb = &cfg.keybinds;
+    lines.push(kv("Quit", &kb.quit));
+    lines.push(kv("Submit", &kb.submit));
+    lines.push(kv("Slash Menu", &kb.slash_menu));
+    lines.push(kv("Model Picker", &kb.model_picker));
+    lines.push(kv("Help", &kb.help));
+    lines.push(kv("Approve", &kb.approve));
+    lines.push(kv("Deny", &kb.deny));
+    lines.push(kv("New Session", &kb.new_session));
+    lines.push(separator());
+
+    // ── PATHS ────────────────────────────────────────────────────────────────
+    lines.push(header("PATHS"));
+    let config_display = if state.config_path.is_empty() {
+        "default".to_string()
+    } else {
+        state.config_path.clone()
+    };
+    lines.push(kv("Config", &config_display));
+    lines.push(kv("Session DB", &cfg.db_path));
+    let cwd = std::env::current_dir()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| "unknown".to_string());
+    lines.push(kv("CWD", &cwd));
+
+    let potato_dir = std::path::Path::new(".potato");
+    let potato_status = if potato_dir.exists() { "found" } else { "not found" };
+    lines.push(kv(".potato/", potato_status));
+
+    let openspec_dir = std::path::Path::new(".openspec");
+    let openspec_status = if openspec_dir.exists() { "found" } else { "not found" };
+    lines.push(kv(".openspec/", openspec_status));
+
+    let mcp_json = std::path::Path::new(".mcp.json");
+    let mcp_json_status = if mcp_json.exists() { "found" } else { "not found" };
+    lines.push(kv(".mcp.json", mcp_json_status));
+    lines.push(separator());
+
+    // ── MCP / COORDINATION ───────────────────────────────────────────────────
+    lines.push(header("MCP / COORDINATION"));
+    let socket_display = state
+        .mcp_socket_path
+        .as_ref()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| "inactive".to_string());
+    lines.push(kv("Socket", &socket_display));
+
+    let iss_status = if state.inter_session_state.is_some() {
+        "active"
+    } else {
+        "inactive"
+    };
+    lines.push(kv("Inter-Session", iss_status));
+
+    let pane_count = state.panes.len();
+    lines.push(kv("Registered Panes", &pane_count.to_string()));
+
+    // Active roles from dashboard state.
+    if dash.roles.is_empty() {
+        lines.push(kv("Active Roles", "none"));
+    } else {
+        let role_names: Vec<&str> = dash.roles.iter().map(|r| r.name.as_str()).collect();
+        lines.push(kv("Active Roles", &role_names.join(", ")));
+    }
+    lines.push(separator());
+
+    // ── PERMISSIONS ──────────────────────────────────────────────────────────
+    lines.push(header("PERMISSIONS"));
+    lines.push(kv("Mode", "dangerously-skip-permissions (always on)"));
+
+    lines
+}
+
 fn render_detail_settings(frame: &mut Frame, area: Rect, state: &AppState) {
-    let detail_focused = matches!(
-        state.screen,
-        AppScreen::Dashboard(ref d) if d.focus == DashboardFocus::Detail
-    );
+    let AppScreen::Dashboard(ref dash) = state.screen else {
+        return;
+    };
+    let detail_focused = dash.focus == DashboardFocus::Detail;
 
     let border_style = if detail_focused {
         Style::default().fg(AMBER)
@@ -613,45 +754,14 @@ fn render_detail_settings(frame: &mut Frame, area: Rect, state: &AppState) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let mut lines: Vec<Line> = Vec::new();
+    let all_lines = build_settings_lines(state);
 
-    lines.push(Line::from(Span::styled(
-        "  MODEL",
-        Style::default().fg(BRASS).add_modifier(Modifier::BOLD),
-    )));
-    lines.push(Line::from(Span::styled(
-        format!("    {}", state.model),
-        Style::default().fg(CREAM),
-    )));
+    // Apply scroll from settings_scroll, clamped to content height.
+    let total = all_lines.len() as u16;
+    let max_scroll = total.saturating_sub(inner.height);
+    let scroll = dash.settings_scroll.min(max_scroll);
 
-    lines.push(Line::from(""));
-
-    lines.push(Line::from(Span::styled(
-        "  CONFIG",
-        Style::default().fg(BRASS).add_modifier(Modifier::BOLD),
-    )));
-    let config_display = if state.config_path.is_empty() {
-        "default"
-    } else {
-        &state.config_path
-    };
-    lines.push(Line::from(Span::styled(
-        format!("    {}", config_display),
-        Style::default().fg(CREAM),
-    )));
-
-    lines.push(Line::from(""));
-
-    lines.push(Line::from(Span::styled(
-        "  PERMISSIONS",
-        Style::default().fg(BRASS).add_modifier(Modifier::BOLD),
-    )));
-    lines.push(Line::from(Span::styled(
-        "    dangerously-skip-permissions (always on)",
-        Style::default().fg(CREAM),
-    )));
-
-    let content = Paragraph::new(lines);
+    let content = Paragraph::new(all_lines).scroll((scroll, 0));
     frame.render_widget(content, inner);
 }
 
@@ -668,6 +778,9 @@ fn render_footer(frame: &mut Frame, area: Rect, state: &AppState) {
         }
         (_, DashboardFocus::Menu) => {
             "↑↓ navigate  Tab details  Enter select  q quit"
+        }
+        (DashboardMenuItem::Settings, DashboardFocus::Detail) => {
+            "↑↓ scroll  Tab menu  Esc back"
         }
         (_, DashboardFocus::Detail) => {
             "↑↓ navigate  Tab menu  Esc back  Enter select"
@@ -779,5 +892,125 @@ mod tests {
     fn empty_sessions_placeholder() {
         let sessions: Vec<SessionSummary> = vec![];
         assert!(sessions.is_empty());
+    }
+
+    // ── Settings panel tests ─────────────────────────────────────────────────
+
+    fn make_settings_state() -> AppState {
+        let mut state = AppState::default();
+        state.config_path = "/home/user/.potato/config.toml".to_string();
+        state.model = "sonnet-4".to_string();
+        state.mcp_socket_path = Some(std::path::PathBuf::from("/tmp/potato.sock"));
+        if let Some(dash) = state.dashboard_mut() {
+            dash.available_agents = vec![
+                AgentInfo {
+                    name: "Claude Code".to_string(),
+                    adapter: "claude".to_string(),
+                    binary_path: Some(std::path::PathBuf::from("/usr/bin/claude")),
+                    available: true,
+                },
+                AgentInfo {
+                    name: "Codex".to_string(),
+                    adapter: "codex".to_string(),
+                    binary_path: None,
+                    available: false,
+                },
+            ];
+        }
+        state
+    }
+
+    /// Helper: collect all lines into a single string for substring matching.
+    fn lines_to_string(lines: &[ratatui::text::Line<'_>]) -> String {
+        lines.iter().map(|l| {
+            l.spans.iter().map(|s| s.content.as_ref()).collect::<String>()
+        }).collect::<Vec<_>>().join("\n")
+    }
+
+    #[test]
+    fn settings_lines_has_general_section() {
+        let state = make_settings_state();
+        let lines = super::build_settings_lines(&state);
+        let text = lines_to_string(&lines);
+        assert!(text.contains("GENERAL"), "missing GENERAL header");
+        assert!(text.contains("claude"), "missing default_agent value");
+        assert!(text.contains("earth"), "missing theme value");
+        assert!(text.contains("250"), "missing tick_rate_ms value");
+    }
+
+    #[test]
+    fn settings_lines_has_agents_section() {
+        let state = make_settings_state();
+        let lines = super::build_settings_lines(&state);
+        let text = lines_to_string(&lines);
+        assert!(text.contains("AGENTS"), "missing AGENTS header");
+        assert!(text.contains("Claude Code"), "missing agent name");
+        assert!(text.contains("Codex"), "missing second agent");
+    }
+
+    #[test]
+    fn settings_lines_has_keybinds_section() {
+        let state = make_settings_state();
+        let lines = super::build_settings_lines(&state);
+        let text = lines_to_string(&lines);
+        assert!(text.contains("KEYBINDS"), "missing KEYBINDS header");
+        assert!(text.contains("ctrl+q"), "missing quit keybind");
+        assert!(text.contains("enter"), "missing submit keybind");
+    }
+
+    #[test]
+    fn settings_lines_has_paths_section() {
+        let state = make_settings_state();
+        let lines = super::build_settings_lines(&state);
+        let text = lines_to_string(&lines);
+        assert!(text.contains("PATHS"), "missing PATHS header");
+        assert!(text.contains("/home/user/.potato/config.toml"), "missing config path");
+    }
+
+    #[test]
+    fn settings_lines_has_mcp_section() {
+        let state = make_settings_state();
+        let lines = super::build_settings_lines(&state);
+        let text = lines_to_string(&lines);
+        assert!(text.contains("MCP"), "missing MCP header");
+        assert!(text.contains("/tmp/potato.sock"), "missing socket path");
+    }
+
+    #[test]
+    fn settings_lines_has_permissions_section() {
+        let state = make_settings_state();
+        let lines = super::build_settings_lines(&state);
+        let text = lines_to_string(&lines);
+        assert!(text.contains("PERMISSIONS"), "missing PERMISSIONS header");
+    }
+
+    #[test]
+    fn settings_lines_section_count() {
+        let state = make_settings_state();
+        let lines = super::build_settings_lines(&state);
+        let text = lines_to_string(&lines);
+        // 6 sections: GENERAL, AGENTS, KEYBINDS, PATHS, MCP, PERMISSIONS
+        let section_headers = ["GENERAL", "AGENTS", "KEYBINDS", "PATHS", "MCP", "PERMISSIONS"];
+        for header in &section_headers {
+            assert!(text.contains(header), "missing section: {}", header);
+        }
+    }
+
+    #[test]
+    fn settings_scroll_clamps_to_content() {
+        let mut state = make_settings_state();
+        let lines = super::build_settings_lines(&state);
+        let total = lines.len() as u16;
+        // Scroll beyond content should clamp in render (we test the max here).
+        let panel_height: u16 = 10;
+        let max_scroll = total.saturating_sub(panel_height);
+        // Setting scroll way beyond should be clamped.
+        if let Some(dash) = state.dashboard_mut() {
+            dash.settings_scroll = 999;
+        }
+        let dash = state.dashboard().unwrap();
+        let clamped = dash.settings_scroll.min(max_scroll);
+        assert!(clamped <= max_scroll);
+        assert!(clamped < 999);
     }
 }

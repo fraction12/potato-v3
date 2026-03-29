@@ -993,6 +993,68 @@ tasks:
     description: |
       ui/widgets/sparkline.rs:41 — Should use VecDeque for O(1) pop_front.
 
+  # ─── Phase 8e — Settings Page ────────────────────────────────────────────────
+
+  - id: T-830
+    title: "Settings detail panel: full settings page with sections and controls"
+    status: open
+    phase: phase-8e-settings
+    description: |
+      Replace the current stub Settings detail panel (which shows only model,
+      config path, and permissions) with a comprehensive, read-only settings
+      page organized into clear sections. All data comes from existing
+      AppState/Config/runtime fields — no new config writing yet.
+
+      **Sections:**
+
+      1. **General**
+         - Default agent (from Config.default_agent)
+         - Theme (from Config.theme)
+         - Tick rate (from Config.tick_rate_ms)
+
+      2. **Agents**
+         - List of detected agents with name, adapter, binary path, and
+           availability status (● available / ○ not found)
+         - Per-agent: model override if set, extra args if any
+
+      3. **Keybinds**
+         - All keybind config entries (quit, submit, slash_menu,
+           model_picker, help, approve, deny, new_session) with
+           current values from Config.keybinds
+
+      4. **Paths**
+         - Config file path (loaded or "default")
+         - Session DB path (from Config.db_path, expanded)
+         - Project directory (CWD)
+         - .potato/ project state (exists / not found)
+         - .openspec/ (exists / not found)
+         - .mcp.json (exists / not found)
+
+      5. **MCP / Coordination**
+         - MCP socket path (from AppState.mcp_socket_path)
+         - Inter-session state status (active / inactive)
+         - Registered panes count
+         - Active roles summary
+
+      6. **Permissions**
+         - Claude permissions mode (currently always
+           dangerously-skip-permissions)
+
+      The panel should be scrollable (Up/Down when detail is focused)
+      because the content will exceed typical terminal height. Use the
+      same earthy theme (BRASS headers, CREAM values, STONE separators).
+
+      Footer hints should show: "↑↓ scroll  Tab menu  q quit"
+    acceptance:
+      - All 6 sections render with correct data from runtime state
+      - Scrollable when content exceeds panel height
+      - Agents section shows real detected agent data
+      - Keybinds section shows all configured keybinds
+      - Paths section shows real resolved paths
+      - MCP section reflects live coordination state
+      - No config writing — read-only for now
+      - Tests for scroll state and section rendering logic
+
   # ─── Phase 9 — Polish + Distribution ──────────────────────────────────────────
 
   - id: T-901

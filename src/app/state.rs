@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 
+use crate::config::Config;
 use crate::metrics::SessionMetrics;
 use crate::session::store::{SessionInfo, SessionStore};
 use crate::ui::focus::FocusRing;
@@ -173,6 +174,8 @@ pub struct DashboardState {
     pub selected_agent: usize,
     /// Inline input state (e.g. adding a new role).
     pub input: DashboardInput,
+    /// Vertical scroll offset for the Settings detail panel.
+    pub settings_scroll: u16,
 }
 
 // ── Cockpit focus ─────────────────────────────────────────────────────────────
@@ -446,6 +449,8 @@ pub struct AppState {
     pub model: String,
     /// Path to the loaded config file.
     pub config_path: String,
+    /// Full parsed configuration (for the Settings detail panel).
+    pub config: Config,
 
     // ── Error / notification state ────────────────────────────────────────────
     pub error_message: Option<String>,
@@ -512,6 +517,7 @@ impl Default for AppState {
             screen: AppScreen::default(),
             model: "claude".to_string(),
             config_path: String::new(),
+            config: Config::default(),
             error_message: None,
             error_dismiss_ticks: 0,
             tick_count: 0,
@@ -697,5 +703,20 @@ mod tests {
         let mut state = AgentPickerState::default();
         state.selected = 2;
         assert_eq!(state.selected, 2);
+    }
+
+    #[test]
+    fn settings_scroll_defaults_to_zero() {
+        let d = DashboardState::default();
+        assert_eq!(d.settings_scroll, 0);
+    }
+
+    #[test]
+    fn app_state_has_config_with_defaults() {
+        let state = AppState::default();
+        assert_eq!(state.config.default_agent, "claude");
+        assert_eq!(state.config.theme, "earth");
+        assert_eq!(state.config.tick_rate_ms, 250);
+        assert_eq!(state.config.keybinds.quit, "ctrl+q");
     }
 }
