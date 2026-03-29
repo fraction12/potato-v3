@@ -343,10 +343,23 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                                     for (i, role) in roles.iter().enumerate() {
                                         if let Some(pane) = state.panes.get_mut(i) {
                                             pane.role_name = Some(role.name.clone());
+
+                                            // Pre-register role in InterSessionState so
+                                            // potato_get_role returns the assigned role
+                                            // BEFORE the agent even calls claim_role.
+                                            if let Some(ref iss) = state.inter_session_state {
+                                                if let Ok(mut st) = iss.lock() {
+                                                    st.set_role(pane.id, crate::mcp::state::PaneRole {
+                                                        name: role.name.clone(),
+                                                        description: role.prompt.clone(),
+                                                    });
+                                                }
+                                            }
+
                                             if let Some(ref mut pty) = pane.pty {
                                                 let prompt = format!(
-                                                    "Your role is: {}. {} Use potato_claim_role with role name \"{}\" exactly. Do NOT start working until the user gives you a task. Stand by after claiming.",
-                                                    role.name, role.prompt, role.name
+                                                    "Your role is: {}. {} Your role has already been claimed for you. Do NOT start working until the user gives you a task. Stand by.",
+                                                    role.name, role.prompt
                                                 );
                                                 let _ = pty.write_input(prompt.as_bytes());
                                                 if let Ok(mut pending) = PENDING_ENTERS.lock() {
