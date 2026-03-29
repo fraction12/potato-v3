@@ -345,8 +345,8 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                                             pane.role_name = Some(role.name.clone());
                                             if let Some(ref mut pty) = pane.pty {
                                                 let prompt = format!(
-                                                    "Your role is: {}. {} Do NOT start working until the user gives you a task. Claim your role and stand by.",
-                                                    role.name, role.prompt
+                                                    "Your role is: {}. {} Use potato_claim_role with role name \"{}\" exactly. Do NOT start working until the user gives you a task. Stand by after claiming.",
+                                                    role.name, role.prompt, role.name
                                                 );
                                                 let _ = pty.write_input(prompt.as_bytes());
                                                 if let Ok(mut pending) = PENDING_ENTERS.lock() {

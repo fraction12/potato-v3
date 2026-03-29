@@ -139,7 +139,7 @@ pub fn tool_definitions() -> Vec<ToolInfo> {
                 "properties": {
                     "role": {
                         "type": "string",
-                        "description": "The role name to claim (e.g. 'architect', 'implementer', 'reviewer')."
+                        "description": "The role name to claim. Use the role assigned to you by your bootstrap prompt, or choose one that reflects what you are actually doing."
                     },
                     "description": {
                         "type": "string",
