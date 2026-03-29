@@ -327,18 +327,65 @@ fn render_detail_roles(frame: &mut Frame, area: Rect, state: &AppState) {
     )));
     lines.push(Line::from(""));
 
+    // Helper: wrap text at a given width, returning indented lines.
+    let wrap_text = |text: &str, indent: usize, width: u16, style: Style| -> Vec<Line<'_>> {
+        let usable = (width as usize).saturating_sub(indent);
+        if usable == 0 {
+            return vec![Line::from(Span::styled(text.to_string(), style))];
+        }
+        let pad = " ".repeat(indent);
+        let mut result: Vec<Line> = Vec::new();
+        let mut remaining = text;
+        while !remaining.is_empty() {
+            let chunk_len = remaining.len().min(usable);
+            // Try to break at a space if we're not at the end.
+            let break_at = if chunk_len < remaining.len() {
+                remaining[..chunk_len]
+                    .rfind(' ')
+                    .map(|p| p + 1) // include the space in this chunk
+                    .unwrap_or(chunk_len)
+            } else {
+                chunk_len
+            };
+            let chunk = &remaining[..break_at];
+            remaining = &remaining[break_at..];
+            result.push(Line::from(Span::styled(
+                format!("{}{}", pad, chunk.trim_end()),
+                style,
+            )));
+        }
+        if result.is_empty() {
+            result.push(Line::from(Span::styled(format!("{}...", " ".repeat(indent)), style)));
+        }
+        result
+    };
+
     if dash.roles.is_empty() {
+        // Show the defaults: one pane, no role prompt, self-organizing.
         lines.push(Line::from(Span::styled(
-            "  No roles defined yet.",
+            "  Defaults (no custom roles):",
+            Style::default().fg(TAN).add_modifier(Modifier::BOLD),
+        )));
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "  Pane 1 — Claude",
+            Style::default().fg(CREAM),
+        )));
+        lines.push(Line::from(Span::styled(
+            "    No role prompt. Agent starts with a blank slate",
+            Style::default().fg(MUTED),
+        )));
+        lines.push(Line::from(Span::styled(
+            "    and self-organizes based on the project context",
+            Style::default().fg(MUTED),
+        )));
+        lines.push(Line::from(Span::styled(
+            "    and MCP coordination tools.",
             Style::default().fg(MUTED),
         )));
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
-            "  Without roles, agents will self-organize based on",
-            Style::default().fg(MUTED),
-        )));
-        lines.push(Line::from(Span::styled(
-            "  what they find in the project and via MCP tools.",
+            "  Press a to add a role and customise behaviour.",
             Style::default().fg(MUTED),
         )));
     } else {
@@ -351,20 +398,13 @@ fn render_detail_roles(frame: &mut Frame, area: Rect, state: &AppState) {
                     Style::default().fg(TAN).bg(bg),
                 ),
                 Span::styled(
-                    &role.name,
+                    role.name.clone(),
                     Style::default().fg(CREAM).bg(bg).add_modifier(Modifier::BOLD),
                 ),
             ]));
-            // Show truncated prompt.
-            let prompt_preview = if role.prompt.len() > 60 {
-                format!("{}...", &role.prompt[..57])
-            } else {
-                role.prompt.clone()
-            };
-            lines.push(Line::from(Span::styled(
-                format!("    {}", prompt_preview),
-                Style::default().fg(MUTED).bg(bg),
-            )));
+            // Show full instructions, wrapped.
+            let prompt_style = Style::default().fg(MUTED).bg(bg);
+            lines.extend(wrap_text(&role.prompt, 4, inner.width, prompt_style));
             lines.push(Line::from(""));
         }
     }
