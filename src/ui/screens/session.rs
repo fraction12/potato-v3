@@ -50,7 +50,7 @@ use crate::ui::theme::{AMBER, BG, BRASS, CHARCOAL, CREAM, ROSE, SPROUT, STONE, T
 
 const MUTED: Color = Color::Rgb(100, 100, 100);
 /// Width of the left and right rails (columns).
-const RAIL_WIDTH: u16 = 18;
+const RAIL_WIDTH: u16 = 22;
 
 // ── Entry point ───────────────────────────────────────────────────────────────
 
