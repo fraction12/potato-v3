@@ -436,7 +436,13 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
 
                     // ── Ctrl+W — close active pane ────────────────────────────
                     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('w') {
-                        state.panes.close_active();
+                        if let Some(closed) = state.panes.close_active() {
+                            if let Some(ref iss) = state.inter_session_state {
+                                if let Ok(mut st) = iss.lock() {
+                                    st.unregister_pane(closed.id);
+                                }
+                            }
+                        }
 
                         turn_handle = None;
 
@@ -1062,7 +1068,13 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
             let had_panes = !dead_indices.is_empty();
             for i in dead_indices.into_iter().rev() {
                 tracing::info!("Pane {} PTY exited, closing", i);
-                state.panes.close(i);
+                if let Some(closed) = state.panes.close(i) {
+                    if let Some(ref iss) = state.inter_session_state {
+                        if let Ok(mut st) = iss.lock() {
+                            st.unregister_pane(closed.id);
+                        }
+                    }
+                }
             }
             // Only bounce to dashboard if we just closed the last pane.
             if had_panes && state.panes.is_empty() {
@@ -1186,10 +1198,18 @@ fn spawn_claude_pane(
         .open(&session_id, "claude")
         .ok_or_else(|| "Failed to open pane".to_string())?;
 
+    let pane_id = pane.id;
     let _dirty_rx = real_pty.dirty_tx.subscribe();
     pane.pty = Some(real_pty);
     pane.session.status = crate::app::state::AgentStatus::Idle;
     pane.session.claude_session_id = Some(session_id.clone());
+
+    // Register pane with inter-session state for partner resolution.
+    if let Some(ref iss) = state.inter_session_state {
+        if let Ok(mut st) = iss.lock() {
+            st.register_pane(pane_id);
+        }
+    }
 
     // Set up JSONL log tracker.
     if let Some(home) = dirs::home_dir() {
@@ -1462,54 +1482,84 @@ fn spawn_agent_pane(
 /// Sync all pane JSONL trackers and update sidebar metrics.
 /// Drain pending injection requests from the MCP bridge and write formatted
 /// notifications into target pane PTYs so agents actually "see" messages.
+/// Pending `\r` submissions awaiting their delay.
+static PENDING_ENTERS: std::sync::Mutex<Vec<crate::mcp::injection::PendingEnter>> =
+    std::sync::Mutex::new(Vec::new());
+
 fn drain_inject_requests(state: &mut AppState) {
-    let rx = match state.inject_rx.as_mut() {
-        Some(rx) => rx,
-        None => return,
-    };
+    let current_tick = state.tick_count;
 
-    // Drain all pending requests and inject immediately.
-    // In Claude Code, Enter while generating queues a follow-up message —
-    // only Escape interrupts. So we always write to the PTY regardless of
-    // agent status; Claude handles the queueing internally.
-    while let Ok(req) = rx.try_recv() {
-        let notification = crate::mcp::injection::format_notification(
-            req.from_pane,
-            req.from_role.as_deref(),
-            &req.content,
-        );
+    // ── Phase 1: Drain new requests → write text (no \r yet) ─────────────
+    if let Some(ref mut rx) = state.inject_rx {
+        while let Ok(req) = rx.try_recv() {
+            let notification = crate::mcp::injection::format_notification(
+                req.from_pane,
+                req.from_role.as_deref(),
+                &req.content,
+            );
 
-        let target_index = (0..state.panes.len())
-            .find(|&i| state.panes.get(i).map(|p| p.id) == Some(req.to_pane));
+            let target_index = (0..state.panes.len())
+                .find(|&i| state.panes.get(i).map(|p| p.id) == Some(req.to_pane));
 
-        match target_index {
-            Some(idx) => {
-                match crate::mcp::injection::inject_into_pane(
-                    &mut state.panes,
-                    idx,
-                    &notification,
-                ) {
-                    Ok(true) => {
-                        tracing::info!(
-                            "Injected message from pane {} to pane {}",
-                            req.from_pane, req.to_pane
-                        );
-                    }
-                    Ok(false) => {
-                        tracing::warn!(
-                            "Skipped injection to pane {} (approval pending or no PTY)",
-                            req.to_pane
-                        );
-                    }
-                    Err(e) => {
-                        tracing::warn!("Injection to pane {} failed: {e}", req.to_pane);
+            match target_index {
+                Some(idx) => {
+                    match crate::mcp::injection::inject_into_pane(
+                        &mut state.panes,
+                        idx,
+                        &notification,
+                    ) {
+                        Ok(true) => {
+                            tracing::info!(
+                                "Injected text from pane {} to pane {} (Enter pending)",
+                                req.from_pane, req.to_pane
+                            );
+                            if let Ok(mut pending) = PENDING_ENTERS.lock() {
+                                pending.push(crate::mcp::injection::PendingEnter {
+                                    pane_index: idx,
+                                    written_at_tick: current_tick,
+                                    delay_ticks: crate::mcp::injection::ENTER_DELAY_TICKS,
+                                });
+                            }
+                        }
+                        Ok(false) => {
+                            tracing::warn!(
+                                "Skipped injection to pane {} (approval pending or no PTY)",
+                                req.to_pane
+                            );
+                        }
+                        Err(e) => {
+                            tracing::warn!("Injection to pane {} failed: {e}", req.to_pane);
+                        }
                     }
                 }
-            }
-            None => {
-                tracing::warn!("Inject target pane {} not found", req.to_pane);
+                None => {
+                    tracing::warn!("Inject target pane {} not found", req.to_pane);
+                }
             }
         }
+    }
+
+    // ── Phase 2: Send `\r` for any pending enters whose delay has elapsed ────
+    if let Ok(mut pending) = PENDING_ENTERS.lock() {
+        pending.retain(|p| {
+            if current_tick.wrapping_sub(p.written_at_tick) >= p.delay_ticks {
+                // Time to send Enter.
+                if let Some(pane) = state.panes.get_mut(p.pane_index) {
+                    if let Some(ref mut pty) = pane.pty {
+                        if !pty.child_exited() {
+                            if let Err(e) = pty.write_input(b"\r") {
+                                tracing::warn!("Failed to send Enter to pane: {e}");
+                            } else {
+                                tracing::info!("Sent deferred Enter to pane index {}", p.pane_index);
+                            }
+                        }
+                    }
+                }
+                false // remove from pending
+            } else {
+                true // keep waiting
+            }
+        });
     }
 }
 

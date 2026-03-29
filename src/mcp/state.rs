@@ -90,11 +90,36 @@ pub struct InterSessionState {
 
     /// Role assignments per pane.
     pub roles: HashMap<u64, PaneRole>,
+
+    /// Currently known live pane IDs.
+    ///
+    /// Maintained by the main loop so partner resolution doesn't depend
+    /// on fragile assumptions like `id ^ 1`.
+    pub known_panes: Vec<u64>,
 }
 
 impl InterSessionState {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Register a pane as live.
+    pub fn register_pane(&mut self, pane_id: u64) {
+        if !self.known_panes.contains(&pane_id) {
+            self.known_panes.push(pane_id);
+        }
+    }
+
+    /// Remove a pane (on close/death).
+    pub fn unregister_pane(&mut self, pane_id: u64) {
+        self.known_panes.retain(|&id| id != pane_id);
+    }
+
+    /// Find the partner pane ID for `pane_id`.
+    ///
+    /// Returns the first known pane that isn't `pane_id`, or `None`.
+    pub fn resolve_partner(&self, pane_id: u64) -> Option<u64> {
+        self.known_panes.iter().find(|&&id| id != pane_id).copied()
     }
 
     // ── Messaging ─────────────────────────────────────────────────────────────
@@ -583,5 +608,51 @@ mod tests {
         let u: MessagePriority = serde_json::from_str(r#""urgent""#).unwrap();
         assert_eq!(n, MessagePriority::Normal);
         assert_eq!(u, MessagePriority::Urgent);
+    }
+
+    // ── Pane registration & partner resolution ────────────────────────────────
+
+    #[test]
+    fn register_and_resolve_partner() {
+        let mut state = make_state();
+        state.register_pane(0);
+        state.register_pane(1);
+        assert_eq!(state.resolve_partner(0), Some(1));
+        assert_eq!(state.resolve_partner(1), Some(0));
+    }
+
+    #[test]
+    fn resolve_partner_none_when_alone() {
+        let mut state = make_state();
+        state.register_pane(5);
+        assert_eq!(state.resolve_partner(5), None);
+    }
+
+    #[test]
+    fn resolve_partner_works_with_non_sequential_ids() {
+        let mut state = make_state();
+        state.register_pane(3);
+        state.register_pane(7);
+        assert_eq!(state.resolve_partner(3), Some(7));
+        assert_eq!(state.resolve_partner(7), Some(3));
+    }
+
+    #[test]
+    fn unregister_pane_removes_from_known() {
+        let mut state = make_state();
+        state.register_pane(0);
+        state.register_pane(1);
+        state.unregister_pane(1);
+        assert_eq!(state.resolve_partner(0), None);
+        assert_eq!(state.known_panes, vec![0]);
+    }
+
+    #[test]
+    fn register_pane_is_idempotent() {
+        let mut state = make_state();
+        state.register_pane(0);
+        state.register_pane(0);
+        state.register_pane(0);
+        assert_eq!(state.known_panes.len(), 1);
     }
 }

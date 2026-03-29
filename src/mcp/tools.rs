@@ -236,10 +236,11 @@ fn handle_send_message(
     // Resolve target pane.
     let to_pane: u64 = match args.get("to").and_then(Value::as_str) {
         Some("partner") | None => {
-            // Send to all other known panes (determined by roles or inboxes).
-            // For now, resolve to pane_id XOR 1 (0↔1 in a 2-pane setup).
-            // This is the simplest useful default for 2-pane scenarios.
-            pane_id ^ 1
+            let st = lock_state!(state);
+            match st.resolve_partner(pane_id) {
+                Some(partner) => partner,
+                None => return CallToolResult::failure("No partner pane found."),
+            }
         }
         Some(id_str) => match id_str.parse::<u64>() {
             Ok(id) => id,
@@ -510,7 +511,13 @@ mod tests {
     use serde_json::json;
 
     fn make_state() -> Arc<Mutex<InterSessionState>> {
-        Arc::new(Mutex::new(InterSessionState::new()))
+        let state = Arc::new(Mutex::new(InterSessionState::new()));
+        {
+            let mut st = state.lock().unwrap();
+            st.register_pane(0);
+            st.register_pane(1);
+        }
+        state
     }
 
     fn make_state_with_roles() -> Arc<Mutex<InterSessionState>> {

@@ -27,6 +27,23 @@ pub struct InjectRequest {
     pub content: String,
 }
 
+/// A pending injection that has been partially delivered (text written,
+/// Enter not yet sent). The main loop should send `\r` after a short delay.
+#[derive(Debug, Clone)]
+pub struct PendingEnter {
+    /// Pane index (not ID) in PaneManager.
+    pub pane_index: usize,
+    /// Tick count at which the text was written.
+    pub written_at_tick: u64,
+    /// How many ticks to wait before sending Enter.
+    pub delay_ticks: u64,
+}
+
+/// Number of main-loop ticks to wait between writing message text and
+/// sending `\r`. At ~60Hz tick rate, 5 ticks ≈ 83ms — enough for Claude's
+/// Ink renderer to process the text before we submit.
+pub const ENTER_DELAY_TICKS: u64 = 5;
+
 /// Format a message notification for PTY injection.
 ///
 /// The format uses a clearly delimited block so Claude can distinguish it
@@ -48,6 +65,11 @@ pub struct InjectRequest {
 /// Hey, I finished the API design. Check shared context for the schema.
 /// [/Potato]
 /// ```
+/// Format a message notification for PTY injection.
+///
+/// Returns the text WITHOUT a trailing `\r`. The caller is responsible
+/// for sending `\r` after a short delay to avoid the race condition where
+/// Claude's Ink renderer swallows the Enter during active output.
 pub fn format_notification(from_pane: u64, from_role: Option<&str>, content: &str) -> String {
     let role_suffix = from_role
         .filter(|r| !r.is_empty())
@@ -57,13 +79,12 @@ pub fn format_notification(from_pane: u64, from_role: Option<&str>, content: &st
     // Sanitize control characters from content to prevent injection attacks.
     // A \r in the content would submit arbitrary input to Claude's PTY.
     // A \n would be mishandled by Claude Code's Ink raw mode.
-    // Strip all C0 control chars, then re-add only the trailing \r to submit.
     let sanitized: String = content
         .chars()
         .map(|c| if c.is_control() { ' ' } else { c })
         .collect();
     let flat_content = sanitized.replace("  ", " ");
-    format!("[Potato: Pane {from_pane}{role_suffix}] {flat_content}\r")
+    format!("[Potato: Pane {from_pane}{role_suffix}] {flat_content}")
 }
 
 /// Attempt to inject a formatted notification into a target pane's PTY.
@@ -112,7 +133,7 @@ mod tests {
         let msg = format_notification(0, None, "hello from pane 0");
         assert!(msg.contains("[Potato: Pane 0]"));
         assert!(msg.contains("hello from pane 0"));
-        assert!(msg.ends_with('\r'));
+        assert!(!msg.ends_with('\r'), "should not include trailing Enter (deferred)");
     }
 
     #[test]
@@ -132,9 +153,8 @@ mod tests {
     #[test]
     fn format_notification_single_line_no_newlines() {
         let msg = format_notification(0, None, "test content");
-        // Must not contain any \n — only \r at the end to submit.
         assert!(!msg.contains('\n'), "must be single-line for Claude Code raw mode");
-        assert!(msg.ends_with('\r'), "missing trailing carriage return");
+        assert!(!msg.contains('\r'), "Enter is deferred — no \\r in text");
         assert!(msg.contains("[Potato:"));
         assert!(msg.contains("test content"));
     }
@@ -143,18 +163,13 @@ mod tests {
     fn format_notification_multiline_flattened() {
         let msg = format_notification(0, None, "line1\nline2\nline3");
         assert!(!msg.contains('\n'), "newlines must be flattened");
-        // Control chars become spaces, double spaces collapsed
         assert!(msg.contains("line1 line2 line3"));
-        assert!(msg.ends_with('\r'));
     }
 
     #[test]
     fn format_notification_strips_carriage_returns() {
-        // \r in content could submit arbitrary commands to Claude's PTY
         let msg = format_notification(0, None, "safe\rpwned\rtext");
-        let inner = &msg[..msg.len() - 1]; // everything before trailing \r
-        assert!(!inner.contains('\r'), "\\r in content must be sanitized");
-        assert!(msg.ends_with('\r'), "trailing submit \\r must remain");
+        assert!(!msg.contains('\r'), "\\r in content must be sanitized");
         assert!(msg.contains("safe"));
         assert!(msg.contains("pwned"));
     }
@@ -162,11 +177,15 @@ mod tests {
     #[test]
     fn format_notification_strips_all_control_chars() {
         let msg = format_notification(0, None, "hello\x00world\x1b[31m\ttabs");
-        let inner = &msg[..msg.len() - 1];
         assert!(
-            !inner.chars().any(|c| c.is_control()),
+            !msg.chars().any(|c| c.is_control()),
             "no control chars should survive in content"
         );
+    }
+
+    #[test]
+    fn enter_delay_ticks_is_positive() {
+        assert!(ENTER_DELAY_TICKS > 0);
     }
 
     #[test]

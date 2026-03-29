@@ -253,15 +253,14 @@ fn build_inject_request(
     let args = v.pointer("/params/arguments")?;
     let message = args.get("message")?.as_str()?;
 
+    let st = state.lock().ok()?;
     let to_pane: u64 = match args.get("to").and_then(|t| t.as_str()) {
-        Some("partner") | None => from_pane ^ 1, // same logic as tools.rs
+        Some("partner") | None => st.resolve_partner(from_pane)?,
         Some(id_str) => id_str.parse().ok()?,
     };
 
-    let from_role = state
-        .lock()
-        .ok()
-        .and_then(|st| st.roles.get(&from_pane).map(|r| r.name.clone()));
+    let from_role = st.roles.get(&from_pane).map(|r| r.name.clone());
+    drop(st);
 
     Some(InjectRequest {
         from_pane,
