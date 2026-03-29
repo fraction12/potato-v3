@@ -327,6 +327,9 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                                 }
 
                                 // Inject role prompts into spawned panes.
+                                // Use a MUCH longer delay for bootstrap because
+                                // Claude Code needs ~2-3s to start its Ink UI.
+                                const BOOTSTRAP_DELAY_TICKS: u64 = 60; // ~3s at 50ms/tick
                                 if let AppScreen::Dashboard(ref dash) = state.screen {
                                     let roles = dash.roles.clone();
                                     for (i, role) in roles.iter().enumerate() {
@@ -334,10 +337,17 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                                             pane.role_name = Some(role.name.clone());
                                             if let Some(ref mut pty) = pane.pty {
                                                 let prompt = format!(
-                                                    "Your role is: {}. {} Do NOT start working until the user gives you a task. Claim your role and stand by.\r",
+                                                    "Your role is: {}. {} Do NOT start working until the user gives you a task. Claim your role and stand by.",
                                                     role.name, role.prompt
                                                 );
                                                 let _ = pty.write_input(prompt.as_bytes());
+                                                if let Ok(mut pending) = PENDING_ENTERS.lock() {
+                                                    pending.push(crate::mcp::injection::PendingEnter {
+                                                        pane_index: i,
+                                                        written_at_tick: state.tick_count,
+                                                        delay_ticks: BOOTSTRAP_DELAY_TICKS,
+                                                    });
+                                                }
                                             }
                                         }
                                     }
@@ -824,22 +834,27 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                                             }
                                         } else {
                                             // ── Broadcast to all panes ────────
-                                            // Send raw text + carriage return.
-                                            // PTYs use \r (0x0d) for Enter,
-                                            // not \n (0x0a). Claude Code in
-                                            // raw mode only treats \r as submit.
-                                            let payload = format!(
-                                                "{text}\r"
-                                            );
+                                            // Write text first (no \r), then
+                                            // defer Enter via PENDING_ENTERS
+                                            // to avoid racing Claude's Ink UI.
                                             let n_panes = state.panes.len();
                                             let mut any_written = false;
                                             for i in 0..n_panes {
                                                 if let Some(pane) = state.panes.get_mut(i) {
                                                     if let Some(ref mut pty) = pane.pty {
-                                                        if let Err(e) = pty.write_input(payload.as_bytes()) {
-                                                            tracing::warn!("Broadcast to pane {i}: {e}");
-                                                        } else {
-                                                            any_written = true;
+                                                        if !pty.child_exited() {
+                                                            if let Err(e) = pty.write_input(text.as_bytes()) {
+                                                                tracing::warn!("Broadcast text to pane {i}: {e}");
+                                                            } else {
+                                                                any_written = true;
+                                                                if let Ok(mut pending) = PENDING_ENTERS.lock() {
+                                                                    pending.push(crate::mcp::injection::PendingEnter {
+                                                                        pane_index: i,
+                                                                        written_at_tick: state.tick_count,
+                                                                        delay_ticks: crate::mcp::injection::ENTER_DELAY_TICKS,
+                                                                    });
+                                                                }
+                                                            }
                                                         }
                                                     }
                                                 }

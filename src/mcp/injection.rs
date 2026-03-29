@@ -40,9 +40,9 @@ pub struct PendingEnter {
 }
 
 /// Number of main-loop ticks to wait between writing message text and
-/// sending `\r`. At ~60Hz tick rate, 5 ticks ≈ 83ms — enough for Claude's
+/// sending `\r`. At ~20Hz tick rate (50ms), 5 ticks ≈ 250ms — enough for Claude's
 /// Ink renderer to process the text before we submit.
-pub const ENTER_DELAY_TICKS: u64 = 5;
+pub const ENTER_DELAY_TICKS: u64 = 10; // ~500ms at 50ms/tick — gives Claude Ink time to settle
 
 /// Format a message notification for PTY injection.
 ///
