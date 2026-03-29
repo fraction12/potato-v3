@@ -371,6 +371,44 @@ fn render_detail_roles(frame: &mut Frame, area: Rect, state: &AppState) {
 
     // Inline input fields for adding a role.
     use crate::app::state::DashboardInput;
+
+    // Helper: wrap long input text into multiple lines that fit the panel.
+    // `prefix` is shown on the first line (e.g. "  > "); continuation lines
+    // are indented to the same column width.
+    let wrap_input = |text: &str, prefix: &str, width: u16, style: Style| -> Vec<Line<'_>> {
+        let prefix_w = prefix.len();
+        let usable = (width as usize).saturating_sub(prefix_w);
+        if usable == 0 || text.is_empty() {
+            return vec![Line::from(vec![
+                Span::styled(prefix.to_string(), Style::default().fg(AMBER)),
+                Span::styled(text.to_string(), style),
+            ])];
+        }
+        let mut result: Vec<Line> = Vec::new();
+        let mut remaining = text;
+        let mut first = true;
+        while !remaining.is_empty() {
+            let chunk_len = remaining.len().min(usable);
+            let chunk = &remaining[..chunk_len];
+            remaining = &remaining[chunk_len..];
+            if first {
+                result.push(Line::from(vec![
+                    Span::styled(prefix.to_string(), Style::default().fg(AMBER)),
+                    Span::styled(chunk.to_string(), style),
+                ]));
+                first = false;
+            } else {
+                result.push(Line::from(vec![
+                    Span::styled(" ".repeat(prefix_w), Style::default()),
+                    Span::styled(chunk.to_string(), style),
+                ]));
+            }
+        }
+        result
+    };
+
+    let input_style = Style::default().fg(CREAM).add_modifier(Modifier::UNDERLINED);
+
     match &dash.input {
         DashboardInput::RoleName(buf) => {
             lines.push(Line::from(""));
@@ -378,13 +416,8 @@ fn render_detail_roles(frame: &mut Frame, area: Rect, state: &AppState) {
                 "  New role name:",
                 Style::default().fg(AMBER),
             )));
-            lines.push(Line::from(vec![
-                Span::styled("  > ", Style::default().fg(AMBER)),
-                Span::styled(
-                    if buf.is_empty() { "..." } else { buf.as_str() },
-                    Style::default().fg(CREAM).add_modifier(Modifier::UNDERLINED),
-                ),
-            ]));
+            let display = if buf.is_empty() { "..." } else { buf.as_str() };
+            lines.extend(wrap_input(display, "  > ", inner.width, input_style));
             lines.push(Line::from(Span::styled(
                 "  Enter to confirm, Esc to cancel",
                 Style::default().fg(MUTED),
@@ -394,19 +427,14 @@ fn render_detail_roles(frame: &mut Frame, area: Rect, state: &AppState) {
             lines.push(Line::from(""));
             lines.push(Line::from(vec![
                 Span::styled("  Role: ", Style::default().fg(TAN)),
-                Span::styled(name.as_str(), Style::default().fg(CREAM).add_modifier(Modifier::BOLD)),
+                Span::styled(name.to_string(), Style::default().fg(CREAM).add_modifier(Modifier::BOLD)),
             ]));
             lines.push(Line::from(Span::styled(
                 "  Prompt (instructions for this agent):",
                 Style::default().fg(AMBER),
             )));
-            lines.push(Line::from(vec![
-                Span::styled("  > ", Style::default().fg(AMBER)),
-                Span::styled(
-                    if prompt.is_empty() { "..." } else { prompt.as_str() },
-                    Style::default().fg(CREAM).add_modifier(Modifier::UNDERLINED),
-                ),
-            ]));
+            let display = if prompt.is_empty() { "..." } else { prompt.as_str() };
+            lines.extend(wrap_input(display, "  > ", inner.width, input_style));
             lines.push(Line::from(Span::styled(
                 "  Enter to save, Esc to cancel",
                 Style::default().fg(MUTED),
