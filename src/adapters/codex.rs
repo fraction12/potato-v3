@@ -34,12 +34,7 @@ impl AgentAdapter for CodexAdapter {
             PathBuf::from("/usr/local/bin/codex"),
             PathBuf::from("/usr/bin/codex"),
         ];
-        for c in &candidates {
-            if c.exists() {
-                return Some(c.clone());
-            }
-        }
-        None
+        candidates.iter().find(|c| c.exists()).cloned()
     }
 
     fn capabilities(&self) -> AdapterCapabilities {
