@@ -1896,7 +1896,16 @@ async fn main() -> Result<()> {
     // Initialize OpenSpec watcher if `.openspec/backlog.yaml` exists.
     let openspec_watcher = std::env::current_dir()
         .ok()
-        .and_then(|cwd| openspec::OpenSpecWatcher::new(&cwd));
+        .and_then(|cwd| {
+            tracing::info!("Looking for OpenSpec at {}/.openspec/backlog.yaml", cwd.display());
+            let w = openspec::OpenSpecWatcher::new(&cwd);
+            if w.is_some() {
+                tracing::info!("OpenSpec watcher active");
+            } else {
+                tracing::warn!("No OpenSpec backlog found in {}", cwd.display());
+            }
+            w
+        });
 
     let mut state = AppState {
         model,

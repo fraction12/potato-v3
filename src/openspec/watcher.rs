@@ -33,15 +33,13 @@ pub struct OpenSpecWatcher {
 }
 
 impl OpenSpecWatcher {
-    /// Create a watcher for the given project root.
-    /// Looks for `<root>/.openspec/backlog.yaml`.
-    /// Returns `None` if the file doesn't exist (no OpenSpec in this project).
-    pub fn new(project_root: &Path) -> Option<Self> {
-        let path = project_root.join(".openspec").join("backlog.yaml");
-        if !path.exists() {
-            tracing::debug!("No .openspec/backlog.yaml found, skipping OpenSpec integration");
-            return None;
-        }
+    /// Create a watcher for the given starting directory.
+    /// Searches upward from `start_dir` for `.openspec/backlog.yaml`
+    /// (like git searching for `.git/`).
+    /// Returns `None` if not found anywhere up the tree.
+    pub fn new(start_dir: &Path) -> Option<Self> {
+        let path = Self::find_backlog(start_dir)?;
+        tracing::info!("Found OpenSpec backlog at {}", path.display());
 
         let (tx, rx) = mpsc::unbounded_channel();
 
@@ -172,5 +170,19 @@ impl OpenSpecWatcher {
             .and_then(|guard| {
                 guard.as_ref().and_then(|b| b.find(id).cloned())
             })
+    }
+
+    /// Walk up from `start` looking for `.openspec/backlog.yaml`.
+    fn find_backlog(start: &Path) -> Option<PathBuf> {
+        let mut dir = start.to_path_buf();
+        loop {
+            let candidate = dir.join(".openspec").join("backlog.yaml");
+            if candidate.exists() {
+                return Some(candidate);
+            }
+            if !dir.pop() {
+                return None;
+            }
+        }
     }
 }
