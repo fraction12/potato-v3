@@ -338,37 +338,19 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                                     }
                                 }
 
-                                // Inject role prompts into spawned panes.
-                                // Use a MUCH longer delay for bootstrap because
-                                // Claude Code needs ~2-3s to start its Ink UI.
-                                const BOOTSTRAP_DELAY_TICKS: u64 = 60; // ~3s at 50ms/tick
+                                // Silently pre-register roles in pane titles + MCP state.
+                                // NO PTY write — the user-triggered broadcast handles
+                                // agent instructions. This only sets bookkeeping so
+                                // potato_get_role returns the correct assignment.
                                 for (i, role) in roles.iter().enumerate() {
                                     if let Some(pane) = state.panes.get_mut(i) {
                                         pane.role_name = Some(role.name.clone());
 
-                                        // Pre-register role in InterSessionState so
-                                        // potato_get_role returns the assigned role
-                                        // BEFORE the agent even calls claim_role.
                                         if let Some(ref iss) = state.inter_session_state {
                                             if let Ok(mut st) = iss.lock() {
                                                 st.set_role(pane.id, crate::mcp::state::PaneRole {
                                                     name: role.name.clone(),
                                                     description: role.prompt.clone(),
-                                                });
-                                            }
-                                        }
-
-                                        if let Some(ref mut pty) = pane.pty {
-                                            let prompt = format!(
-                                                "Your role is: {}. {} Your role has already been claimed for you. Do NOT start working until the user gives you a task. Stand by.",
-                                                role.name, role.prompt
-                                            );
-                                            let _ = pty.write_input(prompt.as_bytes());
-                                            if let Ok(mut pending) = PENDING_ENTERS.lock() {
-                                                pending.push(crate::mcp::injection::PendingEnter {
-                                                    pane_index: i,
-                                                    written_at_tick: state.tick_count,
-                                                    delay_ticks: BOOTSTRAP_DELAY_TICKS,
                                                 });
                                             }
                                         }
@@ -1448,56 +1430,16 @@ fn spawn_claude_pane(
 /// This is what the user sees and can edit before hitting Enter to send
 /// to all agents simultaneously.
 fn build_collaboration_prompt(state: &AppState) -> String {
-    let n = state.panes.len();
-    let pane_info: Vec<(u64, String, Option<String>)> = (0..n)
+    let summaries: Vec<PaneSummary> = (0..state.panes.len())
         .filter_map(|i| {
-            state.panes.get(i).map(|p| {
-                (p.id, p.session.agent_name.clone(), p.role_name.clone())
+            state.panes.get(i).map(|p| PaneSummary {
+                id: p.id,
+                agent_name: p.session.agent_name.clone(),
+                role_name: p.role_name.clone(),
             })
         })
         .collect();
-
-    let pane_labels: Vec<String> = pane_info
-        .iter()
-        .map(|(id, agent, role)| {
-            if let Some(r) = role {
-                format!("Pane {id} ({agent}, role: {r})")
-            } else {
-                format!("Pane {id} ({agent})")
-            }
-        })
-        .collect();
-
-    // Check if roles were pre-assigned (from .potato/roles.toml).
-    let has_roles = pane_info.iter().any(|(_, _, r)| r.is_some());
-
-    let role_instructions = if has_roles {
-        "Your role has already been assigned and claimed for you — call potato_get_role \
-         to confirm. Do NOT pick a different role. \
-         Use your assigned role name exactly if you need to re-claim."
-            .to_string()
-    } else {
-        "IMPORTANT: Before picking a role, call potato_get_role to see what's taken. \
-         Then call potato_claim_role with a DIFFERENT role than your partner."
-            .to_string()
-    };
-
-    format!(
-        "You are in a multi-agent collaboration managed by Potato. \
-         Active panes: {}. \
-         You have Potato MCP tools available: \
-         potato_claim_role, potato_get_role, \
-         potato_send_message, potato_get_messages, potato_get_partner_status, \
-         potato_shared_context, potato_claim_task, potato_release_task. \
-         {} \
-         When given work, use potato_claim_task with the OpenSpec ticket ID (e.g. T-810) \
-         to register what you're working on. Release tasks when done. \
-         After confirming your role, WAIT for the user to give you a task. \
-         Do NOT start working on anything until the user tells you what to do. \
-         Introduce yourself briefly and stand by.",
-        pane_labels.join(", "),
-        role_instructions,
-    )
+    build_collaboration_prompt_from_panes(&summaries)
 }
 
 /// Spawn a PTY session for any supported agent adapter.
@@ -2108,4 +2050,129 @@ async fn main() -> Result<()> {
 
     ratatui::restore();
     result
+}
+
+// ── Pure helper for collaboration prompt (testable) ───────────────────────
+
+/// Pane summary for prompt building — decoupled from AppState.
+struct PaneSummary {
+    id: u64,
+    agent_name: String,
+    role_name: Option<String>,
+}
+
+/// Build collaboration broadcast text from pane summaries alone.
+fn build_collaboration_prompt_from_panes(panes: &[PaneSummary]) -> String {
+    let pane_labels: Vec<String> = panes
+        .iter()
+        .map(|p| {
+            if let Some(ref r) = p.role_name {
+                format!("Pane {} ({}, role: {})", p.id, p.agent_name, r)
+            } else {
+                format!("Pane {} ({})", p.id, p.agent_name)
+            }
+        })
+        .collect();
+
+    let has_roles = panes.iter().any(|p| p.role_name.is_some());
+
+    let role_instructions = if has_roles {
+        "Your role has already been assigned and claimed for you — call potato_get_role \
+         to confirm. Do NOT pick a different role. \
+         Use your assigned role name exactly if you need to re-claim."
+    } else {
+        "IMPORTANT: Before picking a role, call potato_get_role to see what's taken. \
+         Then call potato_claim_role with a DIFFERENT role than your partner."
+    };
+
+    format!(
+        "You are in a multi-agent collaboration managed by Potato. \
+         Active panes: {}. \
+         You have Potato MCP tools available: \
+         potato_claim_role, potato_get_role, \
+         potato_send_message, potato_get_messages, potato_get_partner_status, \
+         potato_shared_context, potato_claim_task, potato_release_task. \
+         {} \
+         When given work, use potato_claim_task with the OpenSpec ticket ID (e.g. T-810) \
+         to register what you're working on. Release tasks when done. \
+         After confirming your role, WAIT for the user to give you a task. \
+         Do NOT start working on anything until the user tells you what to do. \
+         Introduce yourself briefly and stand by.",
+        pane_labels.join(", "),
+        role_instructions,
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── build_collaboration_prompt_from_panes ────────────────────────────
+
+    #[test]
+    fn collab_prompt_includes_role_names_in_pane_labels() {
+        let panes = vec![
+            PaneSummary { id: 0, agent_name: "claude".into(), role_name: Some("Planner".into()) },
+            PaneSummary { id: 1, agent_name: "claude".into(), role_name: Some("Worker".into()) },
+        ];
+        let prompt = build_collaboration_prompt_from_panes(&panes);
+        assert!(prompt.contains("Pane 0 (claude, role: Planner)"), "missing pane 0 role label");
+        assert!(prompt.contains("Pane 1 (claude, role: Worker)"), "missing pane 1 role label");
+    }
+
+    #[test]
+    fn collab_prompt_with_roles_tells_agents_not_to_pick() {
+        let panes = vec![
+            PaneSummary { id: 0, agent_name: "claude".into(), role_name: Some("Planner".into()) },
+            PaneSummary { id: 1, agent_name: "claude".into(), role_name: Some("Worker".into()) },
+        ];
+        let prompt = build_collaboration_prompt_from_panes(&panes);
+        assert!(prompt.contains("already been assigned"), "should tell agents role is pre-assigned");
+        assert!(prompt.contains("Do NOT pick a different role"), "should forbid self-selection");
+        assert!(!prompt.contains("Before picking a role"), "should NOT include self-selection instructions");
+    }
+
+    #[test]
+    fn collab_prompt_without_roles_allows_self_selection() {
+        let panes = vec![
+            PaneSummary { id: 0, agent_name: "claude".into(), role_name: None },
+            PaneSummary { id: 1, agent_name: "claude".into(), role_name: None },
+        ];
+        let prompt = build_collaboration_prompt_from_panes(&panes);
+        assert!(prompt.contains("Before picking a role"), "should include self-selection instructions");
+        assert!(!prompt.contains("already been assigned"), "should NOT say pre-assigned");
+    }
+
+    #[test]
+    fn collab_prompt_no_role_labels_without_roles() {
+        let panes = vec![
+            PaneSummary { id: 0, agent_name: "claude".into(), role_name: None },
+            PaneSummary { id: 1, agent_name: "codex".into(), role_name: None },
+        ];
+        let prompt = build_collaboration_prompt_from_panes(&panes);
+        assert!(prompt.contains("Pane 0 (claude)"), "should show agent only");
+        assert!(prompt.contains("Pane 1 (codex)"), "should show agent only");
+        assert!(!prompt.contains("role:"), "no role: labels expected");
+    }
+
+    #[test]
+    fn collab_prompt_mixed_roles_treats_as_has_roles() {
+        // If even one pane has a role, use pre-assigned instructions
+        let panes = vec![
+            PaneSummary { id: 0, agent_name: "claude".into(), role_name: Some("Planner".into()) },
+            PaneSummary { id: 1, agent_name: "claude".into(), role_name: None },
+        ];
+        let prompt = build_collaboration_prompt_from_panes(&panes);
+        assert!(prompt.contains("already been assigned"), "mixed roles should use pre-assigned path");
+    }
+
+    #[test]
+    fn collab_prompt_includes_stand_by_instruction() {
+        let panes = vec![
+            PaneSummary { id: 0, agent_name: "claude".into(), role_name: Some("X".into()) },
+        ];
+        let prompt = build_collaboration_prompt_from_panes(&panes);
+        assert!(prompt.contains("WAIT for the user"), "should tell agents to wait");
+        assert!(prompt.contains("Do NOT start working"), "should forbid auto-start");
+    }
 }
