@@ -812,11 +812,20 @@ fn render_right_rail(frame: &mut Frame, area: Rect, state: &AppState, focus: Coc
     // ── Tasks ─────────────────────────────────────────────────────────────────
     // Merge OpenSpec tasks with MCP task claims.
     let max_tasks = tasks_area.height.saturating_sub(2) as usize;
+    let has_openspec = state.openspec.is_some();
     let tasks_text: Vec<Line> = if openspec_tasks.is_empty() && task_claims.is_empty() {
-        vec![
-            Line::from(Span::raw("")),
-            Line::from(Span::styled(" no tasks", Style::default().fg(STONE))),
-        ]
+        if has_openspec {
+            vec![
+                Line::from(Span::raw("")),
+                Line::from(Span::styled(" all tasks done", Style::default().fg(STONE))),
+            ]
+        } else {
+            vec![
+                Line::from(Span::raw("")),
+                Line::from(Span::styled(" no .openspec/", Style::default().fg(STONE))),
+                Line::from(Span::styled(" backlog found", Style::default().fg(STONE))),
+            ]
+        }
     } else {
         let mut lines: Vec<Line> = Vec::new();
 
