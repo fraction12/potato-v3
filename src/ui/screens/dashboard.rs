@@ -369,12 +369,58 @@ fn render_detail_roles(frame: &mut Frame, area: Rect, state: &AppState) {
         }
     }
 
-    // TODO: Add/edit/delete role keybinds once role editing is wired.
-    lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(
-        "  Role editing coming soon.",
-        Style::default().fg(MUTED),
-    )));
+    // Inline input fields for adding a role.
+    use crate::app::state::DashboardInput;
+    match &dash.input {
+        DashboardInput::RoleName(buf) => {
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "  New role name:",
+                Style::default().fg(AMBER),
+            )));
+            lines.push(Line::from(vec![
+                Span::styled("  > ", Style::default().fg(AMBER)),
+                Span::styled(
+                    if buf.is_empty() { "..." } else { buf.as_str() },
+                    Style::default().fg(CREAM).add_modifier(Modifier::UNDERLINED),
+                ),
+            ]));
+            lines.push(Line::from(Span::styled(
+                "  Enter to confirm, Esc to cancel",
+                Style::default().fg(MUTED),
+            )));
+        }
+        DashboardInput::RolePrompt { name, prompt } => {
+            lines.push(Line::from(""));
+            lines.push(Line::from(vec![
+                Span::styled("  Role: ", Style::default().fg(TAN)),
+                Span::styled(name.as_str(), Style::default().fg(CREAM).add_modifier(Modifier::BOLD)),
+            ]));
+            lines.push(Line::from(Span::styled(
+                "  Prompt (instructions for this agent):",
+                Style::default().fg(AMBER),
+            )));
+            lines.push(Line::from(vec![
+                Span::styled("  > ", Style::default().fg(AMBER)),
+                Span::styled(
+                    if prompt.is_empty() { "..." } else { prompt.as_str() },
+                    Style::default().fg(CREAM).add_modifier(Modifier::UNDERLINED),
+                ),
+            ]));
+            lines.push(Line::from(Span::styled(
+                "  Enter to save, Esc to cancel",
+                Style::default().fg(MUTED),
+            )));
+        }
+        DashboardInput::None => {
+            // Keybind hints.
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "  a add role  d delete  ↑↓ select",
+                Style::default().fg(MUTED),
+            )));
+        }
+    }
 
     let content = Paragraph::new(lines);
     frame.render_widget(content, inner);

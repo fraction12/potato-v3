@@ -136,10 +136,22 @@ impl DashboardMenuItem {
 }
 
 /// A role definition for a pane.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RoleDefinition {
     pub name: String,
     pub prompt: String,
+}
+
+/// Inline input mode for the dashboard (e.g. adding a role).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum DashboardInput {
+    /// No inline input active.
+    #[default]
+    None,
+    /// Typing the name for a new role.
+    RoleName(String),
+    /// Typing the prompt for a new role (name already captured).
+    RolePrompt { name: String, prompt: String },
 }
 
 /// State for the dashboard screen.
@@ -159,6 +171,8 @@ pub struct DashboardState {
     pub roles: Vec<RoleDefinition>,
     /// Selected agent index (for the agent list on the old path — kept for compat).
     pub selected_agent: usize,
+    /// Inline input state (e.g. adding a new role).
+    pub input: DashboardInput,
 }
 
 // ── Cockpit focus ─────────────────────────────────────────────────────────────

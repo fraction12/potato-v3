@@ -17,6 +17,7 @@ mod log;
 mod mcp;
 mod metrics;
 mod openspec;
+mod roles;
 mod pty;
 mod session;
 mod terminal;
@@ -379,6 +380,109 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                     }
                 }
 
+                // ── Dashboard inline input mode (role add) ──────────────────
+                if let AppScreen::Dashboard(ref mut dash) = state.screen {
+                    use crate::app::state::DashboardInput;
+                    match &mut dash.input {
+                        DashboardInput::RoleName(buf) => {
+                            match key.code {
+                                KeyCode::Enter => {
+                                    let name = buf.trim().to_string();
+                                    if name.is_empty() {
+                                        dash.input = DashboardInput::None;
+                                    } else {
+                                        dash.input = DashboardInput::RolePrompt {
+                                            name,
+                                            prompt: String::new(),
+                                        };
+                                    }
+                                    continue;
+                                }
+                                KeyCode::Esc => {
+                                    dash.input = DashboardInput::None;
+                                    continue;
+                                }
+                                KeyCode::Backspace => {
+                                    buf.pop();
+                                    continue;
+                                }
+                                KeyCode::Char(c) => {
+                                    buf.push(c);
+                                    continue;
+                                }
+                                _ => { continue; }
+                            }
+                        }
+                        DashboardInput::RolePrompt { name, prompt } => {
+                            match key.code {
+                                KeyCode::Enter => {
+                                    let prompt_text = prompt.trim().to_string();
+                                    if !prompt_text.is_empty() {
+                                        let role = crate::app::state::RoleDefinition {
+                                            name: name.clone(),
+                                            prompt: prompt_text,
+                                        };
+                                        dash.roles.push(role);
+                                        dash.selected_detail = dash.roles.len().saturating_sub(1);
+                                        // Persist to disk.
+                                        if let Ok(cwd) = std::env::current_dir() {
+                                            if let Err(e) = roles::save_roles(&cwd, &dash.roles) {
+                                                tracing::error!("Failed to save roles: {e}");
+                                            }
+                                        }
+                                    }
+                                    dash.input = DashboardInput::None;
+                                    continue;
+                                }
+                                KeyCode::Esc => {
+                                    dash.input = DashboardInput::None;
+                                    continue;
+                                }
+                                KeyCode::Backspace => {
+                                    prompt.pop();
+                                    continue;
+                                }
+                                KeyCode::Char(c) => {
+                                    prompt.push(c);
+                                    continue;
+                                }
+                                _ => { continue; }
+                            }
+                        }
+                        DashboardInput::None => {}
+                    }
+                }
+
+                // ── Dashboard role add/delete keybinds ────────────────────────
+                if let AppScreen::Dashboard(ref mut dash) = state.screen {
+                    use crate::app::state::{DashboardMenuItem, DashboardInput};
+                    let menu_item = DashboardMenuItem::ALL[dash.selected_menu];
+                    if menu_item == DashboardMenuItem::DefineRoles && dash.focus == DashboardFocus::Detail {
+                        match key.code {
+                            KeyCode::Char('a') => {
+                                dash.input = DashboardInput::RoleName(String::new());
+                                continue;
+                            }
+                            KeyCode::Char('d') => {
+                                if !dash.roles.is_empty() && dash.selected_detail < dash.roles.len() {
+                                    dash.roles.remove(dash.selected_detail);
+                                    if dash.selected_detail > 0 && dash.selected_detail >= dash.roles.len() {
+                                        dash.selected_detail = dash.roles.len().saturating_sub(1);
+                                    }
+                                    // Persist to disk.
+                                    if let Ok(cwd) = std::env::current_dir() {
+                                        if let Err(e) = roles::save_roles(&cwd, &dash.roles) {
+                                            tracing::error!("Failed to save roles: {e}");
+                                        }
+                                    }
+                                }
+                                continue;
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+
                 // Dashboard Tab / Arrow / Esc navigation.
                 if let AppScreen::Dashboard(ref mut dash) = state.screen {
                     match key.code {
@@ -409,8 +513,17 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                                     if dash.selected_menu < max { dash.selected_menu += 1; }
                                 }
                                 DashboardFocus::Detail => {
-                                    // Max depends on context — sessions list, roles list, etc.
-                                    dash.selected_detail += 1;
+                                    // Bound by context — sessions list, roles list, etc.
+                                    use crate::app::state::DashboardMenuItem;
+                                    let menu_item = DashboardMenuItem::ALL[dash.selected_menu];
+                                    let max = match menu_item {
+                                        DashboardMenuItem::DefineRoles => dash.roles.len().saturating_sub(1),
+                                        DashboardMenuItem::RoastPotato => dash.recent_sessions.len().saturating_sub(1),
+                                        _ => usize::MAX,
+                                    };
+                                    if dash.selected_detail < max {
+                                        dash.selected_detail += 1;
+                                    }
                                 }
                             }
                             continue;
@@ -1327,9 +1440,21 @@ fn build_collaboration_prompt(state: &AppState) -> String {
         .map(|(id, agent)| format!("Pane {id} ({agent})"))
         .collect();
 
+    // If roles were pre-defined by the user, mention them so agents know the full team.
+    let roles_hint = if let AppScreen::Dashboard(ref dash) = state.screen {
+        if !dash.roles.is_empty() {
+            let role_names: Vec<&str> = dash.roles.iter().map(|r| r.name.as_str()).collect();
+            format!(" Pre-defined roles: {}.", role_names.join(", "))
+        } else {
+            String::new()
+        }
+    } else {
+        String::new()
+    };
+
     format!(
         "You are in a multi-agent collaboration managed by Potato. \
-         Active panes: {}. \
+         Active panes: {}.{} \
          You have Potato MCP tools available: \
          potato_claim_role (claim a role — MUST check potato_get_role first, roles are exclusive), \
          potato_get_role (see all claimed roles), \
@@ -1342,7 +1467,8 @@ fn build_collaboration_prompt(state: &AppState) -> String {
          After claiming roles, WAIT for the user to give you a task. \
          Do NOT start working on anything until the user tells you what to do. \
          Introduce yourself briefly, claim a role, and stand by.",
-        pane_labels.join(", ")
+        pane_labels.join(", "),
+        roles_hint,
     )
 }
 
@@ -1907,10 +2033,16 @@ async fn main() -> Result<()> {
             w
         });
 
+    // Load persisted role definitions from `.potato/roles.toml`.
+    let project_roles = std::env::current_dir()
+        .map(|cwd| roles::load_roles(&cwd))
+        .unwrap_or_default();
+
     let mut state = AppState {
         model,
         screen: AppScreen::Dashboard(DashboardState {
             available_agents: agents,
+            roles: project_roles,
             ..DashboardState::default()
         }),
         store: Some(store),
