@@ -67,7 +67,7 @@ impl OpenSpecBacklog {
 
     /// Parse from a YAML string.
     pub fn from_str(yaml: &str) -> Result<Self> {
-        serde_yaml::from_str(yaml).context("failed to parse OpenSpec backlog YAML")
+        serde_yaml::from_str(yaml).context("failed to parse OpenSpec backlog YAML (check for unquoted backticks or special chars in acceptance/description fields)")
     }
 
     /// Get only actionable (non-done) tasks.
