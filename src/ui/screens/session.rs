@@ -387,7 +387,7 @@ fn render_git_section(frame: &mut Frame, area: Rect, state: &AppState, focus: Co
     let total = lines.len() as u16;
     let inner = block.inner(area);
     let max_scroll = total.saturating_sub(inner.height);
-    let scroll = (git_scroll as u16).min(max_scroll);
+    let scroll = (git_scroll.min(max_scroll as usize)) as u16;
 
     let content = Paragraph::new(lines)
         .scroll((scroll, 0))

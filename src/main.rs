@@ -1076,35 +1076,41 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                     // ── Git focus — scroll the git panel ──────────────────────
                     if current_focus == CockpitFocus::Git {
                         if let AppScreen::Session(ref mut session) = state.screen {
-                            match key.code {
+                            let handled = match key.code {
                                 KeyCode::Up | KeyCode::Char('k') => {
                                     session.git_scroll = session.git_scroll.saturating_sub(1);
-                                    continue;
+                                    true
                                 }
                                 KeyCode::Down | KeyCode::Char('j') => {
                                     session.git_scroll = session.git_scroll.saturating_add(1);
-                                    continue;
+                                    true
                                 }
                                 KeyCode::Home => {
                                     session.git_scroll = 0;
-                                    continue;
+                                    true
+                                }
+                                KeyCode::End => {
+                                    session.git_scroll = usize::MAX;
+                                    true
                                 }
                                 KeyCode::PageUp => {
                                     session.git_scroll = session.git_scroll.saturating_sub(10);
-                                    continue;
+                                    true
                                 }
                                 KeyCode::PageDown => {
                                     session.git_scroll = session.git_scroll.saturating_add(10);
-                                    continue;
+                                    true
                                 }
                                 KeyCode::Char('r') => {
                                     // Manual refresh.
                                     state.git_snapshot = git::GitSnapshot::capture();
                                     state.git_refresh_ticks = 0;
-                                    continue;
+                                    session.git_scroll = 0;
+                                    true
                                 }
-                                _ => {}
-                            }
+                                _ => false,
+                            };
+                            if handled { continue; }
                         }
                     }
 
@@ -1139,6 +1145,23 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                                 }
                                 MouseEventKind::ScrollDown => {
                                     session.scroll_terminal_down(3);
+                                    continue;
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+
+                    // Git panel mouse scroll.
+                    if current_focus == CockpitFocus::Git {
+                        if let AppScreen::Session(ref mut session) = state.screen {
+                            match mouse.kind {
+                                MouseEventKind::ScrollUp => {
+                                    session.git_scroll = session.git_scroll.saturating_sub(3);
+                                    continue;
+                                }
+                                MouseEventKind::ScrollDown => {
+                                    session.git_scroll = session.git_scroll.saturating_add(3);
                                     continue;
                                 }
                                 _ => {}
