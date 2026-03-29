@@ -299,48 +299,89 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
         let mut pending_new_session = false;
 
         if let Some(m) = msg {
-            // Intercept Enter on the dashboard to spawn a RealPty session.
+            // Intercept Enter on the dashboard.
             if let Message::Key(ref key) = m {
                 if key.code == crossterm::event::KeyCode::Enter {
                     if let AppScreen::Dashboard(ref dash) = state.screen {
-                        if !dash.available_agents.is_empty() {
-                            let agent_info = dash.available_agents[dash.selected_agent].clone();
-                            if agent_info.available {
-                                tracing::info!("Dashboard Enter: launching {}", agent_info.name);
-                                match spawn_claude_pane(state, None) {
-                                    Ok(id) => {
-                                        tracing::info!("Dashboard spawned pane for session: {}", id);
+                        use crate::app::state::DashboardMenuItem;
+                        let menu_item = DashboardMenuItem::ALL[dash.selected_menu];
+                        match (menu_item, &dash.focus) {
+                            (DashboardMenuItem::RoastPotato, DashboardFocus::Menu) => {
+                                // Launch panes — one per defined role, or one default.
+                                let role_count = dash.roles.len().max(1);
+                                for _ in 0..role_count.min(2) {
+                                    match spawn_claude_pane(state, None) {
+                                        Ok(id) => {
+                                            tracing::info!("Dashboard spawned pane: {}", id);
+                                        }
+                                        Err(e) => {
+                                            tracing::error!("Dashboard spawn failed: {e}");
+                                            state.set_error(format!("Spawn failed: {e}"), 100);
+                                            break;
+                                        }
                                     }
-                                    Err(e) => {
-                                        tracing::error!("Dashboard spawn failed: {e}");
-                                        state.set_error(format!("Failed to launch {}: {}", agent_info.name, e), 100);
+                                }
+
+                                // Inject role prompts into spawned panes.
+                                if let AppScreen::Dashboard(ref dash) = state.screen {
+                                    let roles = dash.roles.clone();
+                                    for (i, role) in roles.iter().enumerate() {
+                                        if let Some(pane) = state.panes.get_mut(i) {
+                                            pane.role_name = Some(role.name.clone());
+                                            if let Some(ref mut pty) = pane.pty {
+                                                let prompt = format!(
+                                                    "Your role is: {}. {}\r",
+                                                    role.name, role.prompt
+                                                );
+                                                let _ = pty.write_input(prompt.as_bytes());
+                                            }
+                                        }
                                     }
                                 }
 
                                 state.tick_count = state.tick_count.wrapping_add(1);
                                 continue;
                             }
+                            (DashboardMenuItem::RoastPotato, DashboardFocus::Detail) => {
+                                // Enter on a recent session — resume it.
+                                if let AppScreen::Dashboard(ref dash) = state.screen {
+                                    if dash.selected_detail < dash.recent_sessions.len() {
+                                        let resume_id = dash.recent_sessions[dash.selected_detail].session_id.clone();
+                                        pending_session_resume = Some(resume_id);
+                                    }
+                                }
+                            }
+                            _ => {
+                                // Other menu items: Enter on menu focuses detail pane.
+                                if let AppScreen::Dashboard(ref mut dash) = state.screen {
+                                    if dash.focus == DashboardFocus::Menu {
+                                        dash.focus = DashboardFocus::Detail;
+                                        dash.selected_detail = 0;
+                                    }
+                                }
+                                continue;
+                            }
                         }
                     }
                 }
 
-                // Dashboard Tab / Arrow key navigation.
+                // Dashboard Tab / Arrow / Esc navigation.
                 if let AppScreen::Dashboard(ref mut dash) = state.screen {
                     match key.code {
                         KeyCode::Tab => {
                             dash.focus = match dash.focus {
-                                DashboardFocus::AgentList => DashboardFocus::SessionList,
-                                DashboardFocus::SessionList => DashboardFocus::AgentList,
+                                DashboardFocus::Menu => DashboardFocus::Detail,
+                                DashboardFocus::Detail => DashboardFocus::Menu,
                             };
                             continue;
                         }
                         KeyCode::Up | KeyCode::Char('k') => {
                             match dash.focus {
-                                DashboardFocus::AgentList if dash.selected_agent > 0 => {
-                                    dash.selected_agent -= 1;
+                                DashboardFocus::Menu if dash.selected_menu > 0 => {
+                                    dash.selected_menu -= 1;
                                 }
-                                DashboardFocus::SessionList if dash.selected_session > 0 => {
-                                    dash.selected_session -= 1;
+                                DashboardFocus::Detail if dash.selected_detail > 0 => {
+                                    dash.selected_detail -= 1;
                                 }
                                 _ => {}
                             }
@@ -348,18 +389,27 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                         }
                         KeyCode::Down | KeyCode::Char('j') => {
                             match dash.focus {
-                                DashboardFocus::AgentList => {
-                                    let max = dash.available_agents.len().saturating_sub(1);
-                                    if dash.selected_agent < max { dash.selected_agent += 1; }
+                                DashboardFocus::Menu => {
+                                    use crate::app::state::DashboardMenuItem;
+                                    let max = DashboardMenuItem::ALL.len().saturating_sub(1);
+                                    if dash.selected_menu < max { dash.selected_menu += 1; }
                                 }
-                                DashboardFocus::SessionList => {
-                                    let max = dash.recent_sessions.len().saturating_sub(1);
-                                    if dash.selected_session < max { dash.selected_session += 1; }
+                                DashboardFocus::Detail => {
+                                    // Max depends on context — sessions list, roles list, etc.
+                                    dash.selected_detail += 1;
                                 }
                             }
                             continue;
                         }
-                        KeyCode::Char('q') | KeyCode::Esc => {
+                        KeyCode::Esc => {
+                            if dash.focus == DashboardFocus::Detail {
+                                dash.focus = DashboardFocus::Menu;
+                                continue;
+                            }
+                            state.should_quit = true;
+                            break;
+                        }
+                        KeyCode::Char('q') => {
                             state.should_quit = true;
                             break;
                         }

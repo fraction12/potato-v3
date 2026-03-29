@@ -1,16 +1,19 @@
-//! Dashboard screen — agent picker and recent sessions list.
+//! Dashboard screen — Option B layout with left menu rail and right detail pane.
 //!
 //! Layout:
 //! ```
-//! ┌──────────────────────────────────────────────┐
-//! │                 🥔  Potato                    │  title (Brown, centered)
-//! ├───────────────────┬──────────────────────────┤
-//! │  Agents           │  Recent Sessions         │
-//! │  ● Claude Code    │  [claude] 2024-01 $0.01  │
-//! │    Codex (n/a)    │  No recent sessions      │
-//! ├───────────────────┴──────────────────────────┤
-//! │  ↑↓ navigate  Tab switch panel  Enter launch  q quit │  footer (Brown)
-//! └──────────────────────────────────────────────┘
+//! ┌──────────────────────────────────────────────────────────────────────────┐
+//! │                           🥔  Potato                                     │
+//! ├────────────────────┬─────────────────────────────────────────────────────┤
+//! │                    │                                                     │
+//! │  Roast Potato      │  (detail for selected menu item)                    │
+//! │  Define Roles      │                                                     │
+//! │  Integrations      │                                                     │
+//! │  Settings          │                                                     │
+//! │                    │                                                     │
+//! ├────────────────────┴─────────────────────────────────────────────────────┤
+//! │  ↑↓ navigate  Tab switch  Enter select  q quit                          │
+//! └──────────────────────────────────────────────────────────────────────────┘
 //! ```
 
 use ratatui::{
@@ -18,10 +21,10 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
+    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
 };
 
-use crate::app::state::{AppScreen, AppState, DashboardFocus};
+use crate::app::state::{AppScreen, AppState, DashboardFocus, DashboardMenuItem};
 use crate::ui::theme::{AMBER, BG, BRASS, BROWN, CHARCOAL, CREAM, SOIL, SPROUT, STONE, TAN};
 
 /// Muted gray for unavailable/secondary items.
@@ -35,29 +38,26 @@ pub fn render_dashboard(frame: &mut Frame, area: Rect, state: &AppState) {
         return;
     };
 
-    // Outer block fills the whole area with the background colour.
     let outer = Block::default().style(Style::default().bg(BG));
     frame.render_widget(outer, area);
 
-    // Vertical split: title, content, footer.
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3), // title bar
-            Constraint::Min(0),    // main content
+            Constraint::Min(0),   // main content
             Constraint::Length(1), // footer
         ])
         .split(area);
 
     render_title(frame, rows[0]);
     render_content(frame, rows[1], state);
-    render_footer(frame, rows[2]);
+    render_footer(frame, rows[2], state);
 }
 
 // ── Title ─────────────────────────────────────────────────────────────────────
 
 fn render_title(frame: &mut Frame, area: Rect) {
-    // Brown centered title, BG background (no Charcoal), bottom border in Soil.
     let title = Paragraph::new("🥔  Potato")
         .alignment(Alignment::Center)
         .style(
@@ -74,7 +74,7 @@ fn render_title(frame: &mut Frame, area: Rect) {
     frame.render_widget(title, area);
 }
 
-// ── Content (two-column split) ────────────────────────────────────────────────
+// ── Content (two-column: menu + detail) ───────────────────────────────────────
 
 fn render_content(frame: &mut Frame, area: Rect, state: &AppState) {
     let AppScreen::Dashboard(ref dash) = state.screen else {
@@ -83,34 +83,21 @@ fn render_content(frame: &mut Frame, area: Rect, state: &AppState) {
 
     let cols = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .constraints([Constraint::Length(24), Constraint::Min(0)])
         .split(area);
 
-    render_agent_list(
-        frame,
-        cols[0],
-        dash.available_agents.as_slice(),
-        dash.selected_agent,
-        dash.focus == DashboardFocus::AgentList,
-    );
-    render_session_list(
-        frame,
-        cols[1],
-        dash.recent_sessions.as_slice(),
-        dash.selected_session,
-        dash.focus == DashboardFocus::SessionList,
-    );
+    render_menu(frame, cols[0], dash);
+    render_detail(frame, cols[1], state);
 }
 
-// ── Agent list ────────────────────────────────────────────────────────────────
+// ── Left menu rail ────────────────────────────────────────────────────────────
 
-fn render_agent_list(
+fn render_menu(
     frame: &mut Frame,
     area: Rect,
-    agents: &[crate::app::state::AgentInfo],
-    selected: usize,
-    focused: bool,
+    dash: &crate::app::state::DashboardState,
 ) {
+    let focused = dash.focus == DashboardFocus::Menu;
     let border_style = if focused {
         Style::default().fg(AMBER)
     } else {
@@ -118,59 +105,31 @@ fn render_agent_list(
     };
 
     let block = Block::default()
-        .title(Span::styled(" Agents ", Style::default().fg(TAN)))
         .borders(Borders::ALL)
         .border_style(border_style)
         .style(Style::default().bg(BG));
 
-    if agents.is_empty() {
-        let p = Paragraph::new("\n  No agents detected.")
-            .style(Style::default().fg(MUTED))
-            .block(block);
-        frame.render_widget(p, area);
-        return;
-    }
-
-    let items: Vec<ListItem> = agents
+    let items: Vec<ListItem> = DashboardMenuItem::ALL
         .iter()
         .enumerate()
-        .map(|(i, agent)| {
-            let is_selected = i == selected;
-            let bg = if is_selected {
-                CHARCOAL
+        .map(|(i, item)| {
+            let is_selected = i == dash.selected_menu;
+            let bg = if is_selected { CHARCOAL } else { BG };
+            let fg = if is_selected { CREAM } else { TAN };
+            let style = if is_selected {
+                Style::default().fg(fg).bg(bg).add_modifier(Modifier::BOLD)
             } else {
-                BG
+                Style::default().fg(fg).bg(bg)
             };
-
-            if agent.available {
-                // Available: Sprout indicator + Cream name on selected, Sprout otherwise.
-                let name_fg = if is_selected { CREAM } else { SPROUT };
-                let name_style = Style::default().fg(name_fg).bg(bg);
-                let indicator_style = Style::default().fg(SPROUT).bg(bg);
-                let line = Line::from(vec![
-                    Span::styled(" ● ", indicator_style),
-                    Span::styled(agent.name.clone(), name_style),
-                ]);
-                ListItem::new(line)
-            } else {
-                // Unavailable: muted indicator + muted name.
-                let name_style = Style::default().fg(MUTED).bg(bg);
-                let indicator_style = Style::default().fg(MUTED).bg(bg);
-                let suffix = " (not found)";
-                let line = Line::from(vec![
-                    Span::styled(" ○ ", indicator_style),
-                    Span::styled(agent.name.clone(), name_style),
-                    Span::styled(suffix, Style::default().fg(MUTED).bg(bg)),
-                ]);
-                ListItem::new(line)
-            }
+            ListItem::new(Line::from(Span::styled(
+                format!("  {}", item.label()),
+                style,
+            )))
         })
         .collect();
 
     let mut list_state = ListState::default();
-    if !agents.is_empty() {
-        list_state.select(Some(selected.min(agents.len().saturating_sub(1))));
-    }
+    list_state.select(Some(dash.selected_menu));
 
     let list = List::new(items)
         .block(block)
@@ -179,96 +138,429 @@ fn render_agent_list(
     frame.render_stateful_widget(list, area, &mut list_state);
 }
 
-// ── Session list ──────────────────────────────────────────────────────────────
+// ── Right detail pane ─────────────────────────────────────────────────────────
 
-fn render_session_list(
-    frame: &mut Frame,
-    area: Rect,
-    sessions: &[crate::app::state::SessionSummary],
-    selected: usize,
-    focused: bool,
-) {
-    let border_style = if focused {
+fn render_detail(frame: &mut Frame, area: Rect, state: &AppState) {
+    let AppScreen::Dashboard(ref dash) = state.screen else {
+        return;
+    };
+
+    let menu_item = DashboardMenuItem::ALL[dash.selected_menu];
+    match menu_item {
+        DashboardMenuItem::RoastPotato => render_detail_roast(frame, area, state),
+        DashboardMenuItem::DefineRoles => render_detail_roles(frame, area, state),
+        DashboardMenuItem::Integrations => render_detail_integrations(frame, area, state),
+        DashboardMenuItem::Settings => render_detail_settings(frame, area, state),
+    }
+}
+
+// ── Detail: Roast Potato ──────────────────────────────────────────────────────
+
+fn render_detail_roast(frame: &mut Frame, area: Rect, state: &AppState) {
+    let AppScreen::Dashboard(ref dash) = state.screen else {
+        return;
+    };
+    let detail_focused = dash.focus == DashboardFocus::Detail;
+
+    let border_style = if detail_focused {
         Style::default().fg(AMBER)
     } else {
         Style::default().fg(STONE)
     };
 
     let block = Block::default()
-        .title(Span::styled(" Recent Sessions ", Style::default().fg(TAN)))
+        .title(Span::styled(" Launch ", Style::default().fg(TAN)))
         .borders(Borders::ALL)
         .border_style(border_style)
         .style(Style::default().bg(BG));
 
-    if sessions.is_empty() {
-        let placeholder =
-            Paragraph::new("\n  No recent sessions.\n  Press Enter on an agent to start one.")
-                .style(Style::default().fg(MUTED))
-                .block(block);
-        frame.render_widget(placeholder, area);
-        return;
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    // Build the content lines.
+    let mut lines: Vec<Line> = Vec::new();
+
+    // Agents summary.
+    lines.push(Line::from(Span::styled(
+        "  AGENTS",
+        Style::default().fg(BRASS).add_modifier(Modifier::BOLD),
+    )));
+    for agent in &dash.available_agents {
+        let (indicator, fg) = if agent.available {
+            ("●", SPROUT)
+        } else {
+            ("○", MUTED)
+        };
+        let status = if agent.available { "ready" } else { "not found" };
+        lines.push(Line::from(vec![
+            Span::styled(format!("    {} ", indicator), Style::default().fg(fg)),
+            Span::styled(
+                format!("{:<16}", agent.name),
+                Style::default().fg(if agent.available { CREAM } else { MUTED }),
+            ),
+            Span::styled(status, Style::default().fg(fg)),
+        ]));
     }
 
-    let items: Vec<ListItem> = sessions
-        .iter()
-        .enumerate()
-        .map(|(i, s)| {
-            let date = s.started_at.format("%Y-%m-%d %H:%M").to_string();
+    lines.push(Line::from(""));
+
+    // Roles summary.
+    lines.push(Line::from(Span::styled(
+        "  ROLES",
+        Style::default().fg(BRASS).add_modifier(Modifier::BOLD),
+    )));
+    if dash.roles.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "    No roles defined. Agents will self-organize.",
+            Style::default().fg(MUTED),
+        )));
+    } else {
+        for (i, role) in dash.roles.iter().enumerate() {
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("    Pane {} ", i + 1),
+                    Style::default().fg(TAN),
+                ),
+                Span::styled(&role.name, Style::default().fg(CREAM)),
+            ]));
+        }
+    }
+
+    lines.push(Line::from(""));
+
+    // MCP summary.
+    lines.push(Line::from(Span::styled(
+        "  MCP",
+        Style::default().fg(BRASS).add_modifier(Modifier::BOLD),
+    )));
+    let mcp_status = if state.mcp_socket_path.is_some() {
+        ("active", SPROUT)
+    } else {
+        ("inactive", MUTED)
+    };
+    lines.push(Line::from(vec![
+        Span::styled("    Status: ", Style::default().fg(TAN)),
+        Span::styled(mcp_status.0, Style::default().fg(mcp_status.1)),
+    ]));
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  Press Enter to launch.",
+        Style::default().fg(BRASS),
+    )));
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(""));
+
+    // Recent sessions.
+    lines.push(Line::from(Span::styled(
+        "  RECENT SESSIONS",
+        Style::default().fg(BRASS).add_modifier(Modifier::BOLD),
+    )));
+
+    if dash.recent_sessions.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "    No recent sessions.",
+            Style::default().fg(MUTED),
+        )));
+    } else {
+        for (i, s) in dash.recent_sessions.iter().enumerate() {
+            let is_selected = detail_focused && i == dash.selected_detail;
+            let bg = if is_selected { CHARCOAL } else { BG };
+            let fg = if is_selected { CREAM } else { TAN };
+            let date = s.started_at.format("%m/%d %H:%M").to_string();
             let cost = if s.total_cost_usd > 0.0 {
                 format!("${:.3}", s.total_cost_usd)
             } else {
                 "—".to_string()
             };
-
-            let is_selected = i == selected;
-            let bg = if is_selected { CHARCOAL } else { BG };
-
-            let row_style = if is_selected && focused {
-                Style::default().fg(CREAM).bg(CHARCOAL).add_modifier(Modifier::BOLD)
-            } else if is_selected {
-                Style::default().fg(CREAM).bg(CHARCOAL)
-            } else {
-                Style::default().fg(TAN).bg(BG)
-            };
-
-            let line = Line::from(vec![
+            lines.push(Line::from(vec![
                 Span::styled(
-                    format!("  [{:<10}] ", s.agent_name),
+                    format!("    [{:<8}] ", s.agent_name),
                     Style::default().fg(BRASS).bg(bg),
                 ),
-                Span::styled(date, row_style),
+                Span::styled(date, Style::default().fg(fg).bg(bg)),
                 Span::styled(
                     format!("  {}", cost),
                     Style::default().fg(AMBER).bg(bg),
                 ),
-            ]);
-            ListItem::new(line)
-        })
-        .collect();
+            ]));
+        }
+    }
 
-    let mut list_state = ListState::default();
-    list_state.select(Some(selected.min(sessions.len().saturating_sub(1))));
+    let content = Paragraph::new(lines);
+    frame.render_widget(content, inner);
+}
 
-    let list = List::new(items)
-        .block(block)
-        .highlight_style(Style::default().fg(CREAM).bg(CHARCOAL).add_modifier(Modifier::BOLD));
+// ── Detail: Define Roles ──────────────────────────────────────────────────────
 
-    frame.render_stateful_widget(list, area, &mut list_state);
+fn render_detail_roles(frame: &mut Frame, area: Rect, state: &AppState) {
+    let AppScreen::Dashboard(ref dash) = state.screen else {
+        return;
+    };
+    let detail_focused = dash.focus == DashboardFocus::Detail;
+
+    let border_style = if detail_focused {
+        Style::default().fg(AMBER)
+    } else {
+        Style::default().fg(STONE)
+    };
+
+    let block = Block::default()
+        .title(Span::styled(" Roles ", Style::default().fg(TAN)))
+        .borders(Borders::ALL)
+        .border_style(border_style)
+        .style(Style::default().bg(BG));
+
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let mut lines: Vec<Line> = Vec::new();
+
+    lines.push(Line::from(Span::styled(
+        "  Define roles for each pane. Agents receive these",
+        Style::default().fg(CREAM),
+    )));
+    lines.push(Line::from(Span::styled(
+        "  as initial instructions at launch.",
+        Style::default().fg(CREAM),
+    )));
+    lines.push(Line::from(""));
+
+    if dash.roles.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "  No roles defined yet.",
+            Style::default().fg(MUTED),
+        )));
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "  Without roles, agents will self-organize based on",
+            Style::default().fg(MUTED),
+        )));
+        lines.push(Line::from(Span::styled(
+            "  what they find in the project and via MCP tools.",
+            Style::default().fg(MUTED),
+        )));
+    } else {
+        for (i, role) in dash.roles.iter().enumerate() {
+            let is_selected = detail_focused && i == dash.selected_detail;
+            let bg = if is_selected { CHARCOAL } else { BG };
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("  Pane {} — ", i + 1),
+                    Style::default().fg(TAN).bg(bg),
+                ),
+                Span::styled(
+                    &role.name,
+                    Style::default().fg(CREAM).bg(bg).add_modifier(Modifier::BOLD),
+                ),
+            ]));
+            // Show truncated prompt.
+            let prompt_preview = if role.prompt.len() > 60 {
+                format!("{}...", &role.prompt[..57])
+            } else {
+                role.prompt.clone()
+            };
+            lines.push(Line::from(Span::styled(
+                format!("    {}", prompt_preview),
+                Style::default().fg(MUTED).bg(bg),
+            )));
+            lines.push(Line::from(""));
+        }
+    }
+
+    // TODO: Add/edit/delete role keybinds once role editing is wired.
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  Role editing coming soon.",
+        Style::default().fg(MUTED),
+    )));
+
+    let content = Paragraph::new(lines);
+    frame.render_widget(content, inner);
+}
+
+// ── Detail: Integrations ──────────────────────────────────────────────────────
+
+fn render_detail_integrations(frame: &mut Frame, area: Rect, state: &AppState) {
+    let AppScreen::Dashboard(ref dash) = state.screen else {
+        return;
+    };
+    let detail_focused = dash.focus == DashboardFocus::Detail;
+
+    let border_style = if detail_focused {
+        Style::default().fg(AMBER)
+    } else {
+        Style::default().fg(STONE)
+    };
+
+    let block = Block::default()
+        .title(Span::styled(" Integrations ", Style::default().fg(TAN)))
+        .borders(Borders::ALL)
+        .border_style(border_style)
+        .style(Style::default().bg(BG));
+
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let mut lines: Vec<Line> = Vec::new();
+
+    // MCP Server.
+    lines.push(Line::from(Span::styled(
+        "  MCP SERVER",
+        Style::default().fg(BRASS).add_modifier(Modifier::BOLD),
+    )));
+    let mcp_active = state.mcp_socket_path.is_some();
+    let (mcp_label, mcp_color) = if mcp_active {
+        ("active", SPROUT)
+    } else {
+        ("inactive", MUTED)
+    };
+    lines.push(Line::from(vec![
+        Span::styled("    Status: ", Style::default().fg(TAN)),
+        Span::styled(mcp_label, Style::default().fg(mcp_color)),
+    ]));
+
+    if let Some(ref sock) = state.mcp_socket_path {
+        lines.push(Line::from(Span::styled(
+            format!("    Socket: {}", sock.display()),
+            Style::default().fg(MUTED),
+        )));
+    }
+
+    lines.push(Line::from(""));
+
+    // MCP Tools.
+    lines.push(Line::from(Span::styled(
+        "  COORDINATION TOOLS",
+        Style::default().fg(BRASS).add_modifier(Modifier::BOLD),
+    )));
+    let tools = [
+        "potato_send_message",
+        "potato_get_messages",
+        "potato_claim_role",
+        "potato_list_roles",
+        "potato_get_status",
+        "potato_shared_context",
+    ];
+    for tool in &tools {
+        lines.push(Line::from(Span::styled(
+            format!("    {}", tool),
+            Style::default().fg(if mcp_active { CREAM } else { MUTED }),
+        )));
+    }
+
+    lines.push(Line::from(""));
+
+    // Agents.
+    lines.push(Line::from(Span::styled(
+        "  DETECTED AGENTS",
+        Style::default().fg(BRASS).add_modifier(Modifier::BOLD),
+    )));
+    for agent in &dash.available_agents {
+        let (indicator, fg) = if agent.available {
+            ("●", SPROUT)
+        } else {
+            ("○", MUTED)
+        };
+        lines.push(Line::from(vec![
+            Span::styled(format!("    {} ", indicator), Style::default().fg(fg)),
+            Span::styled(
+                &agent.name,
+                Style::default().fg(if agent.available { CREAM } else { MUTED }),
+            ),
+        ]));
+    }
+
+    let content = Paragraph::new(lines);
+    frame.render_widget(content, inner);
+}
+
+// ── Detail: Settings ──────────────────────────────────────────────────────────
+
+fn render_detail_settings(frame: &mut Frame, area: Rect, state: &AppState) {
+    let detail_focused = matches!(
+        state.screen,
+        AppScreen::Dashboard(ref d) if d.focus == DashboardFocus::Detail
+    );
+
+    let border_style = if detail_focused {
+        Style::default().fg(AMBER)
+    } else {
+        Style::default().fg(STONE)
+    };
+
+    let block = Block::default()
+        .title(Span::styled(" Settings ", Style::default().fg(TAN)))
+        .borders(Borders::ALL)
+        .border_style(border_style)
+        .style(Style::default().bg(BG));
+
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let mut lines: Vec<Line> = Vec::new();
+
+    lines.push(Line::from(Span::styled(
+        "  MODEL",
+        Style::default().fg(BRASS).add_modifier(Modifier::BOLD),
+    )));
+    lines.push(Line::from(Span::styled(
+        format!("    {}", state.model),
+        Style::default().fg(CREAM),
+    )));
+
+    lines.push(Line::from(""));
+
+    lines.push(Line::from(Span::styled(
+        "  CONFIG",
+        Style::default().fg(BRASS).add_modifier(Modifier::BOLD),
+    )));
+    let config_display = if state.config_path.is_empty() {
+        "default"
+    } else {
+        &state.config_path
+    };
+    lines.push(Line::from(Span::styled(
+        format!("    {}", config_display),
+        Style::default().fg(CREAM),
+    )));
+
+    lines.push(Line::from(""));
+
+    lines.push(Line::from(Span::styled(
+        "  PERMISSIONS",
+        Style::default().fg(BRASS).add_modifier(Modifier::BOLD),
+    )));
+    lines.push(Line::from(Span::styled(
+        "    dangerously-skip-permissions (always on)",
+        Style::default().fg(CREAM),
+    )));
+
+    let content = Paragraph::new(lines);
+    frame.render_widget(content, inner);
 }
 
 // ── Footer ────────────────────────────────────────────────────────────────────
 
-fn render_footer(frame: &mut Frame, area: Rect) {
-    let line = Line::from(vec![
-        Span::styled(
-            " ↑↓ navigate  ",
-            Style::default().fg(BRASS),
-        ),
-        Span::styled("Tab switch panel  ", Style::default().fg(BRASS)),
-        Span::styled("Enter launch  ", Style::default().fg(BRASS)),
-        Span::styled("q quit", Style::default().fg(BRASS)),
-    ]);
-    let footer = Paragraph::new(line)
+fn render_footer(frame: &mut Frame, area: Rect, state: &AppState) {
+    let AppScreen::Dashboard(ref dash) = state.screen else {
+        return;
+    };
+
+    let hints = match (DashboardMenuItem::ALL[dash.selected_menu], &dash.focus) {
+        (DashboardMenuItem::RoastPotato, DashboardFocus::Menu) => {
+            "↑↓ navigate  Tab details  Enter launch  q quit"
+        }
+        (_, DashboardFocus::Menu) => {
+            "↑↓ navigate  Tab details  Enter select  q quit"
+        }
+        (_, DashboardFocus::Detail) => {
+            "↑↓ navigate  Tab menu  Esc back  Enter select"
+        }
+    };
+
+    let footer = Paragraph::new(Span::styled(hints, Style::default().fg(BRASS)))
         .style(Style::default().bg(BG))
         .alignment(Alignment::Left);
     frame.render_widget(footer, area);
@@ -279,7 +571,7 @@ fn render_footer(frame: &mut Frame, area: Rect) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::state::{AgentInfo, DashboardFocus, DashboardState, SessionSummary};
+    use crate::app::state::{AgentInfo, DashboardFocus, DashboardState, DashboardMenuItem, RoleDefinition, SessionSummary};
     use chrono::Utc;
 
     fn make_dashboard_state() -> AppState {
@@ -328,16 +620,49 @@ mod tests {
     }
 
     #[test]
-    fn focus_cycles() {
+    fn menu_items_have_labels() {
+        for item in DashboardMenuItem::ALL {
+            assert!(!item.label().is_empty());
+        }
+    }
+
+    #[test]
+    fn default_focus_is_menu() {
+        let d = DashboardState::default();
+        assert_eq!(d.focus, DashboardFocus::Menu);
+    }
+
+    #[test]
+    fn focus_toggles() {
         let mut dash = DashboardState::default();
-        assert_eq!(dash.focus, DashboardFocus::AgentList);
-        dash.focus = DashboardFocus::SessionList;
-        assert_eq!(dash.focus, DashboardFocus::SessionList);
+        assert_eq!(dash.focus, DashboardFocus::Menu);
+        dash.focus = DashboardFocus::Detail;
+        assert_eq!(dash.focus, DashboardFocus::Detail);
+    }
+
+    #[test]
+    fn roles_default_empty() {
+        let d = DashboardState::default();
+        assert!(d.roles.is_empty());
+    }
+
+    #[test]
+    fn roles_can_be_added() {
+        let mut d = DashboardState::default();
+        d.roles.push(RoleDefinition {
+            name: "Architect".to_string(),
+            prompt: "Design the system".to_string(),
+        });
+        d.roles.push(RoleDefinition {
+            name: "Engineer".to_string(),
+            prompt: "Implement the design".to_string(),
+        });
+        assert_eq!(d.roles.len(), 2);
+        assert_eq!(d.roles[0].name, "Architect");
     }
 
     #[test]
     fn empty_sessions_placeholder() {
-        // Regression: rendering with zero sessions should not panic (tested by building items).
         let sessions: Vec<SessionSummary> = vec![];
         assert!(sessions.is_empty());
     }

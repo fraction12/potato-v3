@@ -101,11 +101,45 @@ pub struct SessionSummary {
 /// Which column of the dashboard holds focus.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum DashboardFocus {
-    /// The agent list on the left.
+    /// The left menu.
     #[default]
-    AgentList,
-    /// The recent sessions list on the right.
-    SessionList,
+    Menu,
+    /// A sub-list inside the detail pane (e.g. recent sessions, roles).
+    Detail,
+}
+
+/// Items in the left menu rail.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DashboardMenuItem {
+    RoastPotato,
+    DefineRoles,
+    Integrations,
+    Settings,
+}
+
+impl DashboardMenuItem {
+    pub const ALL: [Self; 4] = [
+        Self::RoastPotato,
+        Self::DefineRoles,
+        Self::Integrations,
+        Self::Settings,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::RoastPotato => "Roast Potato",
+            Self::DefineRoles => "Define Roles",
+            Self::Integrations => "Integrations",
+            Self::Settings => "Settings",
+        }
+    }
+}
+
+/// A role definition for a pane.
+#[derive(Debug, Clone)]
+pub struct RoleDefinition {
+    pub name: String,
+    pub prompt: String,
 }
 
 /// State for the dashboard screen.
@@ -115,12 +149,16 @@ pub struct DashboardState {
     pub available_agents: Vec<AgentInfo>,
     /// Recent sessions loaded from the store.
     pub recent_sessions: Vec<SessionSummary>,
-    /// Selected row in the agent list.
-    pub selected_agent: usize,
-    /// Selected row in the sessions list.
-    pub selected_session: usize,
+    /// Selected menu item index (into `DashboardMenuItem::ALL`).
+    pub selected_menu: usize,
+    /// Selected row inside the detail pane (sessions list, etc.).
+    pub selected_detail: usize,
     /// Which panel has keyboard focus.
     pub focus: DashboardFocus,
+    /// Role definitions for panes.
+    pub roles: Vec<RoleDefinition>,
+    /// Selected agent index (for the agent list on the old path — kept for compat).
+    pub selected_agent: usize,
 }
 
 // ── Cockpit focus ─────────────────────────────────────────────────────────────
@@ -585,7 +623,7 @@ mod tests {
         assert!(d.available_agents.is_empty());
         assert!(d.recent_sessions.is_empty());
         assert_eq!(d.selected_agent, 0);
-        assert_eq!(d.focus, DashboardFocus::AgentList);
+        assert_eq!(d.focus, DashboardFocus::Menu);
     }
 
     #[test]
