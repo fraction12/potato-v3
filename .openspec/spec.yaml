@@ -124,6 +124,53 @@ phases:
       config + live task board from MCP coordination state.
     tickets: [T-820]
 
+  - id: bugfix-sweep
+    title: "Bugfix sweep (code review 2026-03-29)"
+    status: open
+    goal: >
+      40 findings from full codebase code review: 6 critical (data corruption,
+      hangs, OOM, panics), 13 high (crashes, dead code, race conditions),
+      13 medium (spec violations, UX bugs), 8 low (dedup, minor conformance).
+    tickets:
+      - T-850  # critical: log offset double-count
+      - T-851  # critical: spawn_turn stdin hang
+      - T-852  # critical: approval denial ignored
+      - T-853  # critical: unbounded MCP inbox
+      - T-854  # critical: JSON injection in bridge
+      - T-855  # critical: try_clone panic on fd exhaustion
+      - T-856  # high: O(N) message push
+      - T-857  # high: non-unique IDs
+      - T-858  # high: no log rotation detection
+      - T-859  # high: unescaped markdown export
+      - T-860  # high: TOCTOU double mutex
+      - T-861  # high: phantom MCP inboxes
+      - T-862  # high: pane index vs ID confusion
+      - T-863  # high: double raw-mode
+      - T-864  # high: dirty_rx dropped
+      - T-865  # high: PENDING_ENTERS unstable index
+      - T-866  # high: UTF-8 slice panics
+      - T-867  # high: detect() called twice
+      - T-868  # medium: stderr reader leak
+      - T-869  # medium: keybind validation
+      - T-870  # medium: wrong JSON-RPC error code
+      - T-871  # medium: injection on failed tool call
+      - T-872  # medium: triple JSON parse
+      - T-873  # medium: non-deterministic partner
+      - T-874  # medium: TextDone race
+      - T-875  # medium: orphaned session row
+      - T-876  # medium: MAX_AGENTS blocks 3rd agent
+      - T-877  # medium: multi-byte cursor
+      - T-878  # medium: code block state bleed
+      - T-879  # medium: hardcoded visible_height
+      - T-880  # low: duplicate truncate_str
+      - T-881  # low: compact_json truncation
+      - T-882  # low: roleless panes omitted
+      - T-883  # low: spurious initialized response
+      - T-884  # low: tool_result array form
+      - T-885  # low: unused pane_index_after_open
+      - T-886  # low: duplicate help keybinds
+      - T-887  # low: O(n) sparkline push
+
   - id: phase-9-release
     title: "Polish + distribution"
     status: planned

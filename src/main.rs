@@ -1786,7 +1786,29 @@ async fn main() -> Result<()> {
     let initial_sessions = store.list_sessions().unwrap_or_default();
 
     // Start MCP bridge (UDS listener for inter-session communication).
-    let inter_state = Arc::new(std::sync::Mutex::new(mcp::state::InterSessionState::new()));
+    // Open project-scoped persistent store at `<cwd>/.potato/state.db`.
+    let project_store: Option<Arc<std::sync::Mutex<mcp::project_store::ProjectStore>>> = match std::env::current_dir() {
+        Ok(cwd) => match mcp::project_store::ProjectStore::open(&cwd) {
+            Ok(ps) => {
+                tracing::info!("Project store opened at {}/.potato/state.db", cwd.display());
+                Some(Arc::new(std::sync::Mutex::new(ps)))
+            }
+            Err(e) => {
+                tracing::warn!("Failed to open project store: {e}");
+                None
+            }
+        },
+        Err(e) => {
+            tracing::warn!("Could not determine cwd for project store: {e}");
+            None
+        }
+    };
+    let inter_state = Arc::new(std::sync::Mutex::new(
+        match project_store {
+            Some(ref ps) => mcp::state::InterSessionState::with_store(Arc::clone(ps)),
+            None => mcp::state::InterSessionState::new(),
+        }
+    ));
     let (inject_tx, inject_rx) = tokio::sync::mpsc::unbounded_channel();
     let (_mcp_bridge, mcp_socket_path) = mcp::bridge::McpBridge::start(Arc::clone(&inter_state), inject_tx)?;
 

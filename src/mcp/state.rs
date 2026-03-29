@@ -4,10 +4,13 @@
 //! instances (one per pane) read and write through.
 
 use std::collections::{HashMap, VecDeque};
+use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+use super::project_store::ProjectStore;
 
 // ── Domain types ──────────────────────────────────────────────────────────────
 
@@ -96,11 +99,40 @@ pub struct InterSessionState {
     /// Maintained by the main loop so partner resolution doesn't depend
     /// on fragile assumptions like `id ^ 1`.
     pub known_panes: Vec<u64>,
+
+    /// Optional project-scoped persistent backing store.
+    /// When present, shared_context and task_board mutations write through.
+    /// Behind a Mutex because `rusqlite::Connection` is Send but not Sync.
+    pub backing_store: Option<Arc<std::sync::Mutex<ProjectStore>>>,
 }
 
 impl InterSessionState {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Create with a backing store and hydrate from it.
+    pub fn with_store(store: Arc<std::sync::Mutex<ProjectStore>>) -> Self {
+        let mut state = Self {
+            backing_store: Some(Arc::clone(&store)),
+            ..Self::default()
+        };
+
+        // Hydrate from backing store.
+        if let Ok(s) = store.lock() {
+            if let Ok(entries) = s.load_context() {
+                for (key, value) in entries {
+                    state.shared_context.insert(key, value);
+                }
+            }
+            if let Ok(tasks) = s.load_tasks() {
+                for task in tasks {
+                    state.task_board.insert(task.task_id.clone(), task);
+                }
+            }
+        }
+
+        state
     }
 
     /// Register a pane as live.
@@ -144,6 +176,14 @@ impl InterSessionState {
             timestamp: Utc::now(),
             read: false,
         };
+        // Log to persistent store for audit/history.
+        if let Some(ref store) = self.backing_store {
+            if let Ok(s) = store.lock() {
+                if let Err(e) = s.log_message(&msg, to_pane) {
+                    tracing::warn!("Failed to log message to project store: {e}");
+                }
+            }
+        }
         self.inboxes.entry(to_pane).or_default().push_back(msg);
     }
 
@@ -228,13 +268,28 @@ impl InterSessionState {
         self.shared_context.get(key)
     }
 
-    /// Write a value to shared context.
+    /// Write a value to shared context (write-through to backing store).
     pub fn shared_context_set(&mut self, key: impl Into<String>, value: Value) {
-        self.shared_context.insert(key.into(), value);
+        let key = key.into();
+        if let Some(ref store) = self.backing_store {
+            if let Ok(s) = store.lock() {
+                if let Err(e) = s.set_context(&key, &value) {
+                    tracing::warn!("Failed to persist shared context key '{key}': {e}");
+                }
+            }
+        }
+        self.shared_context.insert(key, value);
     }
 
-    /// Delete a key from shared context. Returns whether the key existed.
+    /// Delete a key from shared context (write-through to backing store).
     pub fn shared_context_delete(&mut self, key: &str) -> bool {
+        if let Some(ref store) = self.backing_store {
+            if let Ok(s) = store.lock() {
+                if let Err(e) = s.delete_context(key) {
+                    tracing::warn!("Failed to delete shared context key '{key}': {e}");
+                }
+            }
+        }
         self.shared_context.remove(key).is_some()
     }
 
@@ -265,11 +320,19 @@ impl InterSessionState {
             }
             // Same pane re-claiming — allow (idempotent).
         }
+        let description = description.into();
+        if let Some(ref store) = self.backing_store {
+            if let Ok(s) = store.lock() {
+                if let Err(e) = s.upsert_task(&task_id, &description, pane_id) {
+                    tracing::warn!("Failed to persist task '{task_id}': {e}");
+                }
+            }
+        }
         self.task_board.insert(
             task_id.clone(),
             TaskClaim {
                 task_id,
-                description: description.into(),
+                description,
                 claimed_by: pane_id,
                 claimed_at: Utc::now(),
             },
@@ -282,6 +345,13 @@ impl InterSessionState {
     pub fn release_task(&mut self, task_id: &str, pane_id: u64) -> bool {
         match self.task_board.get(task_id) {
             Some(claim) if claim.claimed_by == pane_id => {
+                if let Some(ref store) = self.backing_store {
+                    if let Ok(s) = store.lock() {
+                        if let Err(e) = s.release_task(task_id) {
+                            tracing::warn!("Failed to persist task release '{task_id}': {e}");
+                        }
+                    }
+                }
                 self.task_board.remove(task_id);
                 true
             }

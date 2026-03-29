@@ -38,7 +38,7 @@ All MCP code lives in `src/mcp/`:
 | `mod.rs` | 20 | Re-exports all submodules |
 | `protocol.rs` | ~465 | JSON-RPC 2.0 types, MCP request/response structs |
 | `server.rs` | ~411 | `McpServer` -- handles JSON-RPC requests for a single pane |
-| `state.rs` | ~659 | `InterSessionState` -- shared mutable state, domain types |
+| `state.rs` | ~679 | `InterSessionState` -- shared mutable state, domain types |
 | `tools.rs` | ~949 | Tool definitions (schemas) and dispatch logic |
 | `bridge.rs` | ~567 | `McpBridge` -- UDS listener, connection handling, injection |
 | `config_writer.rs` | ~328 | `.mcp.json` generation and cleanup |

@@ -13,6 +13,7 @@
 pub mod bridge;
 pub mod config_writer;
 pub mod injection;
+pub mod project_store;
 pub mod protocol;
 pub mod server;
 pub mod state;

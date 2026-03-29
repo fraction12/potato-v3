@@ -619,6 +619,379 @@ tasks:
       - Sessions accessible only via /sessions overlay
       - Single-pane mode still works (task board shows solo tasks)
 
+  # ─── Bugfix Sweep (Code Review 2026-03-29) ─────────────────────────────────────
+
+  # Critical
+
+  - id: T-850
+    title: "Fix carry bytes double-counted in log offset → lines parsed twice"
+    status: open
+    phase: bugfix-sweep
+    severity: critical
+    description: |
+      claude_log.rs:94-99, codex_log.rs:124-129 — self.offset is advanced by
+      buf.len() before carry is prepended. On the next poll, seek goes past
+      the carry bytes AND they're prepended again, causing bytes to be parsed
+      twice. Fix: only increment offset by bytes actually read from file, not
+      the carry-prepended buffer length.
+
+  - id: T-851
+    title: "Fix spawn_turn stdin write errors silently swallowed — caller hangs"
+    status: open
+    phase: bugfix-sweep
+    severity: critical
+    description: |
+      pty/mod.rs:344-351 — The stdin writer task logs errors but doesn't
+      broadcast AgentEvent::Error. Callers waiting on event_rx hang
+      indefinitely since the child received no prompt. The spawn path
+      correctly broadcasts errors; spawn_turn does not. Fix: mirror the
+      spawn pattern — broadcast AgentEvent::Error on stdin write failure.
+
+  - id: T-852
+    title: "Fix ApprovalDecision ignores both tool_id and approved fields"
+    status: open
+    phase: bugfix-sweep
+    severity: critical
+    description: |
+      session_reducer.rs:101-106 — A denied approval is treated identically
+      to an approval — pending is cleared and status returns to Thinking.
+      The approved field is completely discarded. Fix: branch on approved:
+      approvals → Thinking, denials → Idle or a new DeniedTool status.
+
+  - id: T-853
+    title: "Fix unbounded MCP inbox growth — OOM risk"
+    status: open
+    phase: bugfix-sweep
+    severity: critical
+    description: |
+      mcp/state.rs:133-148 — send_message appends to VecDeque unconditionally;
+      get_messages marks read but never removes. Entries accumulate forever
+      until pane close. Fix: enforce a cap (e.g. 1000 messages) or drain
+      fully-read messages.
+
+  - id: T-854
+    title: "Fix JSON injection in bridge parse-error response"
+    status: open
+    phase: bugfix-sweep
+    severity: critical
+    description: |
+      mcp/bridge.rs:203-207 — Error response built via raw format!() —
+      serde_json error messages containing double-quotes break the JSON
+      string, producing malformed responses. Fix: use proper
+      serde_json::to_string serialization instead of manual format strings.
+
+  - id: T-855
+    title: "Fix file.try_clone().unwrap() in logging writer — panics on fd exhaustion"
+    status: open
+    phase: bugfix-sweep
+    severity: critical
+    description: |
+      log.rs:37 — Called on every log write. File::try_clone allocates a new
+      fd; on low-fd systems this panics the entire process. Fix: use
+      Mutex<File> with a custom MakeWriter so only one fd is ever used.
+
+  # High
+
+  - id: T-856
+    title: "Fix MessageHistory::push reloads entire message table — O(N) per push"
+    status: open
+    phase: bugfix-sweep
+    severity: high
+    description: |
+      session/history.rs:53-66 — After INSERT, executes full SELECT ... ORDER
+      BY to get the inserted row. Should use last_insert_rowid() or construct
+      from known inputs.
+
+  - id: T-857
+    title: "Fix new_id() generates non-unique IDs under concurrent/rapid calls"
+    status: open
+    phase: bugfix-sweep
+    severity: high
+    description: |
+      session/store.rs:379-385 — Uses nanosecond timestamp as hex — not
+      collision-free on macOS (~1µs resolution). Should use UUID v4.
+
+  - id: T-858
+    title: "Fix no log rotation detection — tracker permanently stuck on file shrink"
+    status: open
+    phase: bugfix-sweep
+    severity: high
+    description: |
+      claude_log.rs:87, codex_log.rs:117 — If log file is rotated/truncated,
+      self.offset points past EOF and read_to_end returns 0 forever. Fix:
+      compare file length to offset; reset to 0 if file shrunk.
+
+  - id: T-859
+    title: "Fix raw message content injected into Markdown export without escaping"
+    status: open
+    phase: bugfix-sweep
+    severity: high
+    description: |
+      session/export.rs:16-30 — Content containing backticks, headings, or
+      HTML tags corrupts the exported document structure.
+
+  - id: T-860
+    title: "Fix TOCTOU in handle_send_message — double mutex acquisition"
+    status: open
+    phase: bugfix-sweep
+    severity: high
+    description: |
+      mcp/tools.rs:237-253 — Resolves partner under lock, drops lock,
+      re-acquires to send. Partner could close between acquisitions. Fix:
+      resolve and send in a single lock acquisition.
+
+  - id: T-861
+    title: "Fix messages delivered to unregistered pane IDs (phantom inboxes)"
+    status: open
+    phase: bugfix-sweep
+    severity: high
+    description: |
+      mcp/tools.rs:245-248, mcp/state.rs:133-148 — Explicit pane ID target
+      has no existence check. entry().or_default() creates phantom inboxes.
+      Also: get_messages (state.rs:156) should use get_mut instead of
+      entry().or_default().
+
+  - id: T-862
+    title: "Fix inject_into_pane index vs ID confusion"
+    status: open
+    phase: bugfix-sweep
+    severity: high
+    description: |
+      mcp/injection.rs:95, main.rs:1503 — API takes pane_index: usize while
+      rest of MCP uses pane_id: u64. No type-level distinction.
+
+  - id: T-863
+    title: "Fix double raw-mode setup/teardown"
+    status: open
+    phase: bugfix-sweep
+    severity: high
+    description: |
+      main.rs:1809-1814 — Both TerminalGuard::enter() and ratatui::init()
+      set up raw mode. Both ratatui::restore() and guard drop restore it.
+      Causes screen flicker.
+
+  - id: T-864
+    title: "Fix _dirty_rx immediately dropped — dirty notifications inoperative"
+    status: open
+    phase: bugfix-sweep
+    severity: high
+    description: |
+      main.rs:1202 — Broadcast receiver subscribed and immediately dropped.
+      All dirty_tx.send() calls fail silently.
+
+  - id: T-865
+    title: "Fix PENDING_ENTERS uses unstable pane index, not pane ID"
+    status: open
+    phase: bugfix-sweep
+    severity: high
+    description: |
+      main.rs:1488-1565 — Pane indices shift on close. A pending enter queued
+      for index 1 fires into whatever now occupies index 1. Fix: store pane_id
+      and look up index dynamically.
+
+  - id: T-866
+    title: "Fix byte-indexed string slicing panics on multi-byte UTF-8"
+    status: open
+    phase: bugfix-sweep
+    severity: high
+    description: |
+      ui/overlays/agent_picker.rs:197, ui/screens/dashboard.rs:360,
+      ui/screens/session.rs:974, ui/overlays/agent_picker.rs:178-181 —
+      Direct byte-index slicing on strings containing non-ASCII characters
+      causes runtime panics. Safe truncate_str helper exists in session.rs
+      but isn't used consistently.
+
+  - id: T-867
+    title: "Fix detect() called twice per agent in build_agent_rows (TOCTOU + waste)"
+    status: open
+    phase: bugfix-sweep
+    severity: high
+    description: |
+      ui/overlays/agent_picker.rs:83-107 — Each agent's detect() called
+      twice — result can diverge between calls. Call once and reuse.
+
+  # Medium
+
+  - id: T-868
+    title: "Fix PTY stderr reader ignores kill signal — leaks background task"
+    status: open
+    phase: bugfix-sweep
+    severity: medium
+    description: |
+      pty/mod.rs:186-209 — stderr reader task never checks for shutdown
+      signal, continues running after pane close.
+
+  - id: T-869
+    title: "Fix KeybindConfig stores raw strings with no validation at load time"
+    status: open
+    phase: bugfix-sweep
+    severity: medium
+    description: |
+      config/keybinds.rs — Typos in keybind config silently produce
+      non-functional bindings.
+
+  - id: T-870
+    title: "Fix wrong JSON-RPC error code for parse errors in MCP server"
+    status: open
+    phase: bugfix-sweep
+    severity: medium
+    description: |
+      mcp/server.rs:48-51 — Uses -32602 (INVALID_PARAMS) instead of
+      -32700 (PARSE_ERROR).
+
+  - id: T-871
+    title: "Fix injection fires even when MCP tool call failed"
+    status: open
+    phase: bugfix-sweep
+    severity: medium
+    description: |
+      mcp/bridge.rs:220-228 — Successful tool response check is missing;
+      injection proceeds on error responses too.
+
+  - id: T-872
+    title: "Fix RPC request JSON parsed 3× separately"
+    status: open
+    phase: bugfix-sweep
+    severity: medium
+    description: |
+      mcp/bridge.rs:213, 238, 252 — Same JSON string deserialized three
+      times. Parse once and pass the result through.
+
+  - id: T-873
+    title: "Fix resolve_partner non-deterministic with >2 panes"
+    status: open
+    phase: bugfix-sweep
+    severity: medium
+    description: |
+      mcp/state.rs:126-128 — Partner resolution picks first non-self pane
+      from HashMap iteration, which is non-deterministic.
+
+  - id: T-874
+    title: "Fix TextDone can overwrite wrong turn's content (race)"
+    status: open
+    phase: bugfix-sweep
+    severity: medium
+    description: |
+      session_reducer.rs:48-55 — TextDone event may arrive after a new
+      turn has started, overwriting the new turn's content.
+
+  - id: T-875
+    title: "Fix UUID session row orphaned after SessionBound overwrites session_id"
+    status: open
+    phase: bugfix-sweep
+    severity: medium
+    description: |
+      session_reducer.rs:127-131, main.rs:1239 — Original UUID-based session
+      row becomes unreferenced when SessionBound replaces session_id.
+
+  - id: T-876
+    title: "Fix MAX_AGENTS = 2 blocks third agent selection"
+    status: open
+    phase: bugfix-sweep
+    severity: medium
+    description: |
+      main.rs:552-553 — Comment says 3 agents but constant allows only
+      indices 0-1. OpenCode cannot be selected.
+
+  - id: T-877
+    title: "Fix input cursor byte-index breaks with multi-byte chars"
+    status: open
+    phase: bugfix-sweep
+    severity: medium
+    description: |
+      main.rs:850-869 — Cursor position calculated by byte offset, not
+      character offset. Multi-byte input causes misaligned cursor.
+
+  - id: T-878
+    title: "Fix in_code_block state persists across transcript entries"
+    status: open
+    phase: bugfix-sweep
+    severity: medium
+    description: |
+      ui/panels/chat.rs:227-230 — Unclosed code fence in one message
+      bleeds styling into all subsequent messages. Fix: reset
+      in_code_block = false at start of each entry.
+
+  - id: T-879
+    title: "Fix hardcoded visible_height in HelpOverlay and FilePreviewPanel"
+    status: open
+    phase: bugfix-sweep
+    severity: medium
+    description: |
+      ui/overlays/help.rs:217, ui/panels/file_preview.rs:217 — Causes
+      over/under-scroll on non-standard terminal sizes.
+
+  # Low
+
+  - id: T-880
+    title: "Deduplicate truncate_str implementations"
+    status: open
+    phase: bugfix-sweep
+    severity: low
+    description: |
+      claude_log.rs:355, codex_log.rs:368, session/discovery.rs:223 —
+      Three copies with inconsistent semantics.
+
+  - id: T-881
+    title: "Fix compact_json byte/char truncation confusion"
+    status: open
+    phase: bugfix-sweep
+    severity: low
+    description: |
+      claude_log.rs:364-381 — Mixes byte and character semantics for
+      string truncation.
+
+  - id: T-882
+    title: "Fix get_partner_status silently omits roleless panes"
+    status: open
+    phase: bugfix-sweep
+    severity: low
+    description: |
+      mcp/state.rs:208-222 — Panes without claimed roles are excluded
+      from partner status response.
+
+  - id: T-883
+    title: "Fix initialized notification returns spurious success response"
+    status: open
+    phase: bugfix-sweep
+    severity: low
+    description: |
+      mcp/server.rs:60-64 — MCP initialized is a notification (no response
+      expected); returning a success response is harmless but non-conformant.
+
+  - id: T-884
+    title: "Fix tool_result.content only handles string, not array form"
+    status: open
+    phase: bugfix-sweep
+    severity: low
+    description: |
+      adapters/claude.rs:157-164 — MCP spec allows content as array of
+      content blocks. Only the string shorthand is handled.
+
+  - id: T-885
+    title: "Remove unused pane_index_after_open computation"
+    status: open
+    phase: bugfix-sweep
+    severity: low
+    description: |
+      main.rs:1165 — Computed but never read.
+
+  - id: T-886
+    title: "Fix duplicate keybind entries in help overlay"
+    status: open
+    phase: bugfix-sweep
+    severity: low
+    description: |
+      ui/overlays/help.rs:37-44 — Same keybinds listed more than once.
+
+  - id: T-887
+    title: "Fix TokenSparkline::push uses O(n) Vec::remove(0) as ring buffer"
+    status: open
+    phase: bugfix-sweep
+    severity: low
+    description: |
+      ui/widgets/sparkline.rs:41 — Should use VecDeque for O(1) pop_front.
+
   # ─── Phase 9 — Polish + Distribution ──────────────────────────────────────────
 
   - id: T-901
