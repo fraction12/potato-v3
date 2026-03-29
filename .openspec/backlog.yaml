@@ -997,7 +997,8 @@ tasks:
 
   - id: T-830
     title: "Settings detail panel: full settings page with sections and controls"
-    status: open
+    status: done
+    completed_at: "2026-03-29"
     phase: phase-8e-settings
     description: |
       Replace the current stub Settings detail panel (which shows only model,
