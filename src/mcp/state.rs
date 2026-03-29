@@ -111,8 +111,13 @@ impl InterSessionState {
     }
 
     /// Remove a pane (on close/death).
+    ///
+    /// Cleans up all associated state: role, inbox, and task claims.
     pub fn unregister_pane(&mut self, pane_id: u64) {
         self.known_panes.retain(|&id| id != pane_id);
+        self.roles.remove(&pane_id);
+        self.inboxes.remove(&pane_id);
+        self.task_board.retain(|_, claim| claim.claimed_by != pane_id);
     }
 
     /// Find the partner pane ID for `pane_id`.
@@ -645,6 +650,22 @@ mod tests {
         state.unregister_pane(1);
         assert_eq!(state.resolve_partner(0), None);
         assert_eq!(state.known_panes, vec![0]);
+    }
+
+    #[test]
+    fn unregister_pane_cleans_up_role_inbox_tasks() {
+        let mut state = make_state();
+        state.register_pane(0);
+        state.register_pane(1);
+        state.set_role(1, PaneRole { name: "tester".into(), description: "tests".into() });
+        state.send_message(0, 1, "hello", MessagePriority::Normal);
+        state.claim_task("t-1", "fix bug", 1);
+
+        state.unregister_pane(1);
+
+        assert!(state.roles.get(&1).is_none(), "role should be cleaned up");
+        assert!(state.inboxes.get(&1).is_none(), "inbox should be cleaned up");
+        assert!(!state.task_board.contains_key("t-1"), "task claim should be released");
     }
 
     #[test]

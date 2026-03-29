@@ -330,7 +330,7 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                                             pane.role_name = Some(role.name.clone());
                                             if let Some(ref mut pty) = pane.pty {
                                                 let prompt = format!(
-                                                    "Your role is: {}. {}\r",
+                                                    "Your role is: {}. {} Do NOT start working until the user gives you a task. Claim your role and stand by.\r",
                                                     role.name, role.prompt
                                                 );
                                                 let _ = pty.write_input(prompt.as_bytes());
@@ -1318,7 +1318,9 @@ fn build_collaboration_prompt(state: &AppState) -> String {
          potato_shared_context, potato_claim_task, potato_release_task. \
          IMPORTANT: Before picking a role, call potato_get_role to see what's taken. \
          Then call potato_claim_role with a DIFFERENT role than your partner. \
-         Coordinate and get started.",
+         After claiming roles, WAIT for the user to give you a task. \
+         Do NOT start working on anything until the user tells you what to do. \
+         Introduce yourself briefly, claim a role, and stand by.",
         pane_labels.join(", ")
     )
 }

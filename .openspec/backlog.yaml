@@ -255,7 +255,7 @@ tasks:
     description: |
       TDD foundation for inter-session MCP layer. 113 tests across 5 modules:
       protocol.rs (JSON-RPC 2.0 + MCP types), state.rs (InterSessionState with
-      message queues, shared KV, task board, roles), tools.rs (7 tool definitions
+      message queues, shared KV, task board, roles), tools.rs (8 tool definitions
       + dispatch), server.rs (McpServer request handler), config_writer.rs
       (.mcp.json lifecycle with merge/cleanup).
     acceptance:
@@ -559,7 +559,7 @@ tasks:
   - id: T-810
     title: "Sidebar redesign: coordination observatory"
     status: open
-    phase: phase-8b-sidebar
+    phase: phase-8c-sidebar
     description: |
       Replace the current single-session diagnostics sidebar with a
       coordination-first layout. The sidebar should answer "what's happening

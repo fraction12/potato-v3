@@ -8,7 +8,7 @@ project:
   language: Rust
   framework: ratatui + tokio + crossterm + portable-pty + vt100
   storage: SQLite (rusqlite, WAL mode)
-  current_phase: phase-9-release
+  current_phase: phase-8b-project
 
 metadata:
   version: 0.1.0
@@ -99,6 +99,30 @@ phases:
       Codex adapter, GenericAdapter for arbitrary CLIs, agent picker,
       agent profiles in config, project-level .potato/profile.toml.
     tickets: [T-801, T-802, T-803, T-804]
+
+  - id: phase-8b-project
+    title: "Project-aware state + agent roster"
+    status: planned
+    goal: >
+      Per-project SQLite persistence for coordination state (.potato/state.db)
+      and project-scoped agent configuration (.potato/agents.toml).
+    tickets: [T-811, T-812]
+
+  - id: phase-8c-sidebar
+    title: "Sidebar redesign (coordination observatory)"
+    status: planned
+    goal: >
+      Replace single-session diagnostics sidebar with coordination-first layout:
+      agent roles + status, inter-agent activity feed, compact active-pane metrics.
+    tickets: [T-810]
+
+  - id: phase-8d-left-rail
+    title: "Left rail redesign (project panel)"
+    status: planned
+    goal: >
+      Replace sessions list with project-oriented left rail: agent roster from
+      config + live task board from MCP coordination state.
+    tickets: [T-820]
 
   - id: phase-9-release
     title: "Polish + distribution"
