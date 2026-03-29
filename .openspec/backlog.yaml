@@ -986,9 +986,10 @@ tasks:
 
   - id: T-887
     title: "Fix TokenSparkline::push uses O(n) Vec::remove(0) as ring buffer"
-    status: open
+    status: done
     phase: bugfix-sweep
     severity: low
+    completed_at: "2026-03-29"
     description: |
       ui/widgets/sparkline.rs:41 — Should use VecDeque for O(1) pop_front.
 

@@ -1,5 +1,7 @@
 //! Token sparkline widget — mini time-series chart for token usage.
 
+use std::collections::VecDeque;
+
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -21,7 +23,7 @@ const BARS: &[char] = &['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
 #[derive(Debug, Default)]
 pub struct TokenSparkline {
     /// Ring buffer of recent token counts (newest last).
-    pub data: Vec<u64>,
+    pub data: VecDeque<u64>,
     /// Maximum capacity of the ring buffer.
     pub capacity: usize,
 }
@@ -30,7 +32,7 @@ impl TokenSparkline {
     /// Create a new [`TokenSparkline`] with the given history capacity.
     pub fn new(capacity: usize) -> Self {
         Self {
-            data: Vec::with_capacity(capacity),
+            data: VecDeque::with_capacity(capacity),
             capacity,
         }
     }
@@ -38,9 +40,9 @@ impl TokenSparkline {
     /// Push a new token count sample, evicting the oldest if at capacity.
     pub fn push(&mut self, value: u64) {
         if self.capacity > 0 && self.data.len() >= self.capacity {
-            self.data.remove(0);
+            self.data.pop_front();
         }
-        self.data.push(value);
+        self.data.push_back(value);
     }
 
     /// Render the sparkline as a single-line string.
@@ -155,7 +157,7 @@ mod tests {
         s.push(2);
         s.push(3);
         s.push(4); // Should evict 1.
-        assert_eq!(s.data, vec![2, 3, 4]);
+        assert_eq!(s.data, VecDeque::from(vec![2, 3, 4]));
         assert_eq!(s.data.len(), 3);
     }
 
