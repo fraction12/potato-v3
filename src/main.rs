@@ -307,6 +307,13 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
             // Intercept Enter on the dashboard.
             if let Message::Key(ref key) = m {
                 if key.code == crossterm::event::KeyCode::Enter {
+                    // Skip dashboard Enter intercept when inline input is active
+                    // (e.g. typing a role name/prompt) — let the inline input handler below process it.
+                    let inline_input_active = matches!(
+                        &state.screen,
+                        AppScreen::Dashboard(dash) if dash.input != crate::app::state::DashboardInput::None
+                    );
+                    if !inline_input_active {
                     if let AppScreen::Dashboard(ref dash) = state.screen {
                         use crate::app::state::DashboardMenuItem;
                         let menu_item = DashboardMenuItem::ALL[dash.selected_menu];
@@ -378,6 +385,7 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                             }
                         }
                     }
+                    } // end !inline_input_active
                 }
 
                 // ── Dashboard inline input mode (role add) ──────────────────
