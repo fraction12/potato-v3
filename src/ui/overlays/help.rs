@@ -207,7 +207,7 @@ impl Overlay for HelpOverlay {
 
     fn handle_key(&mut self, key: KeyEvent) -> OverlayAction {
         match key.code {
-            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('?') => OverlayAction::Close,
+            KeyCode::Esc | KeyCode::Char('q') => OverlayAction::Close,
             KeyCode::Char('k') | KeyCode::Up => {
                 self.scroll_up();
                 OverlayAction::None
@@ -247,9 +247,10 @@ mod tests {
     }
 
     #[test]
-    fn test_help_question_mark_closes() {
+    fn test_help_question_mark_no_longer_closes() {
         let mut h = HelpOverlay::new();
-        assert_eq!(h.handle_key(key(KeyCode::Char('?'))), OverlayAction::Close);
+        // ? is now a normal character, not a shortcut — should not close help.
+        assert_eq!(h.handle_key(key(KeyCode::Char('?'))), OverlayAction::None);
     }
 
     #[test]

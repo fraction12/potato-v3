@@ -38,7 +38,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Widget},
+    widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Widget, Wrap},
 };
 
 use crate::app::state::{AgentStatus, AppScreen, AppState, CockpitFocus, Overlay, SessionState};
@@ -79,10 +79,21 @@ pub fn render_session(frame: &mut Frame, area: Rect, state: &mut AppState) {
     ])
     .areas(content_area);
 
-    // ── Center column: [pty_panes (min)] | [input_bar 3 lines] ───────────────
+    // ── Center column: [pty_panes (min)] | [input_bar (grows with content)] ──
+    // Compute how many lines the input text needs (prompt "❯ " = 2 chars).
+    let input_buf_len = state.session().map(|s| s.input_buffer.len()).unwrap_or(0);
+    let center_inner_w = center_area.width.saturating_sub(4) as usize; // borders + padding
+    let prompt_len = 2; // "❯ "
+    let content_chars = prompt_len + input_buf_len;
+    let input_lines = if center_inner_w == 0 {
+        1
+    } else {
+        ((content_chars as f64) / (center_inner_w as f64)).ceil().max(1.0) as u16
+    };
+    let input_height = (input_lines + 2).min(8); // +2 for borders, cap at 8 lines
     let [pty_area, input_area] = Layout::vertical([
         Constraint::Min(0),
-        Constraint::Length(3),
+        Constraint::Length(input_height),
     ])
     .areas(center_area);
 
@@ -586,6 +597,7 @@ fn render_input_bar(frame: &mut Frame, area: Rect, session: &SessionState, focus
         }
 
         let widget = Paragraph::new(Line::from(spans))
+            .wrap(Wrap { trim: false })
             .block(
                 Block::default()
                     .borders(Borders::ALL)
@@ -855,39 +867,30 @@ fn render_right_rail(frame: &mut Frame, area: Rect, state: &AppState, focus: Coc
     } else {
         let mut lines: Vec<Line> = Vec::new();
 
-        // Show OpenSpec tasks first (they're the canonical source).
+        // Show OpenSpec tasks exactly as they appear — no extra decoration.
         for task in openspec_tasks.iter().take(max_tasks) {
-            let claimed_by = task_claims.iter()
-                .find(|(id, _, _)| *id == task.id)
-                .map(|(_, _, pane)| *pane);
-
             let (icon, status_style) = match task.status {
-                crate::openspec::TaskStatus::Claimed => {
-                    let pane_label = claimed_by
-                        .map(|p| format!(" P{p}"))
-                        .unwrap_or_default();
-                    (
-                        format!(" ●{pane_label}"),
-                        Style::default().fg(AMBER),
-                    )
-                }
+                crate::openspec::TaskStatus::Claimed => (
+                    " ●",
+                    Style::default().fg(AMBER),
+                ),
                 crate::openspec::TaskStatus::InProgress => (
-                    " ◐".to_string(),
+                    " ◐",
                     Style::default().fg(AMBER),
                 ),
                 crate::openspec::TaskStatus::Blocked => (
-                    " ✗".to_string(),
+                    " ✗",
                     Style::default().fg(ROSE),
                 ),
                 _ => (
-                    " ○".to_string(),
+                    " ○",
                     Style::default().fg(STONE),
                 ),
             };
             let max_title = inner_w.saturating_sub(icon.len() + task.id.len() + 2);
             let title = truncate_str(&task.title, max_title);
             lines.push(Line::from(vec![
-                Span::styled(icon, status_style),
+                Span::styled(icon.to_string(), status_style),
                 Span::styled(format!(" {}", task.id), label),
                 Span::styled(format!(" {title}"), value),
             ]));

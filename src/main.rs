@@ -661,17 +661,8 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                         continue;
                     }
 
-                    // ── ? — toggle help overlay ───────────────────────────────
-                    if key.code == KeyCode::Char('?') && !key.modifiers.contains(KeyModifiers::CONTROL) {
-                        if let AppScreen::Session(ref mut session) = state.screen {
-                            if session.overlay.is_some() {
-                                session.overlay = None;
-                            } else {
-                                session.overlay = Some(crate::app::state::Overlay::Help);
-                            }
-                        }
-                        continue;
-                    }
+                    // ? is no longer a shortcut — use /help instead.
+                    // Help overlay is accessible via /help slash command.
 
                     // ── Overlay active — dispatch key to overlay ──────────────
                     {
