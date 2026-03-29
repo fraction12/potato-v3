@@ -23,7 +23,7 @@ pub const TOOL_GET_ROLE: &str = "potato_get_role";
 
 // ── Tool definitions ──────────────────────────────────────────────────────────
 
-/// Return all 6 Potato MCP tool definitions with full JSON schemas.
+/// Return all 8 Potato MCP tool definitions with full JSON schemas.
 pub fn tool_definitions() -> Vec<ToolInfo> {
     vec![
         ToolInfo {
