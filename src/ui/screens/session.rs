@@ -898,11 +898,11 @@ fn render_right_rail(frame: &mut Frame, area: Rect, state: &AppState, focus: Coc
 
         if lines.is_empty() {
             // Fall back to showing raw MCP task claims if no OpenSpec.
-            for (id, desc, pane_id) in task_claims.iter().take(max_tasks) {
-                let max_desc = inner_w.saturating_sub(id.len() + 6);
+            for (id, desc, _pane_id) in task_claims.iter().take(max_tasks) {
+                let max_desc = inner_w.saturating_sub(id.len() + 4);
                 let desc_short = truncate_str(desc, max_desc);
                 lines.push(Line::from(vec![
-                    Span::styled(format!(" ● P{pane_id}"), Style::default().fg(AMBER)),
+                    Span::styled(" ●", Style::default().fg(AMBER)),
                     Span::styled(format!(" {id}"), label),
                     Span::styled(format!(" {desc_short}"), value),
                 ]));
