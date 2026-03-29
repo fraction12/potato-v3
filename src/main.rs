@@ -533,7 +533,8 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                                         let max = match menu_item {
                                             DashboardMenuItem::DefineRoles => dash.roles.len().saturating_sub(1),
                                             DashboardMenuItem::RoastPotato => dash.recent_sessions.len().saturating_sub(1),
-                                            _ => usize::MAX,
+                                            // Integrations has no scrollable list — no-op.
+                                            _ => 0,
                                         };
                                         if dash.selected_detail < max {
                                             dash.selected_detail += 1;
@@ -1970,6 +1971,19 @@ async fn main() -> Result<()> {
     // this is only used for display purposes in the status bar).
     let model = cli.model.unwrap_or_else(|| cfg.default_agent.clone());
 
+    // Snapshot filesystem paths once (not every render frame).
+    let path_snapshots = {
+        use crate::app::state::PathSnapshots;
+        PathSnapshots {
+            cwd: std::env::current_dir()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|_| "unknown".to_string()),
+            potato_exists: std::path::Path::new(".potato").exists(),
+            openspec_exists: std::path::Path::new(".openspec").exists(),
+            mcp_json_exists: std::path::Path::new(".mcp.json").exists(),
+        }
+    };
+
     // Pre-load session list for the left rail.
     let initial_sessions = store.list_sessions().unwrap_or_default();
 
@@ -2021,10 +2035,11 @@ async fn main() -> Result<()> {
 
     let mut state = AppState {
         model,
-        config: cfg.clone(),
+        config: cfg,
         screen: AppScreen::Dashboard(DashboardState {
             available_agents: agents,
             roles: project_roles,
+            path_snapshots,
             ..DashboardState::default()
         }),
         store: Some(store),

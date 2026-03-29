@@ -680,21 +680,15 @@ pub(crate) fn build_settings_lines(state: &AppState) -> Vec<Line<'static>> {
     };
     lines.push(kv("Config", &config_display));
     lines.push(kv("Session DB", &cfg.db_path));
-    let cwd = std::env::current_dir()
-        .map(|p| p.display().to_string())
-        .unwrap_or_else(|_| "unknown".to_string());
-    lines.push(kv("CWD", &cwd));
+    lines.push(kv("CWD", &dash.path_snapshots.cwd));
 
-    let potato_dir = std::path::Path::new(".potato");
-    let potato_status = if potato_dir.exists() { "found" } else { "not found" };
+    let potato_status = if dash.path_snapshots.potato_exists { "found" } else { "not found" };
     lines.push(kv(".potato/", potato_status));
 
-    let openspec_dir = std::path::Path::new(".openspec");
-    let openspec_status = if openspec_dir.exists() { "found" } else { "not found" };
+    let openspec_status = if dash.path_snapshots.openspec_exists { "found" } else { "not found" };
     lines.push(kv(".openspec/", openspec_status));
 
-    let mcp_json = std::path::Path::new(".mcp.json");
-    let mcp_json_status = if mcp_json.exists() { "found" } else { "not found" };
+    let mcp_json_status = if dash.path_snapshots.mcp_json_exists { "found" } else { "not found" };
     lines.push(kv(".mcp.json", mcp_json_status));
     lines.push(separator());
 
@@ -714,15 +708,28 @@ pub(crate) fn build_settings_lines(state: &AppState) -> Vec<Line<'static>> {
     };
     lines.push(kv("Inter-Session", iss_status));
 
-    let pane_count = state.panes.len();
+    // Live data from InterSessionState (the actual MCP runtime).
+    let (pane_count, live_roles) = state
+        .inter_session_state
+        .as_ref()
+        .and_then(|iss| iss.lock().ok())
+        .map(|st| {
+            let count = st.known_panes.len();
+            let roles: Vec<String> = st
+                .list_roles()
+                .iter()
+                .map(|(id, r)| format!("{} (pane {})", r.name, id))
+                .collect();
+            (count, roles)
+        })
+        .unwrap_or((0, Vec::new()));
+
     lines.push(kv("Registered Panes", &pane_count.to_string()));
 
-    // Active roles from dashboard state.
-    if dash.roles.is_empty() {
+    if live_roles.is_empty() {
         lines.push(kv("Active Roles", "none"));
     } else {
-        let role_names: Vec<&str> = dash.roles.iter().map(|r| r.name.as_str()).collect();
-        lines.push(kv("Active Roles", &role_names.join(", ")));
+        lines.push(kv("Active Roles", &live_roles.join(", ")));
     }
     lines.push(separator());
 
@@ -897,6 +904,8 @@ mod tests {
     // ── Settings panel tests ─────────────────────────────────────────────────
 
     fn make_settings_state() -> AppState {
+        use crate::app::state::PathSnapshots;
+
         let mut state = AppState::default();
         state.config_path = "/home/user/.potato/config.toml".to_string();
         state.model = "sonnet-4".to_string();
@@ -916,6 +925,12 @@ mod tests {
                     available: false,
                 },
             ];
+            dash.path_snapshots = PathSnapshots {
+                cwd: "/home/user/projects/potato".to_string(),
+                potato_exists: true,
+                openspec_exists: true,
+                mcp_json_exists: false,
+            };
         }
         state
     }
@@ -965,6 +980,10 @@ mod tests {
         let text = lines_to_string(&lines);
         assert!(text.contains("PATHS"), "missing PATHS header");
         assert!(text.contains("/home/user/.potato/config.toml"), "missing config path");
+        assert!(text.contains("/home/user/projects/potato"), "missing CWD from snapshot");
+        // .potato/ should be "found", .mcp.json should be "not found" per snapshot
+        assert!(text.contains(".potato/: found"), "missing .potato/ status");
+        assert!(text.contains(".mcp.json: not found"), "missing .mcp.json status");
     }
 
     #[test]
@@ -974,6 +993,32 @@ mod tests {
         let text = lines_to_string(&lines);
         assert!(text.contains("MCP"), "missing MCP header");
         assert!(text.contains("/tmp/potato.sock"), "missing socket path");
+        // No InterSessionState set up → panes 0, roles "none"
+        assert!(text.contains("Registered Panes: 0"), "missing pane count");
+        assert!(text.contains("Active Roles: none"), "missing roles when ISS absent");
+    }
+
+    #[test]
+    fn settings_lines_mcp_shows_live_roles() {
+        use std::sync::{Arc, Mutex};
+        use crate::mcp::state::{InterSessionState, PaneRole};
+
+        let mut state = make_settings_state();
+        let iss = Arc::new(Mutex::new(InterSessionState::default()));
+        {
+            let mut st = iss.lock().unwrap();
+            st.register_pane(0);
+            st.register_pane(1);
+            st.set_role(0, PaneRole { name: "Planner".to_string(), description: String::new() });
+            st.set_role(1, PaneRole { name: "Worker".to_string(), description: String::new() });
+        }
+        state.inter_session_state = Some(iss);
+
+        let lines = super::build_settings_lines(&state);
+        let text = lines_to_string(&lines);
+        assert!(text.contains("Registered Panes: 2"), "should show 2 live panes");
+        assert!(text.contains("Planner"), "should show Planner role");
+        assert!(text.contains("Worker"), "should show Worker role");
     }
 
     #[test]

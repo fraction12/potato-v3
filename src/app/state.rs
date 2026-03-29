@@ -176,6 +176,17 @@ pub struct DashboardState {
     pub input: DashboardInput,
     /// Vertical scroll offset for the Settings detail panel.
     pub settings_scroll: u16,
+    /// Snapshotted path-existence flags, set once at startup.
+    pub path_snapshots: PathSnapshots,
+}
+
+/// Filesystem path-existence snapshots taken once at startup, not every frame.
+#[derive(Debug, Clone, Default)]
+pub struct PathSnapshots {
+    pub cwd: String,
+    pub potato_exists: bool,
+    pub openspec_exists: bool,
+    pub mcp_json_exists: bool,
 }
 
 // ── Cockpit focus ─────────────────────────────────────────────────────────────
