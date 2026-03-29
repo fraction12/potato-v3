@@ -13,6 +13,7 @@ mod codex_log;
 mod commands;
 mod config;
 mod events;
+mod git;
 mod log;
 mod mcp;
 mod metrics;
@@ -1072,46 +1073,35 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                         }
                     }
 
-                    // ── Sessions focus — navigate the session list ────────────
-                    if current_focus == CockpitFocus::Sessions {
+                    // ── Git focus — scroll the git panel ──────────────────────
+                    if current_focus == CockpitFocus::Git {
                         if let AppScreen::Session(ref mut session) = state.screen {
-                            let max_idx = state.rail_sessions.len().saturating_sub(1);
                             match key.code {
                                 KeyCode::Up | KeyCode::Char('k') => {
-                                    if session.selected_session > 0 {
-                                        session.selected_session -= 1;
-                                    }
+                                    session.git_scroll = session.git_scroll.saturating_sub(1);
                                     continue;
                                 }
                                 KeyCode::Down | KeyCode::Char('j') => {
-                                    if session.selected_session < max_idx {
-                                        session.selected_session += 1;
-                                    }
+                                    session.git_scroll = session.git_scroll.saturating_add(1);
                                     continue;
                                 }
                                 KeyCode::Home => {
-                                    session.selected_session = 0;
-                                    continue;
-                                }
-                                KeyCode::End => {
-                                    session.selected_session = max_idx;
+                                    session.git_scroll = 0;
                                     continue;
                                 }
                                 KeyCode::PageUp => {
-                                    session.selected_session = session.selected_session.saturating_sub(10);
+                                    session.git_scroll = session.git_scroll.saturating_sub(10);
                                     continue;
                                 }
                                 KeyCode::PageDown => {
-                                    session.selected_session = (session.selected_session + 10).min(max_idx);
+                                    session.git_scroll = session.git_scroll.saturating_add(10);
                                     continue;
                                 }
-                                KeyCode::Enter => {
-                                    // Load the selected historical session.
-                                    if let Some(info) = state.rail_sessions.get(session.selected_session) {
-                                        pending_session_resume = Some(info.id.clone());
-                                    }
-                                    // Fall through (no continue) so the deferred
-                                    // resume handler runs at the end of this iteration.
+                                KeyCode::Char('r') => {
+                                    // Manual refresh.
+                                    state.git_snapshot = git::GitSnapshot::capture();
+                                    state.git_refresh_ticks = 0;
+                                    continue;
                                 }
                                 _ => {}
                             }
@@ -1255,6 +1245,13 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                     refresh_rail(state, &store);
                 }
             }
+        }
+
+        // Periodic git refresh (~30 s at 250ms tick = every 120 ticks).
+        state.git_refresh_ticks += 1;
+        if state.git_refresh_ticks >= 120 {
+            state.git_refresh_ticks = 0;
+            state.git_snapshot = git::GitSnapshot::capture();
         }
 
         if state.should_quit {
@@ -1987,6 +1984,9 @@ async fn main() -> Result<()> {
     // Pre-load session list for the left rail.
     let initial_sessions = store.list_sessions().unwrap_or_default();
 
+    // Capture git repo state once at startup.
+    let git_snapshot = git::GitSnapshot::capture();
+
     // Start MCP bridge (UDS listener for inter-session communication).
     // Open project-scoped persistent store at `<cwd>/.potato/state.db`.
     let project_store: Option<Arc<std::sync::Mutex<mcp::project_store::ProjectStore>>> = match std::env::current_dir() {
@@ -2044,6 +2044,8 @@ async fn main() -> Result<()> {
         }),
         store: Some(store),
         rail_sessions: initial_sessions,
+        git_snapshot,
+        git_refresh_ticks: 0,
         last_rail_refresh: unix_now(),
         mcp_socket_path: Some(mcp_socket_path),
         inter_session_state: Some(inter_state),

@@ -172,7 +172,7 @@ fn render_left_rail(frame: &mut Frame, area: Rect, state: &AppState, focus: Cock
     let sessions_area = chunks[1];
 
     render_agents_section(frame, agents_area, state, focus, &agent_rows);
-    render_sessions_section(frame, sessions_area, state, focus);
+    render_git_section(frame, sessions_area, state, focus);
 }
 
 /// Top part of the left rail — agent list with availability indicators.
@@ -251,124 +251,150 @@ fn render_agents_section(
     frame.render_widget(list, area);
 }
 
-/// Bottom part of the left rail — historical session list.
-fn render_sessions_section(frame: &mut Frame, area: Rect, state: &AppState, focus: CockpitFocus) {
-    let focused = focus == CockpitFocus::Sessions;
+/// Bottom part of the left rail — git repository info.
+fn render_git_section(frame: &mut Frame, area: Rect, state: &AppState, focus: CockpitFocus) {
+    let focused = focus == CockpitFocus::Git;
     let (border_style, title_style) = focus_styles(focused, TAN);
 
-    let active_session_id = state
-        .session()
-        .and_then(|s| s.claude_session_id.as_deref())
-        .map(str::to_string);
-
-    let selected_idx = state
-        .session()
-        .map(|s| s.selected_session)
-        .unwrap_or(0);
-
-    let rail = &state.rail_sessions;
-
-    // Inner width for text wrapping (border + 1 padding each side).
+    let git = &state.git_snapshot;
     let inner_w = area.width.saturating_sub(4) as usize;
 
-    let items: Vec<ListItem<'static>> = if rail.is_empty() {
-        vec![ListItem::new(Line::from(Span::styled(
-            " No sessions yet",
+    let mut lines: Vec<Line<'static>> = Vec::new();
+
+    if !git.is_repo {
+        lines.push(Line::from(Span::styled(
+            " Not a git repo",
             Style::default().fg(STONE),
-        )))]
+        )));
     } else {
-        rail.iter()
-            .enumerate()
-            .map(|(idx, s)| {
-                let is_active = active_session_id.as_deref() == Some(s.id.as_str());
-                let is_selected = idx == selected_idx;
+        // ── Branch + dirty indicator ─────────────────────────────────────
+        let dirty_marker = if git.dirty_count > 0 {
+            format!(" ({}Δ)", git.dirty_count)
+        } else {
+            String::new()
+        };
+        let branch_text = format!(" ⎇ {}{}", git.current_branch, dirty_marker);
+        lines.push(Line::from(Span::styled(
+            truncate_str(&branch_text, inner_w + 2),
+            Style::default().fg(SPROUT).add_modifier(Modifier::BOLD),
+        )));
 
-                let marker = if is_active { "● " } else { "  " };
-                let marker_style = if is_active {
-                    Style::default().fg(SPROUT)
-                } else {
-                    Style::default().fg(STONE)
-                };
-
-                // Title: use stored title, fall back to short id.
-                let title_raw = if s.title.is_empty() {
-                    s.id.chars().take(10).collect::<String>()
-                } else {
-                    s.title.clone()
-                };
-
-                let item_title_style = if is_selected {
-                    Style::default()
-                        .fg(CREAM)
-                        .add_modifier(Modifier::BOLD)
-                        .bg(Color::Rgb(45, 30, 20))
-                } else if is_active {
-                    Style::default().fg(CREAM)
-                } else {
-                    Style::default().fg(TAN)
-                };
-
-                // Wrap title across lines if wider than the rail.
-                let title_w = inner_w.saturating_sub(2); // account for marker
-                let title_lines = wrap_text(&title_raw, title_w);
-
-                let row_bg = if is_selected && focused {
-                    Color::Rgb(45, 30, 20)
-                } else {
-                    BG
-                };
-
-                let mut lines: Vec<Line<'static>> = Vec::new();
-
-                // First title line gets the marker prefix.
-                if let Some(first) = title_lines.first() {
-                    lines.push(Line::from(vec![
-                        Span::styled(marker.to_string(), marker_style),
-                        Span::styled(first.clone(), item_title_style),
-                    ]));
-                }
-                // Continuation lines indented to match.
-                for cont in title_lines.iter().skip(1) {
-                    lines.push(Line::from(vec![
-                        Span::styled("  ", marker_style),
-                        Span::styled(cont.clone(), item_title_style),
-                    ]));
-                }
-
-                // Relative date + token count.
-                let rel_date = relative_date(s.updated_at);
-                let tok = fmt_tokens_small(s.total_tokens());
-                let meta = format!("{} {}", rel_date, tok);
-                let meta_w = inner_w.saturating_sub(2);
-                let meta_truncated: String = meta.chars().take(meta_w).collect();
-
+        // ── Dirty files (compact, max 3) ─────────────────────────────────
+        if !git.status_lines.is_empty() {
+            for line in git.status_lines.iter().take(3) {
                 lines.push(Line::from(Span::styled(
-                    format!("  {}", meta_truncated),
+                    format!("  {}", truncate_str(line, inner_w)),
+                    Style::default().fg(Color::Rgb(200, 160, 80)),
+                )));
+            }
+            if git.status_lines.len() > 3 {
+                lines.push(Line::from(Span::styled(
+                    format!("  +{} more", git.status_lines.len() - 3),
                     Style::default().fg(STONE),
                 )));
+            }
+            lines.push(Line::from(""));
+        }
 
-                ListItem::new(lines).style(Style::default().bg(row_bg))
-            })
-            .collect()
-    };
+        // ── Branches (non-current, max 4) ────────────────────────────────
+        let other_branches: Vec<&crate::git::BranchInfo> = git
+            .branches
+            .iter()
+            .filter(|b| !b.is_current)
+            .take(4)
+            .collect();
+        if !other_branches.is_empty() {
+            lines.push(Line::from(Span::styled(
+                " Branches",
+                Style::default().fg(BRASS).add_modifier(Modifier::BOLD),
+            )));
+            for b in &other_branches {
+                lines.push(Line::from(Span::styled(
+                    format!("  {}", truncate_str(&b.name, inner_w)),
+                    Style::default().fg(TAN),
+                )));
+            }
+            let total_other = git.branches.iter().filter(|b| !b.is_current).count();
+            if total_other > 4 {
+                lines.push(Line::from(Span::styled(
+                    format!("  +{} more", total_other - 4),
+                    Style::default().fg(STONE),
+                )));
+            }
+            lines.push(Line::from(""));
+        }
+
+        // ── Open PRs ────────────────────────────────────────────────────
+        if !git.open_prs.is_empty() {
+            lines.push(Line::from(Span::styled(
+                " Pull Requests",
+                Style::default().fg(BRASS).add_modifier(Modifier::BOLD),
+            )));
+            for pr in &git.open_prs {
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        format!("  #{} ", pr.number),
+                        Style::default().fg(SPROUT),
+                    ),
+                    Span::styled(
+                        truncate_str(&pr.title, inner_w.saturating_sub(6)),
+                        Style::default().fg(CREAM),
+                    ),
+                ]));
+                lines.push(Line::from(Span::styled(
+                    format!("    {} → {}", pr.author, truncate_str(&pr.branch, inner_w.saturating_sub(pr.author.len() + 7))),
+                    Style::default().fg(STONE),
+                )));
+            }
+            lines.push(Line::from(""));
+        }
+
+        // ── Recent commits ───────────────────────────────────────────────
+        if !git.recent_commits.is_empty() {
+            lines.push(Line::from(Span::styled(
+                " Commits",
+                Style::default().fg(BRASS).add_modifier(Modifier::BOLD),
+            )));
+            for c in git.recent_commits.iter().take(6) {
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        format!("  {} ", c.short_sha),
+                        Style::default().fg(STONE),
+                    ),
+                    Span::styled(
+                        truncate_str(&c.message, inner_w.saturating_sub(c.short_sha.len() + 3)),
+                        Style::default().fg(TAN),
+                    ),
+                ]));
+                lines.push(Line::from(Span::styled(
+                    format!("    {}", c.relative_date),
+                    Style::default().fg(MUTED),
+                )));
+            }
+        }
+    }
+
+    let git_scroll = state
+        .session()
+        .map(|s| s.git_scroll)
+        .unwrap_or(0);
 
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(border_style)
-        .title(Span::styled(" Sessions ", title_style));
+        .title(Span::styled(" Git ", title_style));
 
-    let list = List::new(items)
+    let total = lines.len() as u16;
+    let inner = block.inner(area);
+    let max_scroll = total.saturating_sub(inner.height);
+    let scroll = (git_scroll as u16).min(max_scroll);
+
+    let content = Paragraph::new(lines)
+        .scroll((scroll, 0))
         .block(block)
-        .highlight_style(Style::default()) // selection tracked manually via row_bg
         .style(Style::default().fg(STONE).bg(BG));
 
-    // Use ListState so ratatui handles scroll offset automatically.
-    let mut list_state = ListState::default();
-    if !rail.is_empty() {
-        list_state.select(Some(selected_idx.min(rail.len().saturating_sub(1))));
-    }
-
-    frame.render_stateful_widget(list, area, &mut list_state);
+    frame.render_widget(content, area);
 }
 
 // ── Center — PTY viewport ─────────────────────────────────────────────────────
@@ -995,7 +1021,7 @@ fn render_status_bar(
 
     let focus_label = match focus {
         CockpitFocus::Agents   => "Agents",
-        CockpitFocus::Sessions => "Sessions",
+        CockpitFocus::Git => "Git",
         CockpitFocus::Input    => "Broadcast",
         CockpitFocus::Terminal => "Terminal",
         CockpitFocus::Sidebar  => "Sidebar",
@@ -1247,8 +1273,8 @@ mod tests {
 
     #[test]
     fn cockpit_focus_tab_cycle() {
-        assert_eq!(CockpitFocus::Agents.next(),   CockpitFocus::Sessions);
-        assert_eq!(CockpitFocus::Sessions.next(), CockpitFocus::Input);
+        assert_eq!(CockpitFocus::Agents.next(), CockpitFocus::Git);
+        assert_eq!(CockpitFocus::Git.next(),    CockpitFocus::Input);
         assert_eq!(CockpitFocus::Input.next(),    CockpitFocus::Terminal);
         assert_eq!(CockpitFocus::Terminal.next(), CockpitFocus::Sidebar);
         assert_eq!(CockpitFocus::Sidebar.next(),  CockpitFocus::Agents);
@@ -1257,8 +1283,8 @@ mod tests {
     #[test]
     fn cockpit_focus_shift_tab_cycle() {
         assert_eq!(CockpitFocus::Agents.prev(),   CockpitFocus::Sidebar);
-        assert_eq!(CockpitFocus::Sessions.prev(), CockpitFocus::Agents);
-        assert_eq!(CockpitFocus::Input.prev(),    CockpitFocus::Sessions);
+        assert_eq!(CockpitFocus::Git.prev(), CockpitFocus::Agents);
+        assert_eq!(CockpitFocus::Input.prev(),    CockpitFocus::Git);
         assert_eq!(CockpitFocus::Terminal.prev(), CockpitFocus::Input);
         assert_eq!(CockpitFocus::Sidebar.prev(),  CockpitFocus::Terminal);
     }

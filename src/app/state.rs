@@ -198,8 +198,8 @@ pub struct PathSnapshots {
 pub enum CockpitFocus {
     /// Left rail top — agent picker (e.g. "Claude").
     Agents,
-    /// Left rail bottom — historical session list.
-    Sessions,
+    /// Left rail bottom — git repository info.
+    Git,
     /// Bottom-center — Potato-owned text input bar.
     #[default]
     Input,
@@ -213,8 +213,8 @@ impl CockpitFocus {
     /// Advance to the next focus in the ring (Tab).
     pub fn next(self) -> Self {
         match self {
-            Self::Agents   => Self::Sessions,
-            Self::Sessions => Self::Input,
+            Self::Agents   => Self::Git,
+            Self::Git      => Self::Input,
             Self::Input    => Self::Terminal,
             Self::Terminal => Self::Sidebar,
             Self::Sidebar  => Self::Agents,
@@ -225,8 +225,8 @@ impl CockpitFocus {
     pub fn prev(self) -> Self {
         match self {
             Self::Agents   => Self::Sidebar,
-            Self::Sessions => Self::Agents,
-            Self::Input    => Self::Sessions,
+            Self::Git      => Self::Agents,
+            Self::Input    => Self::Git,
             Self::Terminal => Self::Input,
             Self::Sidebar  => Self::Terminal,
         }
@@ -363,6 +363,9 @@ pub struct SessionState {
     /// Index of the selected session in the left-rail sessions list.
     pub selected_session: usize,
 
+    /// Scroll offset for the git panel in the left rail.
+    pub git_scroll: usize,
+
     /// Scrollback offset for the embedded Claude terminal viewport.
     ///
     /// `0` means live-follow at the bottom. Larger values mean the user has
@@ -403,6 +406,7 @@ impl SessionState {
             cockpit_focus: CockpitFocus::Input,
             selected_agent: 0,
             selected_session: 0,
+            git_scroll: 0,
             terminal_scroll: 0,
             overlay: None,
             command_selected: 0,
@@ -493,6 +497,11 @@ pub struct AppState {
     /// Cached list of sessions for the left rail (refreshed periodically).
     pub rail_sessions: Vec<SessionInfo>,
 
+    /// Git repository snapshot for the left-rail panel.
+    pub git_snapshot: crate::git::GitSnapshot,
+    /// Tick counter for periodic git refresh.
+    pub git_refresh_ticks: u64,
+
     /// Unix timestamp of the last left-rail refresh (seconds).
     pub last_rail_refresh: i64,
 
@@ -540,6 +549,8 @@ impl Default for AppState {
 
             store: None,
             rail_sessions: Vec::new(),
+            git_snapshot: crate::git::GitSnapshot::default(),
+            git_refresh_ticks: 0,
             last_rail_refresh: 0,
             persisted_event_count: 0,
             mcp_socket_path: None,
