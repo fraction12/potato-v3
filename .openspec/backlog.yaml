@@ -337,7 +337,7 @@ tasks:
       - potato_get_messages returns and marks read
       - PTY injection correctly formatted with source attribution
       - No injection during approval_pending state
-      - Message delivery visible in Potato UI (future: overlay/panel)
+      - "Message delivery visible in Potato UI (future: overlay/panel)"
 
   - id: T-705
     title: "Shared context + task coordination MCP tools"
@@ -535,7 +535,7 @@ tasks:
       This replaces global-only ProfileLoader for repos that define it.
 
       Example:
-      "```toml"
+      ```toml
       [[agents]]
       name = "architect"
       adapter = "claude"
@@ -546,7 +546,7 @@ tasks:
       name = "implementer"
       adapter = "claude"
       extra_args = ["--permission-mode", "bypassPermissions"]
-      "```"
+      ```
     acceptance:
       - .potato/agents.toml loaded on launch if present
       - Overrides global profiles for matching agents

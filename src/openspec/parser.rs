@@ -204,4 +204,23 @@ tasks:
 
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn parse_real_backlog_if_present() {
+        let path = std::path::Path::new(".openspec/backlog.yaml");
+        if !path.exists() {
+            eprintln!("Skipping: no real backlog file");
+            return;
+        }
+        match OpenSpecBacklog::from_file(path) {
+            Ok(b) => {
+                let open = b.open_tasks().len();
+                eprintln!("Real backlog: {} tasks, {} open", b.tasks.len(), open);
+                assert!(b.tasks.len() > 0, "backlog should have tasks");
+            }
+            Err(e) => {
+                panic!("Failed to parse real backlog: {e:#}");
+            }
+        }
+    }
 }
