@@ -90,6 +90,11 @@ impl PaneManager {
         self.active
     }
 
+    /// The id that will be assigned to the next pane opened.
+    pub fn next_id(&self) -> u64 {
+        self.next_id
+    }
+
     /// Whether there is room for another pane.
     pub fn can_open(&self) -> bool {
         self.panes.len() < MAX_PANES

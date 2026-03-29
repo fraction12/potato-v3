@@ -6,11 +6,11 @@
 //! [`is_code_fence`].
 
 use ratatui::{
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::Span,
 };
 
-use crate::ui::theme::{AMBER, BRASS, BROWN, CHARCOAL, CREAM, SPROUT};
+use crate::ui::theme::{BRASS, CHARCOAL, CREAM, SPROUT};
 
 // ── Public API ────────────────────────────────────────────────────────────────
 

@@ -1,6 +1,6 @@
 //! MCP tool definitions and dispatch for the Potato inter-session server.
 //!
-//! `TOOL_DEFINITIONS` enumerates all 6 tools (as a `Vec` built once at call time).
+//! `TOOL_DEFINITIONS` enumerates all 8 tools (as a `Vec` built once at call time).
 //! `handle_tool_call` dispatches a `tools/call` request to the correct state method.
 
 use std::sync::{Arc, Mutex};
@@ -184,6 +184,35 @@ pub fn handle_tool_call(
     }
 }
 
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+/// Lock the shared state, returning a `CallToolResult::failure` on poison.
+macro_rules! lock_state {
+    ($state:expr) => {
+        match $state.lock() {
+            Ok(g) => g,
+            Err(e) => {
+                tracing::error!("InterSessionState mutex poisoned: {e}");
+                return CallToolResult::failure("State lock poisoned");
+            }
+        }
+    };
+}
+
+/// Build the `all_roles` JSON array from the current state.
+fn collect_all_roles(st: &InterSessionState, self_pane: Option<u64>) -> Vec<Value> {
+    st.list_roles()
+        .iter()
+        .map(|(id, r)| {
+            let mut obj = json!({"pane_id": id, "role": r.name, "description": r.description});
+            if let Some(self_id) = self_pane {
+                obj["is_self"] = json!(*id == self_id);
+            }
+            obj
+        })
+        .collect()
+}
+
 // ── Individual handlers ───────────────────────────────────────────────────────
 
 fn handle_send_message(
@@ -218,10 +247,7 @@ fn handle_send_message(
         },
     };
 
-    let mut st = match state.lock() {
-        Ok(g) => g,
-        Err(_) => return CallToolResult::failure("State lock poisoned"),
-    };
+    let mut st = lock_state!(state);
     st.send_message(pane_id, to_pane, &message, priority);
 
     CallToolResult::success(format!(
@@ -243,10 +269,7 @@ fn handle_get_messages(
         .and_then(Value::as_bool)
         .unwrap_or(true);
 
-    let mut st = match state.lock() {
-        Ok(g) => g,
-        Err(_) => return CallToolResult::failure("State lock poisoned"),
-    };
+    let mut st = lock_state!(state);
     let messages = st.get_messages(pane_id, mark_read);
 
     if messages.is_empty() {
@@ -273,10 +296,7 @@ fn handle_get_partner_status(
     pane_id: u64,
     state: &Arc<Mutex<InterSessionState>>,
 ) -> CallToolResult {
-    let st = match state.lock() {
-        Ok(g) => g,
-        Err(_) => return CallToolResult::failure("State lock poisoned"),
-    };
+    let st = lock_state!(state);
     let partners = st.get_partner_status(pane_id);
 
     if partners.is_empty() {
@@ -387,10 +407,7 @@ fn handle_claim_task(
         .unwrap_or("")
         .to_string();
 
-    let mut st = match state.lock() {
-        Ok(g) => g,
-        Err(_) => return CallToolResult::failure("State lock poisoned"),
-    };
+    let mut st = lock_state!(state);
     match st.claim_task(&task_id, &description, pane_id) {
         ClaimResult::Claimed => {
             CallToolResult::success(serde_json::to_string(&json!({"claimed": true})).unwrap())
@@ -416,10 +433,7 @@ fn handle_release_task(
         None => return CallToolResult::failure("Missing required field: task_id"),
     };
 
-    let mut st = match state.lock() {
-        Ok(g) => g,
-        Err(_) => return CallToolResult::failure("State lock poisoned"),
-    };
+    let mut st = lock_state!(state);
     if st.release_task(task_id, pane_id) {
         CallToolResult::success(format!("Released task '{task_id}'."))
     } else {
@@ -444,18 +458,12 @@ fn handle_claim_role(
         .unwrap_or("")
         .to_string();
 
-    let mut st = match state.lock() {
-        Ok(g) => g,
-        Err(_) => return CallToolResult::failure("State lock poisoned"),
-    };
+    let mut st = lock_state!(state);
 
     let role = PaneRole { name: role_name.clone(), description };
     match st.claim_role(pane_id, role) {
         RoleClaimResult::Claimed => {
-            // Build list of all current roles for context.
-            let all_roles: Vec<Value> = st.list_roles().iter().map(|(id, r)| {
-                json!({"pane_id": id, "role": r.name, "description": r.description})
-            }).collect();
+            let all_roles = collect_all_roles(&st, None);
             CallToolResult::success(serde_json::to_string_pretty(&json!({
                 "claimed": true,
                 "role": role_name,
@@ -463,10 +471,7 @@ fn handle_claim_role(
             })).unwrap_or_default())
         }
         RoleClaimResult::AlreadyClaimed { held_by } => {
-            // Tell the agent which roles are taken so it can pick another.
-            let all_roles: Vec<Value> = st.list_roles().iter().map(|(id, r)| {
-                json!({"pane_id": id, "role": r.name, "description": r.description})
-            }).collect();
+            let all_roles = collect_all_roles(&st, None);
             CallToolResult::success(serde_json::to_string_pretty(&json!({
                 "claimed": false,
                 "role": role_name,
@@ -482,21 +487,10 @@ fn handle_get_role(
     pane_id: u64,
     state: &Arc<Mutex<InterSessionState>>,
 ) -> CallToolResult {
-    let st = match state.lock() {
-        Ok(g) => g,
-        Err(_) => return CallToolResult::failure("State lock poisoned"),
-    };
+    let st = lock_state!(state);
     let role = st.get_role(pane_id);
 
-    // Show ALL roles, not just partners — so agents see the full picture.
-    let all_roles: Vec<Value> = st.list_roles().iter().map(|(id, r)| {
-        json!({
-            "pane_id": id,
-            "role": r.name,
-            "description": r.description,
-            "is_self": *id == pane_id
-        })
-    }).collect();
+    let all_roles = collect_all_roles(&st, Some(pane_id));
 
     let result = json!({
         "pane_id": pane_id,

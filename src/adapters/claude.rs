@@ -33,12 +33,7 @@ impl AgentAdapter for ClaudeAdapter {
         if let Some(home) = dirs::home_dir() {
             candidates.push(home.join(".local/bin/claude"));
         }
-        for c in &candidates {
-            if c.exists() {
-                return Some(c.clone());
-            }
-        }
-        None
+        candidates.iter().find(|c| c.exists()).cloned()
     }
 
     fn capabilities(&self) -> AdapterCapabilities {

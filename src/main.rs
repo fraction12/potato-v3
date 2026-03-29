@@ -476,9 +476,9 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                     // ── Overlay active — dispatch key to overlay ──────────────
                     {
                         let overlay_kind = state.session().and_then(|s| s.overlay.clone());
-                        if overlay_kind.is_some() {
-                            match &overlay_kind {
-                                Some(crate::app::state::Overlay::AgentPicker) => {
+                        if let Some(ref kind) = overlay_kind {
+                            match kind {
+                                crate::app::state::Overlay::AgentPicker => {
                                     match key.code {
                                         KeyCode::Esc => {
                                             if let AppScreen::Session(ref mut session) = state.screen {
@@ -914,17 +914,12 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                         }
                     }
 
-                    // ── Sidebar focus — navigate sidebar items ────────────────
-                    if current_focus == CockpitFocus::Sidebar {
+                    // ── Sidebar focus — Enter returns to Input ────────────────
+                    if current_focus == CockpitFocus::Sidebar && key.code == KeyCode::Enter {
                         if let AppScreen::Session(ref mut session) = state.screen {
-                            match key.code {
-                                KeyCode::Enter => {
-                                    session.cockpit_focus = CockpitFocus::Input;
-                                    continue;
-                                }
-                                _ => {}
-                            }
+                            session.cockpit_focus = CockpitFocus::Input;
                         }
+                        continue;
                     }
                 }
             } // end if let Message::Key
@@ -1104,11 +1099,7 @@ fn spawn_claude_pane(
     if let Some(ref sock) = state.mcp_socket_path.clone() {
         // Always provide the socket path and the future pane id to every pane.
         // The pane id matches `PaneManager::next_id` — we can read it from the manager.
-        // PaneManager doesn't expose next_id directly, so we derive it:
-        // after open(), `len()` panes exist and active pane has id == (old_len).
-        // We'll set the env now and the id is the value of `state.panes.len()` since
-        // ids are monotonically allocated from 0 and never reused in a single session.
-        let pane_id: u64 = state.panes.len() as u64; // speculative — matches next_id
+        let pane_id: u64 = state.panes.next_id();
         pane_env.push(("POTATO_PANE_ID".into(), pane_id.to_string()));
         pane_env.push(("POTATO_SOCKET".into(), sock.to_string_lossy().into_owned()));
     }
@@ -1478,10 +1469,9 @@ fn sync_mcp_roles_to_panes(state: &mut AppState) {
     };
 
     for (pane_id, role) in roles {
-        // Find the pane by id and update if changed.
-        for i in 0..state.panes.len() {
-            if let Some(pane) = state.panes.get_mut(i) {
-                if pane.id == pane_id && pane.role_name.as_deref() != Some(&role.name) {
+        if let Some(idx) = state.panes.find_by_pane_id(pane_id) {
+            if let Some(pane) = state.panes.get_mut(idx) {
+                if pane.role_name.as_deref() != Some(&role.name) {
                     pane.role_name = Some(role.name.clone());
                     if !role.description.is_empty() {
                         pane.role_description = Some(role.description.clone());

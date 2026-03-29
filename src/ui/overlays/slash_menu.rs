@@ -59,6 +59,56 @@ static BUILTIN_COMMANDS: &[SlashCommand] = &[
     SlashCommand::with_alias("quit",   "Quit Potato",                "q"),
 ];
 
+// ── Shared filtering ─────────────────────────────────────────────────────────
+
+/// Filter `BUILTIN_COMMANDS` by `query` using fuzzy matching (name + alias).
+///
+/// Returns commands sorted by descending match score. Empty query returns all.
+fn filter_commands<'a>(query: &str, matcher: &mut Matcher) -> Vec<&'a SlashCommand> {
+    if query.is_empty() {
+        return BUILTIN_COMMANDS.iter().collect();
+    }
+
+    let pattern = Pattern::new(
+        query,
+        CaseMatching::Ignore,
+        Normalization::Smart,
+        AtomKind::Fuzzy,
+    );
+
+    let mut results: Vec<(&SlashCommand, u32)> = BUILTIN_COMMANDS
+        .iter()
+        .filter_map(|cmd| {
+            // Try matching against "/name"
+            let text = cmd.match_text();
+            let score = pattern.score(
+                nucleo_matcher::Utf32Str::new(&text, &mut Vec::new()),
+                matcher,
+            );
+            // Also try alias match
+            let alias_score = cmd.alias.and_then(|a| {
+                let alias_text = format!("/{}", a);
+                pattern.score(
+                    nucleo_matcher::Utf32Str::new(&alias_text, &mut Vec::new()),
+                    matcher,
+                )
+            });
+
+            let best = match (score, alias_score) {
+                (Some(s), Some(a)) => Some(s.max(a)),
+                (Some(s), None) => Some(s),
+                (None, Some(a)) => Some(a),
+                (None, None) => None,
+            };
+
+            best.map(|s| (cmd, s as u32))
+        })
+        .collect();
+
+    results.sort_by(|a, b| b.1.cmp(&a.1));
+    results.into_iter().map(|(cmd, _)| cmd).collect()
+}
+
 // ── SlashMenu ─────────────────────────────────────────────────────────────────
 
 /// Fuzzy-searchable slash command picker.
@@ -98,49 +148,7 @@ impl SlashMenu {
 
     /// Return the list of commands that match the current query.
     pub fn filtered(&mut self) -> Vec<&SlashCommand> {
-        if self.query.is_empty() {
-            return BUILTIN_COMMANDS.iter().collect();
-        }
-
-        let pattern = Pattern::new(
-            &self.query,
-            CaseMatching::Ignore,
-            Normalization::Smart,
-            AtomKind::Fuzzy,
-        );
-
-        let mut results: Vec<(&SlashCommand, u32)> = BUILTIN_COMMANDS
-            .iter()
-            .filter_map(|cmd| {
-                // Try matching against "/name" and also against alias if present
-                let text = cmd.match_text();
-                let score = pattern.score(
-                    nucleo_matcher::Utf32Str::new(&text, &mut Vec::new()),
-                    &mut self.matcher,
-                );
-                // Also try alias match
-                let alias_score = cmd.alias.and_then(|a| {
-                    let alias_text = format!("/{}", a);
-                    pattern.score(
-                        nucleo_matcher::Utf32Str::new(&alias_text, &mut Vec::new()),
-                        &mut self.matcher,
-                    )
-                });
-
-                let best = match (score, alias_score) {
-                    (Some(s), Some(a)) => Some(s.max(a)),
-                    (Some(s), None) => Some(s),
-                    (None, Some(a)) => Some(a),
-                    (None, None) => None,
-                };
-
-                best.map(|s| (cmd, s as u32))
-            })
-            .collect();
-
-        // Sort by descending score for best-match-first ordering.
-        results.sort_by(|a, b| b.1.cmp(&a.1));
-        results.into_iter().map(|(cmd, _)| cmd).collect()
+        filter_commands(&self.query, &mut self.matcher)
     }
 
     /// Move selection up (wraps).
@@ -186,31 +194,9 @@ impl Overlay for SlashMenu {
     }
 
     fn render(&self, frame: &mut Frame, area: Rect) {
-        // Build filtered list without &mut self — use a local matcher clone.
+        // Use a local matcher since render() takes &self (not &mut self).
         let mut matcher = Matcher::new(Config::DEFAULT);
-        let commands: Vec<&SlashCommand> = if self.query.is_empty() {
-            BUILTIN_COMMANDS.iter().collect()
-        } else {
-            let pattern = Pattern::new(
-                &self.query,
-                CaseMatching::Ignore,
-                Normalization::Smart,
-                AtomKind::Fuzzy,
-            );
-            let mut results: Vec<(&SlashCommand, u32)> = BUILTIN_COMMANDS
-                .iter()
-                .filter_map(|cmd| {
-                    let text = cmd.match_text();
-                    let score = pattern.score(
-                        nucleo_matcher::Utf32Str::new(&text, &mut Vec::new()),
-                        &mut matcher,
-                    );
-                    score.map(|s| (cmd, s as u32))
-                })
-                .collect();
-            results.sort_by(|a, b| b.1.cmp(&a.1));
-            results.into_iter().map(|(cmd, _)| cmd).collect()
-        };
+        let commands = filter_commands(&self.query, &mut matcher);
 
         if commands.is_empty() {
             return;

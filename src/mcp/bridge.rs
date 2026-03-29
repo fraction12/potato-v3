@@ -18,7 +18,7 @@
 //!
 //! Multiple simultaneous connections are supported — one per Claude pane.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
@@ -91,13 +91,12 @@ impl McpBridge {
         let listener = UnixListener::bind(&socket_path)
             .with_context(|| format!("failed to bind UDS at {}", socket_path.display()))?;
 
+        let returned_path = socket_path.clone();
         let path_for_task = socket_path.clone();
 
         let task = tokio::spawn(async move {
             run_listener(listener, state, inject_tx, path_for_task).await;
         });
-
-        let returned_path = socket_path.clone();
         Ok((
             Self {
                 socket_path,
@@ -114,7 +113,7 @@ impl McpBridge {
     }
 
     /// Returns the socket path used by this bridge.
-    pub fn socket_path(&self) -> &PathBuf {
+    pub fn socket_path(&self) -> &Path {
         &self.socket_path
     }
 }

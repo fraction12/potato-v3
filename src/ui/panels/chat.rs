@@ -212,7 +212,7 @@ impl ChatPanel {
     // ── Rendering helpers ─────────────────────────────────────────────────────
 
     /// Build all visible [`Line`]s for the current transcript.
-    fn build_lines(&self, _width: u16) -> Vec<Line<'static>> {
+    fn build_lines(&self) -> Vec<Line<'static>> {
         let mut lines: Vec<Line<'static>> = Vec::new();
         let search_query = self.search.as_ref().and_then(|s| {
             if !s.query.is_empty() {
@@ -227,7 +227,7 @@ impl ChatPanel {
         let mut in_code_block = false;
 
         for (entry_idx, entry) in self.transcript.iter().enumerate() {
-            let (prefix_span, _prefix_style) = role_prefix(entry);
+            let prefix_span = role_prefix(entry);
             let ts_span = if self.show_timestamps {
                 Some(Span::styled(
                     format!(" {}", entry.timestamp.format("%H:%M")),
@@ -257,25 +257,13 @@ impl ChatPanel {
                     continue;
                 }
 
-                let is_match = search_query.is_some()
-                    && all_matches
-                        .map(|m| m.contains(&(entry_idx, line_idx)))
-                        .unwrap_or(false);
-
-                let is_current_match = is_match && {
-                    let mut found = false;
-                    if let Some(matches) = all_matches {
-                        for (i, &(ei, li)) in matches.iter().enumerate() {
-                            if ei == entry_idx && li == line_idx {
-                                if current_match == Some(i) {
-                                    found = true;
-                                }
-                                break;
-                            }
-                        }
-                    }
-                    found
-                };
+                let match_index = search_query.as_ref().and_then(|_| {
+                    all_matches.and_then(|m| {
+                        m.iter().position(|&(ei, li)| ei == entry_idx && li == line_idx)
+                    })
+                });
+                let is_match = match_index.is_some();
+                let is_current_match = match_index == current_match;
 
                 let line = if in_code_block {
                     let mut spans: Vec<Span<'static>> = Vec::new();
@@ -374,7 +362,7 @@ impl ChatPanel {
             return;
         }
 
-        let lines = self.build_lines(area.width);
+        let lines = self.build_lines();
         let total = lines.len() as u16;
         let height = area.height;
 
@@ -435,31 +423,19 @@ impl ChatPanel {
 
 // ── Role prefix helper ────────────────────────────────────────────────────────
 
-fn role_prefix(entry: &TranscriptEntry) -> (Span<'static>, Style) {
+fn role_prefix(entry: &TranscriptEntry) -> Span<'static> {
     match entry.role {
-        MessageRole::User => (
-            Span::styled(
-                "\u{276f} ".to_string(),
-                Style::default().fg(AMBER).add_modifier(Modifier::BOLD),
-            ),
-            Style::default().fg(CREAM),
+        MessageRole::User => Span::styled(
+            "\u{276f} ".to_string(),
+            Style::default().fg(AMBER).add_modifier(Modifier::BOLD),
         ),
-        MessageRole::Assistant => (
-            Span::styled("  ".to_string(), Style::default()),
-            Style::default().fg(CREAM),
-        ),
-        MessageRole::System => (
-            Span::styled(
-                "\u{2022} ".to_string(),
-                Style::default().fg(BRASS),
-            ),
+        MessageRole::Assistant => Span::styled("  ".to_string(), Style::default()),
+        MessageRole::System => Span::styled(
+            "\u{2022} ".to_string(),
             Style::default().fg(BRASS),
         ),
-        MessageRole::Error => (
-            Span::styled(
-                "\u{2717} ".to_string(),
-                Style::default().fg(ROSE),
-            ),
+        MessageRole::Error => Span::styled(
+            "\u{2717} ".to_string(),
             Style::default().fg(ROSE),
         ),
     }

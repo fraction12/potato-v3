@@ -29,3 +29,4 @@
 
 # Config overrides
 config/local.toml
+.mcp.json

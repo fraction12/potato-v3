@@ -16,9 +16,6 @@ use super::{Panel, PanelAction, PanelId};
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-/// Bar characters for sparkline, from shortest to tallest.
-const SPARK_CHARS: &[char] = &['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
-
 /// Approximate cost per 1k tokens in USD (rough estimate for display only).
 const COST_PER_1K: f64 = 0.000_2;
 
@@ -125,18 +122,7 @@ impl TokenDashPanel {
 
     /// Build the sparkline string from the turn history.
     pub fn sparkline_str(&self) -> String {
-        let data = &self.turn_history.data;
-        if data.is_empty() {
-            return String::new();
-        }
-        let max = *data.iter().max().unwrap_or(&1).max(&1);
-        data.iter()
-            .map(|&v| {
-                let idx = ((v as f64 / max as f64) * (SPARK_CHARS.len() - 1) as f64)
-                    .round() as usize;
-                SPARK_CHARS[idx.min(SPARK_CHARS.len() - 1)]
-            })
-            .collect()
+        self.turn_history.render_str()
     }
 
     /// Whether the session is under the soft token budget (100k).
@@ -298,8 +284,8 @@ mod tests {
         panel.record_turn("m", 100, 0);
 
         let spark = panel.sparkline_str();
-        // All equal → all max bar.
-        assert!(spark.chars().all(|c| c == '█'));
+        // All equal → mid bar (delegates to TokenSparkline::render_str).
+        assert!(spark.chars().all(|c| c == '▅'));
     }
 
     #[test]
