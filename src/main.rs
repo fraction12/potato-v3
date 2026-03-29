@@ -319,8 +319,12 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                         let menu_item = DashboardMenuItem::ALL[dash.selected_menu];
                         match (menu_item, &dash.focus) {
                             (DashboardMenuItem::RoastPotato, DashboardFocus::Menu) => {
+                                // Snapshot roles BEFORE spawning — spawn_claude_pane
+                                // switches screen to Session, making Dashboard inaccessible.
+                                let roles: Vec<crate::app::state::RoleDefinition> = dash.roles.clone();
+                                let role_count = roles.len().max(1);
+
                                 // Launch panes — one per defined role, or one default.
-                                let role_count = dash.roles.len().max(1);
                                 for _ in 0..role_count.min(2) {
                                     match spawn_claude_pane(state, None) {
                                         Ok(id) => {
@@ -338,37 +342,34 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                                 // Use a MUCH longer delay for bootstrap because
                                 // Claude Code needs ~2-3s to start its Ink UI.
                                 const BOOTSTRAP_DELAY_TICKS: u64 = 60; // ~3s at 50ms/tick
-                                if let AppScreen::Dashboard(ref dash) = state.screen {
-                                    let roles = dash.roles.clone();
-                                    for (i, role) in roles.iter().enumerate() {
-                                        if let Some(pane) = state.panes.get_mut(i) {
-                                            pane.role_name = Some(role.name.clone());
+                                for (i, role) in roles.iter().enumerate() {
+                                    if let Some(pane) = state.panes.get_mut(i) {
+                                        pane.role_name = Some(role.name.clone());
 
-                                            // Pre-register role in InterSessionState so
-                                            // potato_get_role returns the assigned role
-                                            // BEFORE the agent even calls claim_role.
-                                            if let Some(ref iss) = state.inter_session_state {
-                                                if let Ok(mut st) = iss.lock() {
-                                                    st.set_role(pane.id, crate::mcp::state::PaneRole {
-                                                        name: role.name.clone(),
-                                                        description: role.prompt.clone(),
-                                                    });
-                                                }
+                                        // Pre-register role in InterSessionState so
+                                        // potato_get_role returns the assigned role
+                                        // BEFORE the agent even calls claim_role.
+                                        if let Some(ref iss) = state.inter_session_state {
+                                            if let Ok(mut st) = iss.lock() {
+                                                st.set_role(pane.id, crate::mcp::state::PaneRole {
+                                                    name: role.name.clone(),
+                                                    description: role.prompt.clone(),
+                                                });
                                             }
+                                        }
 
-                                            if let Some(ref mut pty) = pane.pty {
-                                                let prompt = format!(
-                                                    "Your role is: {}. {} Your role has already been claimed for you. Do NOT start working until the user gives you a task. Stand by.",
-                                                    role.name, role.prompt
-                                                );
-                                                let _ = pty.write_input(prompt.as_bytes());
-                                                if let Ok(mut pending) = PENDING_ENTERS.lock() {
-                                                    pending.push(crate::mcp::injection::PendingEnter {
-                                                        pane_index: i,
-                                                        written_at_tick: state.tick_count,
-                                                        delay_ticks: BOOTSTRAP_DELAY_TICKS,
-                                                    });
-                                                }
+                                        if let Some(ref mut pty) = pane.pty {
+                                            let prompt = format!(
+                                                "Your role is: {}. {} Your role has already been claimed for you. Do NOT start working until the user gives you a task. Stand by.",
+                                                role.name, role.prompt
+                                            );
+                                            let _ = pty.write_input(prompt.as_bytes());
+                                            if let Ok(mut pending) = PENDING_ENTERS.lock() {
+                                                pending.push(crate::mcp::injection::PendingEnter {
+                                                    pane_index: i,
+                                                    written_at_tick: state.tick_count,
+                                                    delay_ticks: BOOTSTRAP_DELAY_TICKS,
+                                                });
                                             }
                                         }
                                     }
@@ -1448,48 +1449,54 @@ fn spawn_claude_pane(
 /// to all agents simultaneously.
 fn build_collaboration_prompt(state: &AppState) -> String {
     let n = state.panes.len();
-    let pane_info: Vec<(u64, String)> = (0..n)
+    let pane_info: Vec<(u64, String, Option<String>)> = (0..n)
         .filter_map(|i| {
             state.panes.get(i).map(|p| {
-                (p.id, p.session.agent_name.clone())
+                (p.id, p.session.agent_name.clone(), p.role_name.clone())
             })
         })
         .collect();
 
     let pane_labels: Vec<String> = pane_info
         .iter()
-        .map(|(id, agent)| format!("Pane {id} ({agent})"))
+        .map(|(id, agent, role)| {
+            if let Some(r) = role {
+                format!("Pane {id} ({agent}, role: {r})")
+            } else {
+                format!("Pane {id} ({agent})")
+            }
+        })
         .collect();
 
-    // If roles were pre-defined by the user, mention them so agents know the full team.
-    let roles_hint = if let AppScreen::Dashboard(ref dash) = state.screen {
-        if !dash.roles.is_empty() {
-            let role_names: Vec<&str> = dash.roles.iter().map(|r| r.name.as_str()).collect();
-            format!(" Pre-defined roles: {}.", role_names.join(", "))
-        } else {
-            String::new()
-        }
+    // Check if roles were pre-assigned (from .potato/roles.toml).
+    let has_roles = pane_info.iter().any(|(_, _, r)| r.is_some());
+
+    let role_instructions = if has_roles {
+        "Your role has already been assigned and claimed for you — call potato_get_role \
+         to confirm. Do NOT pick a different role. \
+         Use your assigned role name exactly if you need to re-claim."
+            .to_string()
     } else {
-        String::new()
+        "IMPORTANT: Before picking a role, call potato_get_role to see what's taken. \
+         Then call potato_claim_role with a DIFFERENT role than your partner."
+            .to_string()
     };
 
     format!(
         "You are in a multi-agent collaboration managed by Potato. \
-         Active panes: {}.{} \
+         Active panes: {}. \
          You have Potato MCP tools available: \
-         potato_claim_role (claim a role — MUST check potato_get_role first, roles are exclusive), \
-         potato_get_role (see all claimed roles), \
+         potato_claim_role, potato_get_role, \
          potato_send_message, potato_get_messages, potato_get_partner_status, \
          potato_shared_context, potato_claim_task, potato_release_task. \
-         IMPORTANT: Before picking a role, call potato_get_role to see what's taken. \
-         Then call potato_claim_role with a DIFFERENT role than your partner. \
+         {} \
          When given work, use potato_claim_task with the OpenSpec ticket ID (e.g. T-810) \
          to register what you're working on. Release tasks when done. \
-         After claiming roles, WAIT for the user to give you a task. \
+         After confirming your role, WAIT for the user to give you a task. \
          Do NOT start working on anything until the user tells you what to do. \
-         Introduce yourself briefly, claim a role, and stand by.",
+         Introduce yourself briefly and stand by.",
         pane_labels.join(", "),
-        roles_hint,
+        role_instructions,
     )
 }
 
