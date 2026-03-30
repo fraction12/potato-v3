@@ -173,7 +173,21 @@ impl AgentAdapter for ClaudeAdapter {
             // ── Tool result (from Claude's tool execution loop) ───────────────
             "tool_result" => {
                 let id = value["tool_use_id"].as_str().unwrap_or("").to_string();
-                let output = value["content"].as_str().unwrap_or("").to_string();
+                let output = value["content"]
+                    .as_str()
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| {
+                        // Handle array form: extract text from content blocks.
+                        value["content"]
+                            .as_array()
+                            .map(|arr| {
+                                arr.iter()
+                                    .filter_map(|block| block["text"].as_str())
+                                    .collect::<Vec<_>>()
+                                    .join("\n")
+                            })
+                            .unwrap_or_default()
+                    });
                 vec![AgentEvent::ToolDone {
                     id,
                     output,

@@ -390,18 +390,25 @@ fn render_detail_roles(frame: &mut Frame, area: Rect, state: &AppState) {
         let mut result: Vec<Line> = Vec::new();
         let mut remaining = text;
         while !remaining.is_empty() {
-            let chunk_len = remaining.len().min(usable);
+            let char_count = remaining.chars().count();
+            let chunk_chars = char_count.min(usable);
+            // Find the byte offset of the chunk_chars-th character.
+            let chunk_byte_end = remaining
+                .char_indices()
+                .nth(chunk_chars)
+                .map(|(i, _)| i)
+                .unwrap_or(remaining.len());
             // Try to break at a space if we're not at the end.
-            let break_at = if chunk_len < remaining.len() {
-                remaining[..chunk_len]
+            let break_byte = if chunk_byte_end < remaining.len() {
+                remaining[..chunk_byte_end]
                     .rfind(' ')
-                    .map(|p| p + 1) // include the space in this chunk
-                    .unwrap_or(chunk_len)
+                    .map(|p| p + 1)
+                    .unwrap_or(chunk_byte_end)
             } else {
-                chunk_len
+                chunk_byte_end
             };
-            let chunk = &remaining[..break_at];
-            remaining = &remaining[break_at..];
+            let chunk = &remaining[..break_byte];
+            remaining = &remaining[break_byte..];
             result.push(Line::from(Span::styled(
                 format!("{}{}", pad, chunk.trim_end()),
                 style,
@@ -487,9 +494,15 @@ fn render_detail_roles(frame: &mut Frame, area: Rect, state: &AppState) {
         let mut remaining = text;
         let mut first = true;
         while !remaining.is_empty() {
-            let chunk_len = remaining.len().min(usable);
-            let chunk = &remaining[..chunk_len];
-            remaining = &remaining[chunk_len..];
+            let char_count = remaining.chars().count();
+            let chunk_chars = char_count.min(usable);
+            let chunk_byte_end = remaining
+                .char_indices()
+                .nth(chunk_chars)
+                .map(|(i, _)| i)
+                .unwrap_or(remaining.len());
+            let chunk = &remaining[..chunk_byte_end];
+            remaining = &remaining[chunk_byte_end..];
             if first {
                 result.push(Line::from(vec![
                     Span::styled(prefix.to_string(), Style::default().fg(AMBER)),
@@ -524,7 +537,8 @@ fn render_detail_roles(frame: &mut Frame, area: Rect, state: &AppState) {
                 buf.clone()
             };
             let padded = format!("{:<width$}", content, width = box_width);
-            let mid = format!("  │ {} │", &padded[..box_width.min(padded.len())]);
+            let mid_content: String = padded.chars().take(box_width).collect();
+            let mid = format!("  │ {} │", mid_content);
             let bot = format!("  └{}┘", "─".repeat(box_width + 2));
             let content_style = if buf.is_empty() {
                 Style::default().fg(MUTED)

@@ -346,7 +346,7 @@ impl SessionStore {
         role: &str,
         content: &str,
         tokens: Option<u32>,
-    ) -> Result<()> {
+    ) -> Result<StoredMessage> {
         let id = new_id();
         let now = unix_now();
         self.conn
@@ -356,7 +356,14 @@ impl SessionStore {
                 params![id, session_id, role, content, now, tokens],
             )
             .context("failed to insert message")?;
-        Ok(())
+        Ok(StoredMessage {
+            id,
+            session_id: session_id.to_string(),
+            role: role.to_string(),
+            content: content.to_string(),
+            created_at: now,
+            tokens,
+        })
     }
 
     /// Load all messages for a session, ordered by creation time (legacy API).
@@ -389,13 +396,9 @@ impl SessionStore {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/// Generate a unique ID from the current nanosecond timestamp (hex-encoded).
+/// Generate a unique ID using UUID v4.
 fn new_id() -> String {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    format!("{:x}", nanos)
+    uuid::Uuid::new_v4().to_string()
 }
 
 /// Current Unix timestamp in whole seconds.

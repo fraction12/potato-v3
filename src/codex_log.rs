@@ -119,6 +119,12 @@ impl CodexSessionLogTracker {
         }
 
         let mut file = File::open(&self.path)?;
+        // Detect log rotation/truncation: if file shrank, reset to beginning.
+        let file_len = file.metadata().map(|m| m.len()).unwrap_or(0);
+        if file_len < self.offset {
+            self.offset = 0;
+            self.carry.clear();
+        }
         file.seek(SeekFrom::Start(self.offset))?;
 
         let mut buf = Vec::new();
@@ -383,14 +389,7 @@ pub fn find_session_log(home: &Path, session_id: &str) -> Option<PathBuf> {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-fn truncate_str(s: &str, max: usize) -> String {
-    if s.chars().count() <= max {
-        s.to_string()
-    } else {
-        let truncated: String = s.chars().take(max.saturating_sub(1)).collect();
-        format!("{}…", truncated)
-    }
-}
+use crate::util::truncate_str;
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 

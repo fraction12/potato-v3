@@ -170,7 +170,7 @@ pub fn parse_jsonl_file(path: &Path, session_id: &str, project_dir: &str) -> Res
                             // Content may be a string or an array.
                             let prompt = extract_user_text(content);
                             if !prompt.is_empty() {
-                                first_user_prompt = Some(truncate(&prompt, 80));
+                                first_user_prompt = Some(truncate_str(&prompt, 80));
                             }
                         }
                     }
@@ -219,15 +219,7 @@ fn extract_user_text(content: &Value) -> String {
     }
 }
 
-/// Truncate a string to at most `max` characters.
-fn truncate(s: &str, max: usize) -> String {
-    let chars: Vec<char> = s.chars().collect();
-    if chars.len() <= max {
-        s.to_string()
-    } else {
-        chars[..max].iter().collect::<String>() + "…"
-    }
-}
+use crate::util::truncate_str;
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
@@ -267,15 +259,15 @@ mod tests {
     #[test]
     fn truncate_clips_long_strings() {
         let s = "a".repeat(100);
-        let t = truncate(&s, 80);
-        // 80 chars + ellipsis character = 81 chars
-        assert_eq!(t.chars().count(), 81);
+        let t = truncate_str(&s, 80);
+        // 79 chars + ellipsis = 80 chars total
+        assert_eq!(t.chars().count(), 80);
     }
 
     #[test]
     fn truncate_leaves_short_strings() {
         let s = "hello";
-        assert_eq!(truncate(s, 80), "hello");
+        assert_eq!(truncate_str(s, 80), "hello");
     }
 
     #[test]

@@ -200,30 +200,42 @@ fn dispatch_request(
         Ok(r) => r,
         Err(e) => {
             tracing::warn!("McpBridge: invalid request line: {e}");
+            let err_resp = serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": null,
+                "error": { "code": -32700, "message": format!("Parse error: {e}") }
+            });
             let resp = BridgeResponse {
-                response: format!(
-                    r#"{{"jsonrpc":"2.0","id":null,"error":{{"code":-32700,"message":"Parse error: {e}"}}}}"#
-                ),
+                response: serde_json::to_string(&err_resp).unwrap_or_default(),
             };
             return serde_json::to_string(&resp).unwrap_or_default();
         }
     };
 
-    // Check if this is a send_message call — we'll need to fire injection after.
-    let is_send_message = is_send_message_call(&bridge_req.request);
+    // Pre-parse the RPC request once so helpers don't re-parse it.
+    let parsed_rpc: Option<serde_json::Value> = serde_json::from_str(&bridge_req.request).ok();
+
+    let is_send_message = parsed_rpc
+        .as_ref()
+        .map(|v| is_send_message_call(v))
+        .unwrap_or(false);
 
     let server = McpServer::new(bridge_req.pane_id, Arc::clone(state));
     let rpc_response = server.handle_request(&bridge_req.request);
 
     // After a successful send_message, push an injection request so the
     // main event loop writes the message into the target pane's PTY.
-    if is_send_message {
+    // Only inject if the RPC response indicates success (no "error" field).
+    let is_success = serde_json::from_str::<serde_json::Value>(&rpc_response)
+        .map(|v| v.get("error").is_none())
+        .unwrap_or(false);
+    if is_send_message && is_success {
         if let Some(tx) = inject_tx {
-            if let Some(inject) =
-                build_inject_request(bridge_req.pane_id, &bridge_req.request, state)
-            {
-                if let Err(e) = tx.send(inject) {
-                    tracing::warn!("Failed to send inject request: {e}");
+            if let Some(ref v) = parsed_rpc {
+                if let Some(inject) = build_inject_request(bridge_req.pane_id, v, state) {
+                    if let Err(e) = tx.send(inject) {
+                        tracing::warn!("Failed to send inject request: {e}");
+                    }
                 }
             }
         }
@@ -235,23 +247,18 @@ fn dispatch_request(
     serde_json::to_string(&resp).unwrap_or_default()
 }
 
-/// Check whether a JSON-RPC request is a `tools/call` for `potato_send_message`.
-fn is_send_message_call(rpc_request: &str) -> bool {
-    if let Ok(v) = serde_json::from_str::<serde_json::Value>(rpc_request) {
-        v.get("method").and_then(|m| m.as_str()) == Some("tools/call")
-            && v.pointer("/params/name").and_then(|n| n.as_str()) == Some("potato_send_message")
-    } else {
-        false
-    }
+/// Check whether a pre-parsed JSON-RPC request is a `tools/call` for `potato_send_message`.
+fn is_send_message_call(v: &serde_json::Value) -> bool {
+    v.get("method").and_then(|m| m.as_str()) == Some("tools/call")
+        && v.pointer("/params/name").and_then(|n| n.as_str()) == Some("potato_send_message")
 }
 
-/// Extract injection details from a send_message RPC request.
+/// Extract injection details from a pre-parsed send_message RPC request.
 fn build_inject_request(
     from_pane: u64,
-    rpc_request: &str,
+    v: &serde_json::Value,
     state: &Arc<Mutex<InterSessionState>>,
 ) -> Option<InjectRequest> {
-    let v: serde_json::Value = serde_json::from_str(rpc_request).ok()?;
     let args = v.pointer("/params/arguments")?;
     let message = args.get("message")?.as_str()?;
 
@@ -529,6 +536,11 @@ mod tests {
     #[tokio::test]
     async fn bridge_cross_pane_messaging() {
         let state = fresh_state();
+        {
+            let mut st = state.lock().unwrap();
+            st.register_pane(0);
+            st.register_pane(1);
+        }
         let sock = test_socket("cross-pane");
         let (_bridge, path) = McpBridge::start_at(Arc::clone(&state), sock, None).unwrap();
 

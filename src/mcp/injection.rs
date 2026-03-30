@@ -31,8 +31,8 @@ pub struct InjectRequest {
 /// Enter not yet sent). The main loop should send `\r` after a short delay.
 #[derive(Debug, Clone)]
 pub struct PendingEnter {
-    /// Pane index (not ID) in PaneManager.
-    pub pane_index: usize,
+    /// Stable pane ID (survives pane open/close).
+    pub pane_id: u64,
     /// Tick count at which the text was written.
     pub written_at_tick: u64,
     /// How many ticks to wait before sending Enter.

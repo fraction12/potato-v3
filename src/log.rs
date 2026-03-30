@@ -8,9 +8,11 @@
 //! write to stderr (eprintln!, panic output, library debug spew) goes to
 //! disk instead of corrupting the ratatui surface.
 
-use std::fs::OpenOptions;
+use std::fs::{File, OpenOptions};
+use std::io::Write;
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
@@ -21,6 +23,30 @@ pub fn log_path() -> PathBuf {
         .unwrap_or_default()
         .join(".potato")
         .join("potato.log")
+}
+
+/// A writer backed by a single `Mutex<File>` — no `try_clone`, no extra fds.
+#[derive(Clone)]
+struct SharedWriter(Arc<Mutex<File>>);
+
+impl<'a> fmt::MakeWriter<'a> for SharedWriter {
+    type Writer = SharedWriterGuard<'a>;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        SharedWriterGuard(self.0.lock().expect("log mutex poisoned"))
+    }
+}
+
+struct SharedWriterGuard<'a>(std::sync::MutexGuard<'a, File>);
+
+impl Write for SharedWriterGuard<'_> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.write(buf)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.0.flush()
+    }
 }
 
 /// Initialise file-based logging.
@@ -36,13 +62,10 @@ pub fn init_file_logging() -> anyhow::Result<()> {
     let path = log_path();
     std::fs::create_dir_all(path.parent().unwrap())?;
     let file = OpenOptions::new().create(true).append(true).open(&path)?;
+    let shared_file = SharedWriter(Arc::new(Mutex::new(file)));
     tracing_subscriber::registry()
         .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("debug")))
-        .with(
-            fmt::layer()
-                .with_writer(move || file.try_clone().unwrap())
-                .with_ansi(false),
-        )
+        .with(fmt::layer().with_writer(shared_file).with_ansi(false))
         .init();
     Ok(())
 }

@@ -221,11 +221,7 @@ fn render_agents_section(
 
             // Truncate name to fit the narrow rail.
             let max_name = area.width.saturating_sub(5) as usize;
-            let display_name = if row.display_name.len() > max_name {
-                &row.display_name[..max_name]
-            } else {
-                &row.display_name
-            };
+            let display_name = truncate_str(&row.display_name, max_name);
 
             let line = Line::from(vec![
                 Span::styled(
@@ -567,9 +563,16 @@ fn render_input_bar(frame: &mut Frame, area: Rect, session: &SessionState, focus
 
         let prompt = "❯ ";
         let buf = &session.input_buffer;
-        let cursor = session.input_cursor.min(buf.len());
-        let before = &buf[..cursor];
-        let after = &buf[cursor..];
+        let char_count = buf.chars().count();
+        let cursor_chars = session.input_cursor.min(char_count);
+        // Convert char-index to byte offset for safe slicing.
+        let cursor_byte = buf
+            .char_indices()
+            .nth(cursor_chars)
+            .map(|(i, _)| i)
+            .unwrap_or(buf.len());
+        let before = &buf[..cursor_byte];
+        let after = &buf[cursor_byte..];
 
         let mut spans = vec![Span::styled(
             prompt,
@@ -935,14 +938,7 @@ fn fmt_tokens(n: u64) -> String {
     }
 }
 
-/// Truncate a string to `max` chars, appending `…` if needed.
-fn truncate_str(s: &str, max: usize) -> String {
-    if s.len() <= max || max < 2 {
-        s.to_string()
-    } else {
-        format!("{}…", &s[..max - 1])
-    }
-}
+use crate::util::truncate_str;
 
 // ── Status bar (full width) ───────────────────────────────────────────────────
 
@@ -1098,11 +1094,7 @@ fn agent_status_display(status: &AgentStatus) -> (String, Color) {
         AgentStatus::WaitingApproval { tool_name } => (format!("⚠ Approve: {}", tool_name), ROSE),
         AgentStatus::Exited { code } => (format!("Exited ({})", code.unwrap_or(-1)), MUTED),
         AgentStatus::Error { message } => {
-            let short = if message.len() > 30 {
-                format!("{}…", &message[..29])
-            } else {
-                message.clone()
-            };
+            let short = truncate_str(message, 30);
             (format!("Error: {}", short), ROSE)
         }
     }

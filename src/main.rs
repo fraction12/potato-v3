@@ -23,6 +23,7 @@ mod roles;
 mod session;
 mod terminal;
 mod ui;
+mod util;
 
 use std::io::{self, Write as _};
 use std::path::PathBuf;
@@ -405,7 +406,7 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                                             any_written = true;
                                             if let Ok(mut pending) = PENDING_ENTERS.lock() {
                                                 pending.push(crate::mcp::injection::PendingEnter {
-                                                    pane_index: i,
+                                                    pane_id: pane.id,
                                                     written_at_tick: state.tick_count,
                                                     delay_ticks:
                                                         crate::mcp::injection::ENTER_DELAY_TICKS,
@@ -640,7 +641,6 @@ fn spawn_claude_pane(state: &mut AppState, resume_id: Option<&str>) -> Result<St
     // Set POTATO_PANE_ID and POTATO_SOCKET on every pane's PTY process.
     // The MCP server inherits these from its parent (Claude PTY), so
     // .mcp.json only needs a single shared "potato" entry.
-    let pane_index_after_open = state.panes.len(); // 0-based index the new pane will occupy
     let mut pane_env: Vec<(String, String)> = Vec::new();
     if let Some(ref sock) = state.mcp_socket_path.clone() {
         // Always provide the socket path and the future pane id to every pane.
@@ -677,7 +677,8 @@ fn spawn_claude_pane(state: &mut AppState, resume_id: Option<&str>) -> Result<St
         .ok_or_else(|| "Failed to open pane".to_string())?;
 
     let pane_id = pane.id;
-    let _dirty_rx = real_pty.dirty_tx.subscribe();
+    // dirty_tx notifications are unused — the UI redraws on a tick timer.
+    // No receiver needed; sends in the PTY reader thread are harmless no-ops.
     pane.pty = Some(real_pty);
     pane.session.status = crate::app::state::AgentStatus::Idle;
     pane.session.claude_session_id = Some(session_id.clone());
@@ -993,7 +994,7 @@ fn drain_inject_requests(state: &mut AppState) {
                             );
                             if let Ok(mut pending) = PENDING_ENTERS.lock() {
                                 pending.push(crate::mcp::injection::PendingEnter {
-                                    pane_index: idx,
+                                    pane_id: req.to_pane,
                                     written_at_tick: current_tick,
                                     delay_ticks: crate::mcp::injection::ENTER_DELAY_TICKS,
                                 });
@@ -1021,20 +1022,27 @@ fn drain_inject_requests(state: &mut AppState) {
     if let Ok(mut pending) = PENDING_ENTERS.lock() {
         pending.retain(|p| {
             if current_tick.wrapping_sub(p.written_at_tick) >= p.delay_ticks {
-                // Time to send Enter.
-                if let Some(pane) = state.panes.get_mut(p.pane_index) {
-                    if let Some(ref mut pty) = pane.pty {
-                        if !pty.child_exited() {
-                            if let Err(e) = pty.write_input(b"\r") {
-                                tracing::warn!("Failed to send Enter to pane: {e}");
-                            } else {
-                                tracing::info!(
-                                    "Sent deferred Enter to pane index {}",
-                                    p.pane_index
-                                );
+                // Time to send Enter — resolve pane ID to current index.
+                if let Some(idx) = state.panes.find_by_pane_id(p.pane_id) {
+                    if let Some(pane) = state.panes.get_mut(idx) {
+                        if let Some(ref mut pty) = pane.pty {
+                            if !pty.child_exited() {
+                                if let Err(e) = pty.write_input(b"\r") {
+                                    tracing::warn!(
+                                        "Failed to send Enter to pane {}: {e}",
+                                        p.pane_id
+                                    );
+                                } else {
+                                    tracing::info!("Sent deferred Enter to pane id {}", p.pane_id);
+                                }
                             }
                         }
                     }
+                } else {
+                    tracing::debug!(
+                        "Pane {} closed before deferred Enter fired — discarding",
+                        p.pane_id
+                    );
                 }
                 false // remove from pending
             } else {
@@ -1308,6 +1316,7 @@ async fn main() -> Result<()> {
 
     // Load configuration.
     let cfg = load_config(cli.config.as_deref())?;
+    config::validate_keybinds(&cfg);
 
     // Initialise session store.
     let db_path = config::expand_tilde(&cfg.db_path);

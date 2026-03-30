@@ -165,9 +165,9 @@ fn handle_overlay(state: &mut AppState, key: &KeyEvent) -> Option<KeyAction> {
                     }
                 }
                 KeyCode::Down => {
-                    const MAX_AGENTS: usize = 2;
+                    const MAX_AGENT_INDEX: usize = 2; // 0=Claude, 1=Codex, 2=OpenCode
                     if let AppScreen::Session(ref mut session) = state.screen {
-                        if session.agent_picker.selected < MAX_AGENTS {
+                        if session.agent_picker.selected < MAX_AGENT_INDEX {
                             session.agent_picker.selected += 1;
                         }
                     }

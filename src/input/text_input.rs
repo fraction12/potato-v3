@@ -23,8 +23,9 @@ pub fn handle(state: &mut AppState, key: &KeyEvent) -> KeyAction {
             }
             KeyCode::Backspace => {
                 session.input_buffer.pop();
-                if session.input_cursor > session.input_buffer.len() {
-                    session.input_cursor = session.input_buffer.len();
+                let char_count = session.input_buffer.chars().count();
+                if session.input_cursor > char_count {
+                    session.input_cursor = char_count;
                 }
                 return KeyAction::Handled;
             }
@@ -32,7 +33,7 @@ pub fn handle(state: &mut AppState, key: &KeyEvent) -> KeyAction {
                 session.input_cursor -= 1;
                 return KeyAction::Handled;
             }
-            KeyCode::Right if session.input_cursor < session.input_buffer.len() => {
+            KeyCode::Right if session.input_cursor < session.input_buffer.chars().count() => {
                 session.input_cursor += 1;
                 return KeyAction::Handled;
             }
@@ -41,12 +42,12 @@ pub fn handle(state: &mut AppState, key: &KeyEvent) -> KeyAction {
                 return KeyAction::Handled;
             }
             KeyCode::End => {
-                session.input_cursor = session.input_buffer.len();
+                session.input_cursor = session.input_buffer.chars().count();
                 return KeyAction::Handled;
             }
             KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 session.input_buffer.push(c);
-                session.input_cursor = session.input_buffer.len();
+                session.input_cursor = session.input_buffer.chars().count();
                 return KeyAction::Handled;
             }
             _ => {}

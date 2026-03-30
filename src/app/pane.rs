@@ -9,8 +9,8 @@ use crate::pty::RealPty;
 
 use super::state::SessionState;
 
-/// Hard maximum number of simultaneous panes.
-pub const MAX_PANES: usize = 2;
+/// Hard maximum number of simultaneous panes (Claude, Codex, OpenCode).
+pub const MAX_PANES: usize = 3;
 
 /// A single session pane in the cockpit.
 ///
@@ -247,7 +247,6 @@ mod tests {
         pm.open("sess-2", "claude");
 
         assert_eq!(pm.len(), 2);
-        assert!(!pm.can_open());
         assert_eq!(pm.active_index(), 1);
         assert_eq!(pm.active_pane().unwrap().session.session_id, "sess-2");
     }
@@ -255,10 +254,12 @@ mod tests {
     #[test]
     fn open_at_capacity_returns_none() {
         let mut pm = PaneManager::new();
-        pm.open("sess-1", "claude");
-        pm.open("sess-2", "claude");
-        assert!(pm.open("sess-3", "claude").is_none());
-        assert_eq!(pm.len(), 2);
+        for i in 0..MAX_PANES {
+            pm.open(&format!("sess-{}", i + 1), "claude");
+        }
+        assert_eq!(pm.len(), MAX_PANES);
+        assert!(pm.open("sess-overflow", "claude").is_none());
+        assert_eq!(pm.len(), MAX_PANES);
     }
 
     #[test]

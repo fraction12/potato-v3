@@ -23,7 +23,7 @@ pub async fn export_markdown(messages: &[StoredMessage], path: &str) -> Result<(
         };
         out.push_str(heading);
         out.push_str("\n\n");
-        out.push_str(&msg.content);
+        out.push_str(&escape_markdown_content(&msg.content));
         out.push_str("\n\n");
     }
 
@@ -67,6 +67,22 @@ async fn write_file(path: &str, content: &str) -> Result<()> {
     fs::write(path, content)
         .await
         .with_context(|| format!("failed to write export to: {path}"))
+}
+
+/// Escape markdown metacharacters in message content that would corrupt
+/// the exported document structure (headings and code fences).
+fn escape_markdown_content(content: &str) -> String {
+    content
+        .lines()
+        .map(|line| {
+            if line.starts_with('#') || line.starts_with("```") {
+                format!("\\{line}")
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Capitalize the first character of a string.

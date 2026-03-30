@@ -9,8 +9,8 @@ use serde_json::{Value, json};
 
 use crate::mcp::protocol::{
     CallToolParams, INVALID_PARAMS, InitializeParams, InitializeResult, JsonRpcError,
-    JsonRpcRequest, JsonRpcResponse, ListToolsResult, METHOD_NOT_FOUND, ServerCapabilities,
-    ServerInfo, ToolsCapability,
+    JsonRpcRequest, JsonRpcResponse, ListToolsResult, METHOD_NOT_FOUND, PARSE_ERROR,
+    ServerCapabilities, ServerInfo, ToolsCapability,
 };
 use crate::mcp::state::InterSessionState;
 use crate::mcp::tools::{handle_tool_call, tool_definitions};
@@ -48,7 +48,7 @@ impl McpServer {
                 // Can't determine id if parsing failed — use null.
                 let resp = JsonRpcResponse::error(
                     Value::Null,
-                    JsonRpcError::new(INVALID_PARAMS, format!("Parse error: {e}")),
+                    JsonRpcError::new(PARSE_ERROR, format!("Parse error: {e}")),
                 );
                 return serde_json::to_string(&resp).unwrap_or_default();
             }
@@ -59,10 +59,8 @@ impl McpServer {
         let response = match request.method.as_str() {
             "initialize" => self.handle_initialize(&id, request.params.as_ref()),
             "initialized" => {
-                // Notification — no response needed; return a no-op success.
-                // In a real stdio loop we'd skip sending anything, but returning
-                // an empty success is fine for tests.
-                JsonRpcResponse::success(id, json!({}))
+                // Notification — per JSON-RPC 2.0, no response should be sent.
+                return String::new();
             }
             "tools/list" => self.handle_list_tools(&id),
             "tools/call" => self.handle_call_tool(&id, request.params.as_ref()),

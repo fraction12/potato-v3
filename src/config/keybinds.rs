@@ -26,6 +26,99 @@ pub struct KeybindConfig {
     pub focus_terminal: String,
 }
 
+/// Known valid key expression patterns.
+fn is_valid_key_expr(s: &str) -> bool {
+    if s.is_empty() {
+        return false;
+    }
+    let s = s.to_lowercase();
+    // Single character
+    if s.chars().count() == 1 {
+        return true;
+    }
+    // Bare keys
+    let bare = [
+        "enter",
+        "tab",
+        "esc",
+        "escape",
+        "space",
+        "backspace",
+        "delete",
+        "up",
+        "down",
+        "left",
+        "right",
+        "home",
+        "end",
+        "pageup",
+        "pagedown",
+    ];
+    if bare.contains(&s.as_str()) {
+        return true;
+    }
+    // Function keys: f1..f12
+    if s.starts_with('f') {
+        if let Ok(n) = s[1..].parse::<u8>() {
+            return (1..=12).contains(&n);
+        }
+    }
+    // Modifier combos: ctrl+x, alt+x, shift+x
+    if let Some(rest) = s
+        .strip_prefix("ctrl+")
+        .or_else(|| s.strip_prefix("alt+"))
+        .or_else(|| s.strip_prefix("shift+"))
+    {
+        return !rest.is_empty() && is_valid_key_expr(rest);
+    }
+    false
+}
+
+impl KeybindConfig {
+    /// Return all bindings as (name, value) pairs for iteration.
+    fn all_bindings(&self) -> Vec<(&str, &str)> {
+        vec![
+            ("quit", &self.quit),
+            ("submit", &self.submit),
+            ("model_picker", &self.model_picker),
+            ("help", &self.help),
+            ("approve", &self.approve),
+            ("deny", &self.deny),
+            ("new_session", &self.new_session),
+            ("refresh", &self.refresh),
+            ("focus_terminal", &self.focus_terminal),
+        ]
+    }
+
+    /// Validate all keybind strings, logging warnings for invalid ones.
+    /// Returns a list of warning messages (empty if all valid).
+    pub fn validate(&self) -> Vec<String> {
+        let mut warnings = Vec::new();
+        for (name, value) in self.all_bindings() {
+            if value.is_empty() {
+                warnings.push(format!("keybind '{name}' is empty"));
+            } else if !is_valid_key_expr(value) {
+                warnings.push(format!(
+                    "keybind '{name}': unrecognized key expression '{value}'"
+                ));
+            }
+        }
+        // Check for duplicate bindings.
+        let values: Vec<&str> = self.all_bindings().iter().map(|(_, v)| *v).collect();
+        for (i, (name_a, val_a)) in self.all_bindings().iter().enumerate() {
+            for (name_b, val_b) in self.all_bindings().iter().skip(i + 1) {
+                if val_a == val_b {
+                    warnings.push(format!(
+                        "keybind collision: '{name_a}' and '{name_b}' both map to '{val_a}'"
+                    ));
+                }
+            }
+        }
+        let _ = values; // suppress unused
+        warnings
+    }
+}
+
 impl Default for KeybindConfig {
     fn default() -> Self {
         Self {

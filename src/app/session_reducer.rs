@@ -110,12 +110,17 @@ pub fn apply_event(session: &mut SessionState, event: AgentEvent, now: DateTime<
 
         AgentEvent::ApprovalDecision {
             tool_id: _,
-            approved: _,
+            approved,
         } => {
             // The UI decision has been sent to the agent; clear the pending prompt.
             session.approval_pending = None;
-            // Resume thinking while the agent processes the decision.
-            session.status = AgentStatus::Thinking;
+            if approved {
+                // Resume thinking while the agent processes the approved tool.
+                session.status = AgentStatus::Thinking;
+            } else {
+                // Denial — agent returns to idle.
+                session.status = AgentStatus::Idle;
+            }
         }
 
         // ── Turn / session lifecycle ──────────────────────────────────────────

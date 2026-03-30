@@ -48,18 +48,13 @@ impl<'a> MessageHistory<'a> {
     ///
     /// `tokens` is an optional approximate token count for the message.
     pub fn push(&mut self, role: &str, content: &str, tokens: Option<u32>) -> Result<()> {
-        self.store
+        let msg = self
+            .store
             .save_message(&self.session_id, role, content, tokens)?;
-
-        // Reload the last message so we have the generated ID and timestamp.
-        let all = self.store.load_messages(&self.session_id)?;
-        if let Some(last) = all.into_iter().last() {
-            if let Some(t) = last.tokens {
-                self.total_tokens += t;
-            }
-            self.messages.push(last);
+        if let Some(t) = msg.tokens {
+            self.total_tokens += t;
         }
-
+        self.messages.push(msg);
         Ok(())
     }
 

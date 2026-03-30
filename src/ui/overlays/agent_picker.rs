@@ -91,35 +91,36 @@ pub fn build_agent_rows() -> Vec<AgentRow> {
     let codex = CodexAdapter;
     let opencode = GenericAdapter::new("opencode");
 
+    let claude_path = claude.detect();
+    let codex_path = codex.detect();
+    let opencode_path = opencode.detect();
+
     vec![
         AgentRow {
             display_name: "Claude Code".to_string(),
             adapter_name: "claude".to_string(),
-            binary_display: claude
-                .detect()
+            available: claude_path.is_some(),
+            binary_display: claude_path
                 .and_then(|p| p.to_str().map(str::to_string))
                 .unwrap_or_else(|| "not found".to_string()),
-            available: claude.detect().is_some(),
             caps: claude.capabilities(),
         },
         AgentRow {
             display_name: "Codex".to_string(),
             adapter_name: "codex".to_string(),
-            binary_display: codex
-                .detect()
+            available: codex_path.is_some(),
+            binary_display: codex_path
                 .and_then(|p| p.to_str().map(str::to_string))
                 .unwrap_or_else(|| "not found".to_string()),
-            available: codex.detect().is_some(),
             caps: codex.capabilities(),
         },
         AgentRow {
             display_name: "OpenCode".to_string(),
             adapter_name: "opencode".to_string(),
-            binary_display: opencode
-                .detect()
+            available: opencode_path.is_some(),
+            binary_display: opencode_path
                 .and_then(|p| p.to_str().map(str::to_string))
                 .unwrap_or_else(|| "not found".to_string()),
-            available: opencode.detect().is_some(),
             caps: opencode.capabilities(),
         },
     ]
@@ -228,7 +229,7 @@ pub fn render_agent_picker(
             Span::styled(
                 format!(
                     "{:<name_w$}",
-                    &row.display_name[..row.display_name.len().min(name_w)]
+                    crate::util::truncate_str(&row.display_name, name_w)
                 ),
                 Style::default().fg(name_color),
             ),

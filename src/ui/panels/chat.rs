@@ -224,9 +224,8 @@ impl ChatPanel {
         let current_match = self.search.as_ref().map(|s| s.current);
         let all_matches = self.search.as_ref().map(|s| &s.matches);
 
-        let mut in_code_block = false;
-
         for (entry_idx, entry) in self.transcript.iter().enumerate() {
+            let mut in_code_block = false;
             let prefix_span = role_prefix(entry);
             let ts_span = if self.show_timestamps {
                 Some(Span::styled(

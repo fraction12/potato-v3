@@ -194,13 +194,18 @@ impl InterSessionState {
     // ── Messaging ─────────────────────────────────────────────────────────────
 
     /// Enqueue a message into `to_pane`'s inbox.
+    ///
+    /// Returns `false` if `to_pane` is not a registered pane (no phantom inbox created).
     pub fn send_message(
         &mut self,
         from_pane: u64,
         to_pane: u64,
         content: impl Into<String>,
         priority: MessagePriority,
-    ) {
+    ) -> bool {
+        if !self.known_panes.contains(&to_pane) {
+            return false;
+        }
         let msg = InterMessage {
             from_pane,
             content: content.into(),
@@ -216,7 +221,14 @@ impl InterSessionState {
                 }
             }
         }
-        self.inboxes.entry(to_pane).or_default().push_back(msg);
+        let inbox = self.inboxes.entry(to_pane).or_default();
+        inbox.push_back(msg);
+        // Cap inbox size to prevent unbounded growth.
+        const MAX_INBOX: usize = 1000;
+        while inbox.len() > MAX_INBOX {
+            inbox.pop_front();
+        }
+        true
     }
 
     /// Drain unread messages from `pane_id`'s inbox.
@@ -225,7 +237,9 @@ impl InterSessionState {
     /// they remain in the queue (so they can still be inspected).
     /// Unread-only messages are returned.
     pub fn get_messages(&mut self, pane_id: u64, mark_read: bool) -> Vec<InterMessage> {
-        let queue = self.inboxes.entry(pane_id).or_default();
+        let Some(queue) = self.inboxes.get_mut(&pane_id) else {
+            return vec![];
+        };
         let unread: Vec<InterMessage> = queue.iter().filter(|m| !m.read).cloned().collect();
 
         if mark_read {
@@ -233,6 +247,10 @@ impl InterSessionState {
                 if !msg.read {
                     msg.read = true;
                 }
+            }
+            // Drain fully-read messages from the front to free memory.
+            while queue.front().map_or(false, |m| m.read) {
+                queue.pop_front();
             }
         }
 
@@ -260,6 +278,10 @@ impl InterSessionState {
     /// Assign a role to a pane unconditionally (for internal/slash-command use).
     pub fn set_role(&mut self, pane_id: u64, role: PaneRole) {
         self.roles.insert(pane_id, role);
+        // Ensure the pane is registered so get_partner_status sees it.
+        if !self.known_panes.contains(&pane_id) {
+            self.known_panes.push(pane_id);
+        }
     }
 
     /// Get the role assigned to a pane, if any.
@@ -274,12 +296,15 @@ impl InterSessionState {
 
     /// Get summary status of all panes except `exclude_pane_id`.
     pub fn get_partner_status(&self, exclude_pane_id: u64) -> Vec<PartnerStatus> {
-        self.roles
+        self.known_panes
             .iter()
-            .filter(|(id, _)| **id != exclude_pane_id)
-            .map(|(id, role)| PartnerStatus {
+            .filter(|id| **id != exclude_pane_id)
+            .map(|id| PartnerStatus {
                 pane_id: *id,
-                role: role.clone(),
+                role: self.roles.get(id).cloned().unwrap_or(PaneRole {
+                    name: "unassigned".to_string(),
+                    description: String::new(),
+                }),
                 unread_messages: self
                     .inboxes
                     .get(id)
@@ -414,11 +439,18 @@ mod tests {
         InterSessionState::new()
     }
 
+    fn make_state_with_panes() -> InterSessionState {
+        let mut state = InterSessionState::new();
+        state.register_pane(0);
+        state.register_pane(1);
+        state
+    }
+
     // ── Messaging ─────────────────────────────────────────────────────────────
 
     #[test]
     fn send_and_receive_message() {
-        let mut state = make_state();
+        let mut state = make_state_with_panes();
         state.send_message(0, 1, "hello from pane 0", MessagePriority::Normal);
         let msgs = state.get_messages(1, false);
         assert_eq!(msgs.len(), 1);
@@ -429,7 +461,7 @@ mod tests {
 
     #[test]
     fn messages_are_not_marked_read_when_flag_false() {
-        let mut state = make_state();
+        let mut state = make_state_with_panes();
         state.send_message(0, 1, "msg", MessagePriority::Normal);
         let _ = state.get_messages(1, false);
         // Second call should still return the message as unread.
@@ -439,7 +471,7 @@ mod tests {
 
     #[test]
     fn messages_are_marked_read_when_flag_true() {
-        let mut state = make_state();
+        let mut state = make_state_with_panes();
         state.send_message(0, 1, "msg", MessagePriority::Normal);
         let _ = state.get_messages(1, true);
         // After marking read, no unread messages.
@@ -449,7 +481,7 @@ mod tests {
 
     #[test]
     fn multiple_messages_delivered_in_order() {
-        let mut state = make_state();
+        let mut state = make_state_with_panes();
         state.send_message(0, 1, "first", MessagePriority::Normal);
         state.send_message(0, 1, "second", MessagePriority::Normal);
         state.send_message(0, 1, "third", MessagePriority::Urgent);
@@ -463,7 +495,7 @@ mod tests {
 
     #[test]
     fn messages_dont_cross_pane_inboxes() {
-        let mut state = make_state();
+        let mut state = make_state_with_panes();
         state.send_message(0, 1, "for pane 1", MessagePriority::Normal);
         state.send_message(1, 0, "for pane 0", MessagePriority::Normal);
         let msgs_for_0 = state.get_messages(0, false);

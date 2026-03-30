@@ -1,5 +1,7 @@
 //! Help overlay — keyboard shortcut reference sheet.
 
+use std::cell::Cell;
+
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     Frame,
@@ -89,10 +91,21 @@ static SECTIONS: &[Section] = &[
 // ── HelpOverlay ───────────────────────────────────────────────────────────────
 
 /// Full-screen modal listing all keyboard shortcuts.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct HelpOverlay {
     /// Vertical scroll offset (in content rows).
     pub scroll: usize,
+    /// Last rendered visible height (cached from render for key handling).
+    visible_height: Cell<usize>,
+}
+
+impl Default for HelpOverlay {
+    fn default() -> Self {
+        Self {
+            scroll: 0,
+            visible_height: Cell::new(24),
+        }
+    }
 }
 
 impl HelpOverlay {
@@ -178,6 +191,7 @@ impl Overlay for HelpOverlay {
         let lines = self.build_lines();
         let total = lines.len();
         let visible = inner.height as usize;
+        self.visible_height.set(visible);
 
         let content_area = if total > visible {
             // Reserve bottom row for scroll hint.
@@ -217,7 +231,7 @@ impl Overlay for HelpOverlay {
             KeyCode::Char('j') | KeyCode::Down => {
                 // Use a reasonable default visible height (24) when we don't
                 // have the actual frame height at key-handling time.
-                self.scroll_down(24);
+                self.scroll_down(self.visible_height.get());
                 OverlayAction::None
             }
             _ => OverlayAction::None,
