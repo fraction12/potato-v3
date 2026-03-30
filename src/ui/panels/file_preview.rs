@@ -99,6 +99,7 @@ impl FilePreviewPanel {
     }
 
     /// Total number of content lines loaded.
+    #[must_use]
     pub fn line_count(&self) -> usize {
         self.lines.len()
     }

@@ -46,6 +46,7 @@ impl ModelTokens {
     }
 
     /// Total tokens (prompt + completion).
+    #[must_use]
     pub fn total(&self) -> u64 {
         self.prompt + self.completion
     }

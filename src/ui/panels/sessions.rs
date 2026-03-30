@@ -80,6 +80,7 @@ impl SessionsPanel {
     }
 
     /// Return the id of the currently selected session, if any.
+    #[must_use]
     pub fn selected_id(&self) -> Option<&str> {
         self.sessions.get(self.selected).map(|s| s.id.as_str())
     }

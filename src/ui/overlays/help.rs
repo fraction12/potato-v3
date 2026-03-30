@@ -117,6 +117,7 @@ impl HelpOverlay {
     }
 
     /// Total scrollable content height.
+    #[must_use]
     pub fn content_height(&self) -> usize {
         self.build_lines().len()
     }

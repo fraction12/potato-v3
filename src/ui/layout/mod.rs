@@ -94,6 +94,7 @@ impl LayoutManager {
     }
 
     /// Returns the active preset.
+    #[must_use]
     pub fn preset(&self) -> &LayoutPreset {
         &self.preset
     }
@@ -114,6 +115,7 @@ impl LayoutManager {
     }
 
     /// Returns `true` if the panel is currently visible.
+    #[must_use]
     pub fn is_visible(&self, id: &PanelId) -> bool {
         self.visible.contains(id)
     }
@@ -129,6 +131,7 @@ impl LayoutManager {
     /// | Sidebar | Chat 70% left / ToolOutput 30% right (horizontal) |
     /// | Wide    | Chat top / ToolOutput bottom (vertical, 50/50)    |
     /// | Minimal | Chat takes the entire `total` rect                |
+    #[must_use]
     pub fn compute_areas(&self, total: Rect) -> HashMap<PanelId, Rect> {
         let mut map = HashMap::new();
 
@@ -278,11 +281,13 @@ impl LegacyLayoutManager {
     // ── Visibility ────────────────────────────────────────────────────────────
 
     /// Returns the list of currently visible panels.
+    #[must_use]
     pub fn visible_panels(&self) -> &[PanelId] {
         &self.visible
     }
 
     /// Returns true if the given panel is currently visible.
+    #[must_use]
     pub fn is_visible(&self, id: &PanelId) -> bool {
         self.visible.contains(id)
     }
@@ -337,6 +342,7 @@ impl LegacyLayoutManager {
     // ── Focus ─────────────────────────────────────────────────────────────────
 
     /// Returns the currently focused panel.
+    #[must_use]
     pub fn focused(&self) -> &PanelId {
         &self.focused
     }
@@ -378,6 +384,7 @@ impl LegacyLayoutManager {
     // ── Layout computation ────────────────────────────────────────────────────
 
     /// Compute [`PanelAreas`] given the full terminal [`Rect`] and current state.
+    #[must_use]
     pub fn build(&self, area: Rect, _state: &AppState) -> PanelAreas {
         // Reserve bottom rows for input (3) and status bar (1).
         let [content_area, input, status_bar] = Layout::vertical([

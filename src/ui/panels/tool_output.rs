@@ -70,6 +70,7 @@ impl ToolOutputEntry {
     }
 
     /// Format a duration as `"42ms"` or `"1.3s"`.
+    #[must_use]
     pub fn duration_str(&self) -> String {
         match self.duration_ms {
             None => "…".to_string(),
@@ -108,26 +109,31 @@ impl ToolOutputPanel {
     // ── Accessors (pub for tests) ─────────────────────────────────────────────
 
     /// How many entries are currently recorded.
+    #[must_use]
     pub fn len(&self) -> usize {
         self.entries.len()
     }
 
     /// Returns `true` if there are no entries.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
 
     /// Immutable slice of all entries.
+    #[must_use]
     pub fn entries(&self) -> &[ToolOutputEntry] {
         &self.entries
     }
 
     /// Index of the currently selected entry.
+    #[must_use]
     pub fn selected(&self) -> usize {
         self.selected
     }
 
     /// Current scroll offset.
+    #[must_use]
     pub fn scroll_offset(&self) -> u16 {
         self.scroll_offset
     }
