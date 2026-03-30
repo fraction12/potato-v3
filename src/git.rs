@@ -25,25 +25,38 @@ pub struct GitSnapshot {
     pub status_lines: Vec<String>,
 }
 
+/// A local git branch.
 #[derive(Debug, Clone)]
 pub struct BranchInfo {
+    /// Branch name (e.g. `main`, `feature/foo`).
     pub name: String,
+    /// `true` when this is the currently checked-out branch.
     pub is_current: bool,
 }
 
+/// A single commit from `git log`.
 #[derive(Debug, Clone)]
 pub struct CommitInfo {
+    /// Abbreviated commit hash (7 chars).
     pub short_sha: String,
+    /// First line of the commit message.
     pub message: String,
+    /// Author name.
     pub author: String,
+    /// Human-readable relative date (e.g. "3 hours ago").
     pub relative_date: String,
 }
 
+/// An open pull request retrieved via `gh pr list`.
 #[derive(Debug, Clone)]
 pub struct PrInfo {
+    /// PR number on GitHub.
     pub number: u32,
+    /// PR title.
     pub title: String,
+    /// GitHub login of the PR author.
     pub author: String,
+    /// Head branch name.
     pub branch: String,
 }
 
@@ -147,6 +160,7 @@ impl GitSnapshot {
     }
 }
 
+/// Run a `git` command and return its trimmed stdout, or `None` on failure.
 fn git_output(args: &[&str]) -> Option<String> {
     Command::new("git")
         .args(args)
@@ -156,6 +170,7 @@ fn git_output(args: &[&str]) -> Option<String> {
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
 }
 
+/// Run a `gh` CLI command and return its trimmed stdout, or `None` on failure.
 fn gh_output(args: &[&str]) -> Option<String> {
     Command::new("gh")
         .args(args)
