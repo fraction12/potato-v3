@@ -27,7 +27,7 @@ Potato turns that mess into a single project cockpit:
 - and stay in the loop without micromanaging every turn.
 
 [![Rust](https://img.shields.io/badge/Rust-1.86+-orange?logo=rust)](https://www.rust-lang.org/)
-[![Tests](https://img.shields.io/badge/tests-711_passing-brightgreen)](#development)
+[![Tests](https://img.shields.io/badge/tests-719_passing-brightgreen)](#development)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 ---
@@ -69,7 +69,7 @@ Potato is built in Rust with [ratatui](https://github.com/ratatui/ratatui). It e
 - Metrics, tool activity, and session context stay tied to what the agent actually did
 
 ### Project-aware workflow
-- Reads OpenSpec backlog data when a project has `.openspec/backlog.yaml`
+- Reads OpenSpec task data when a project has an `openspec/changes/` directory
 - Falls back gracefully when OpenSpec is absent
 - Stores project-local coordination state under `.potato/`
 
