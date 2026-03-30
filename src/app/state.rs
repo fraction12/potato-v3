@@ -8,10 +8,24 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 
+use tokio::sync::mpsc;
+
 use crate::config::Config;
 use crate::config::profiles::AgentProfile;
 use crate::metrics::SessionMetrics;
 use crate::session::store::{SessionInfo, SessionStore};
+
+// ── Background snapshot messages ─────────────────────────────────────────────
+
+/// Messages from background snapshot tasks sent via `spawn_blocking`.
+pub enum SnapshotMsg {
+    /// A fresh git repository snapshot.
+    Git(crate::git::GitSnapshot),
+    /// A fresh OpenSpec CLI snapshot.
+    Openspec(crate::openspec::snapshot::OpenSpecSnapshot),
+    /// Updated session list for the left rail.
+    Rail(Vec<SessionInfo>),
+}
 use crate::ui::focus::FocusRing;
 use crate::ui::layout::LayoutManager;
 use crate::ui::layout::LayoutPreset as NewLayoutPreset;
@@ -534,6 +548,10 @@ pub struct AppState {
     /// without borrowing AppState.
     pub store: Option<Arc<SessionStore>>,
 
+    /// Path to the session database (used by background tasks to open fresh
+    /// read-only connections via WAL mode).
+    pub db_path: Option<String>,
+
     /// Cached list of sessions for the left rail (refreshed periodically).
     pub rail_sessions: Vec<SessionInfo>,
 
@@ -575,6 +593,20 @@ pub struct AppState {
     /// Merged agent profiles (defaults < global < project `.potato/agents.toml`).
     /// Stored at top level so profiles survive dashboard → session transitions.
     pub agent_profiles: Vec<AgentProfile>,
+
+    // ── Background snapshot channel ──────────────────────────────────────────
+    /// Sender cloned into `spawn_blocking` closures for background snapshots.
+    pub snapshot_tx: mpsc::UnboundedSender<SnapshotMsg>,
+    /// Receiver drained each tick to pick up background snapshot results.
+    pub snapshot_rx: Option<mpsc::UnboundedReceiver<SnapshotMsg>>,
+
+    // ── In-flight guards (prevent overlapping spawn_blocking calls) ──────
+    /// Whether a background git snapshot is currently in-flight.
+    pub git_refresh_in_flight: bool,
+    /// Whether a background openspec snapshot is currently in-flight.
+    pub openspec_refresh_in_flight: bool,
+    /// Whether a background rail refresh is currently in-flight.
+    pub rail_refresh_in_flight: bool,
 }
 
 impl Default for AppState {
@@ -595,6 +627,7 @@ impl Default for AppState {
             panes: crate::app::pane::PaneManager::new(),
 
             store: None,
+            db_path: None,
             rail_sessions: Vec::new(),
             git_snapshot: crate::git::GitSnapshot::default(),
             git_refresh_ticks: 0,
@@ -606,6 +639,14 @@ impl Default for AppState {
             openspec_snapshot: crate::openspec::snapshot::OpenSpecSnapshot::default(),
             openspec_refresh_ticks: 0,
             agent_profiles: Vec::new(),
+            snapshot_tx: {
+                let (tx, _) = mpsc::unbounded_channel();
+                tx
+            },
+            snapshot_rx: None,
+            git_refresh_in_flight: false,
+            openspec_refresh_in_flight: false,
+            rail_refresh_in_flight: false,
         }
     }
 }

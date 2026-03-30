@@ -45,7 +45,7 @@ use crate::pty::{TurnHandle, key_event_to_bytes};
 use adapters::{AgentAdapter, claude::ClaudeAdapter, codex::CodexAdapter, generic::GenericAdapter};
 use app::message::Message;
 use app::state::{AgentInfo, DashboardState};
-use app::state::{AppScreen, AppState, CockpitFocus, DashboardFocus};
+use app::state::{AppScreen, AppState, CockpitFocus, DashboardFocus, SnapshotMsg};
 use app::update::update;
 use config::load_config;
 use session::{SessionStore, discover_historical_sessions, unix_now};
@@ -258,6 +258,31 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
         // ── Background-thread panic recovery (T-907) ──────────────────────────
         if terminal::panic_hook::take_redraw_flag() {
             terminal.clear()?;
+        }
+
+        // ── Drain background snapshot results ─────────────────────────────────
+        let mut openspec_updated = false;
+        if let Some(ref mut rx) = state.snapshot_rx {
+            while let Ok(msg) = rx.try_recv() {
+                match msg {
+                    SnapshotMsg::Git(snap) => {
+                        state.git_snapshot = snap;
+                        state.git_refresh_in_flight = false;
+                    }
+                    SnapshotMsg::Openspec(snap) => {
+                        state.openspec_snapshot = snap;
+                        state.openspec_refresh_in_flight = false;
+                        openspec_updated = true;
+                    }
+                    SnapshotMsg::Rail(sessions) => {
+                        state.rail_sessions = sessions;
+                        state.rail_refresh_in_flight = false;
+                    }
+                }
+            }
+        }
+        if openspec_updated {
+            sync_openspec_to_mcp(&state);
         }
 
         // ── Render ────────────────────────────────────────────────────────────
@@ -579,17 +604,20 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
         {
             let now = unix_now();
             if now - state.last_rail_refresh >= 30 {
-                if let Some(store) = state.store.clone() {
-                    refresh_rail(state, &store);
-                }
+                refresh_rail_async(state);
             }
         }
 
         // Periodic git refresh (~30 s at 250ms tick = every 120 ticks).
         state.git_refresh_ticks += 1;
-        if state.git_refresh_ticks >= 120 {
+        if state.git_refresh_ticks >= 120 && !state.git_refresh_in_flight {
             state.git_refresh_ticks = 0;
-            state.git_snapshot = git::GitSnapshot::capture();
+            state.git_refresh_in_flight = true;
+            let tx = state.snapshot_tx.clone();
+            tokio::task::spawn_blocking(move || {
+                let snap = git::GitSnapshot::capture();
+                let _ = tx.send(SnapshotMsg::Git(snap));
+            });
         }
 
         if state.should_quit {
@@ -769,7 +797,7 @@ fn spawn_claude_pane(
         ) {
             tracing::warn!("Failed to create session row: {e}");
         }
-        refresh_rail(state, store);
+        refresh_rail_async(state);
     }
 
     // ── Write .mcp.json ────────────────────────────────────────────────────────
@@ -937,7 +965,7 @@ fn spawn_agent_pane(
                 ) {
                     tracing::warn!("Failed to create codex session row: {e}");
                 }
-                refresh_rail(state, store);
+                refresh_rail_async(state);
             }
 
             tracing::info!("Opened Codex pane for session: {}", session_id);
@@ -1118,14 +1146,18 @@ fn sync_mcp_roles_to_panes(state: &mut AppState) {
     }
 }
 
-/// Periodic OpenSpec refresh (~30s / 120 ticks). Recaptures the CLI snapshot
-/// and syncs to MCP state.
+/// Periodic OpenSpec refresh (~30s / 120 ticks). Spawns a background task
+/// to capture the CLI snapshot; results arrive via the snapshot channel.
 fn sync_openspec(state: &mut AppState) {
     state.openspec_refresh_ticks += 1;
-    if state.openspec_refresh_ticks >= 120 {
+    if state.openspec_refresh_ticks >= 120 && !state.openspec_refresh_in_flight {
         state.openspec_refresh_ticks = 0;
-        state.openspec_snapshot = openspec::snapshot::OpenSpecSnapshot::capture();
-        sync_openspec_to_mcp(state);
+        state.openspec_refresh_in_flight = true;
+        let tx = state.snapshot_tx.clone();
+        tokio::task::spawn_blocking(move || {
+            let snap = openspec::snapshot::OpenSpecSnapshot::capture();
+            let _ = tx.send(SnapshotMsg::Openspec(snap));
+        });
     }
 }
 
@@ -1240,23 +1272,43 @@ fn sync_all_panes(state: &mut AppState) {
     }
 
     if any_title_changed {
-        if let Some(ref store) = state.store.clone() {
-            refresh_rail(state, store);
-        }
+        refresh_rail_async(state);
     }
 }
 
-/// Re-query the session list from SQLite and cache it in `AppState`.
-fn refresh_rail(state: &mut AppState, store: &SessionStore) {
-    match store.list_sessions() {
-        Ok(sessions) => {
-            state.rail_sessions = sessions;
-            state.last_rail_refresh = unix_now();
-        }
-        Err(e) => {
-            tracing::warn!("refresh_rail: list_sessions failed: {e}");
-        }
+/// Spawn a background task to re-query the session list from SQLite.
+///
+/// Opens a fresh read-only connection (WAL mode allows concurrent readers)
+/// so the closure is `Send + 'static`. Results arrive via the snapshot
+/// channel and are applied when the channel is drained.
+fn refresh_rail_async(state: &mut AppState) {
+    if state.rail_refresh_in_flight {
+        return;
     }
+    let Some(ref db_path) = state.db_path else {
+        return;
+    };
+    let db_path = db_path.clone();
+    let tx = state.snapshot_tx.clone();
+    // Update timestamp at spawn time to debounce — prevents re-triggering
+    // while the background task is still running.
+    state.last_rail_refresh = unix_now();
+    state.rail_refresh_in_flight = true;
+    tokio::task::spawn_blocking(move || {
+        match SessionStore::open(&db_path) {
+            Ok(store) => match store.list_sessions() {
+                Ok(sessions) => {
+                    let _ = tx.send(SnapshotMsg::Rail(sessions));
+                }
+                Err(e) => {
+                    tracing::warn!("refresh_rail: list_sessions failed: {e}");
+                }
+            },
+            Err(e) => {
+                tracing::warn!("refresh_rail: failed to open DB: {e}");
+            }
+        }
+    });
 }
 
 fn apply_pty_event(state: &mut AppState, event: crate::events::AgentEvent) {
@@ -1424,6 +1476,7 @@ async fn main() -> Result<()> {
         None => mcp::state::InterSessionState::new(),
     }));
     let (inject_tx, inject_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (snapshot_tx, snapshot_rx) = tokio::sync::mpsc::unbounded_channel();
     let (_mcp_bridge, mcp_socket_path) =
         mcp::bridge::McpBridge::start(Arc::clone(&inter_state), inject_tx)?;
 
@@ -1454,6 +1507,7 @@ async fn main() -> Result<()> {
         }),
         agent_profiles,
         store: Some(store),
+        db_path: Some(db_path.to_string_lossy().into_owned()),
         rail_sessions: initial_sessions,
         git_snapshot,
         git_refresh_ticks: 0,
@@ -1461,6 +1515,8 @@ async fn main() -> Result<()> {
         mcp_socket_path: Some(mcp_socket_path),
         inter_session_state: Some(inter_state),
         inject_rx: Some(inject_rx),
+        snapshot_tx,
+        snapshot_rx: Some(snapshot_rx),
         openspec_snapshot,
         openspec_refresh_ticks: 0,
         ..AppState::default()
