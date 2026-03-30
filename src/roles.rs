@@ -29,7 +29,11 @@ pub fn load_roles(project_root: &Path) -> Vec<RoleDefinition> {
     match std::fs::read_to_string(&path) {
         Ok(content) => match toml::from_str::<RolesFile>(&content) {
             Ok(file) => {
-                tracing::info!("Loaded {} role(s) from {}", file.roles.len(), path.display());
+                tracing::info!(
+                    "Loaded {} role(s) from {}",
+                    file.roles.len(),
+                    path.display()
+                );
                 file.roles
             }
             Err(e) => {
@@ -47,12 +51,12 @@ pub fn load_roles(project_root: &Path) -> Vec<RoleDefinition> {
 /// Save roles to `<project_root>/.potato/roles.toml`.
 pub fn save_roles(project_root: &Path, roles: &[RoleDefinition]) -> Result<()> {
     let dir = project_root.join(".potato");
-    std::fs::create_dir_all(&dir)
-        .with_context(|| format!("failed to create {}", dir.display()))?;
+    std::fs::create_dir_all(&dir).with_context(|| format!("failed to create {}", dir.display()))?;
 
-    let file = RolesFile { roles: roles.to_vec() };
-    let content = toml::to_string_pretty(&file)
-        .context("failed to serialize roles")?;
+    let file = RolesFile {
+        roles: roles.to_vec(),
+    };
+    let content = toml::to_string_pretty(&file).context("failed to serialize roles")?;
 
     let path = dir.join("roles.toml");
     std::fs::write(&path, content)
@@ -123,9 +127,8 @@ mod tests {
         }];
         save_roles(tmp.path(), &roles).unwrap();
 
-        let content = std::fs::read_to_string(
-            tmp.path().join(".potato").join("roles.toml"),
-        ).unwrap();
+        let content =
+            std::fs::read_to_string(tmp.path().join(".potato").join("roles.toml")).unwrap();
         assert!(content.contains("[[roles]]"));
         assert!(content.contains("Reviewer"));
     }

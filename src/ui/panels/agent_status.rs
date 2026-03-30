@@ -11,9 +11,9 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Widget},
 };
 
+use super::{Panel, PanelAction, PanelId};
 use crate::app::state::AppState;
 use crate::ui::theme::{AMBER, BG, CHARCOAL, CREAM, ROSE, SPROUT, STONE, TAN};
-use super::{Panel, PanelAction, PanelId};
 
 // ── Spinner frames ─────────────────────────────────────────────────────────────
 
@@ -69,7 +69,10 @@ impl StatusPhase {
 
     /// Whether this phase represents active work (non-idle, non-error).
     pub fn is_active(&self) -> bool {
-        matches!(self, Self::Thinking | Self::ToolCall { .. } | Self::Approval { .. })
+        matches!(
+            self,
+            Self::Thinking | Self::ToolCall { .. } | Self::Approval { .. }
+        )
     }
 }
 
@@ -196,10 +199,7 @@ impl AgentStatusPanel {
         // Elapsed time (show when active)
         if self.phase.is_active() {
             spans.push(Span::styled("  ", Style::default()));
-            spans.push(Span::styled(
-                self.elapsed_str(),
-                Style::default().fg(STONE),
-            ));
+            spans.push(Span::styled(self.elapsed_str(), Style::default().fg(STONE)));
         }
 
         // Pending queue depth
@@ -214,7 +214,10 @@ impl AgentStatusPanel {
         // Model name (right-aligned via a trailing push)
         if !self.model.is_empty() {
             spans.push(Span::styled("  │  ", Style::default().fg(CHARCOAL)));
-            spans.push(Span::styled(self.model.clone(), Style::default().fg(SPROUT)));
+            spans.push(Span::styled(
+                self.model.clone(),
+                Style::default().fg(SPROUT),
+            ));
         }
 
         Line::from(spans)
@@ -304,8 +307,18 @@ mod tests {
     fn test_phase_is_active() {
         assert!(!StatusPhase::Idle.is_active());
         assert!(StatusPhase::Thinking.is_active());
-        assert!(StatusPhase::ToolCall { tool_name: "t".into() }.is_active());
-        assert!(StatusPhase::Approval { tool_name: "t".into() }.is_active());
+        assert!(
+            StatusPhase::ToolCall {
+                tool_name: "t".into()
+            }
+            .is_active()
+        );
+        assert!(
+            StatusPhase::Approval {
+                tool_name: "t".into()
+            }
+            .is_active()
+        );
         assert!(!StatusPhase::Error("x".into()).is_active());
     }
 

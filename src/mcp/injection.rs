@@ -133,7 +133,10 @@ mod tests {
         let msg = format_notification(0, None, "hello from pane 0");
         assert!(msg.contains("[Potato: Pane 0]"));
         assert!(msg.contains("hello from pane 0"));
-        assert!(!msg.ends_with('\r'), "should not include trailing Enter (deferred)");
+        assert!(
+            !msg.ends_with('\r'),
+            "should not include trailing Enter (deferred)"
+        );
     }
 
     #[test]
@@ -153,7 +156,10 @@ mod tests {
     #[test]
     fn format_notification_single_line_no_newlines() {
         let msg = format_notification(0, None, "test content");
-        assert!(!msg.contains('\n'), "must be single-line for Claude Code raw mode");
+        assert!(
+            !msg.contains('\n'),
+            "must be single-line for Claude Code raw mode"
+        );
         assert!(!msg.contains('\r'), "Enter is deferred — no \\r in text");
         assert!(msg.contains("[Potato:"));
         assert!(msg.contains("test content"));

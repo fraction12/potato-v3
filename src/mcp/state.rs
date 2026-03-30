@@ -180,7 +180,8 @@ impl InterSessionState {
         self.known_panes.retain(|&id| id != pane_id);
         self.roles.remove(&pane_id);
         self.inboxes.remove(&pane_id);
-        self.task_board.retain(|_, claim| claim.claimed_by != pane_id);
+        self.task_board
+            .retain(|_, claim| claim.claimed_by != pane_id);
     }
 
     /// Find the partner pane ID for `pane_id`.
@@ -225,11 +226,7 @@ impl InterSessionState {
     /// Unread-only messages are returned.
     pub fn get_messages(&mut self, pane_id: u64, mark_read: bool) -> Vec<InterMessage> {
         let queue = self.inboxes.entry(pane_id).or_default();
-        let unread: Vec<InterMessage> = queue
-            .iter()
-            .filter(|m| !m.read)
-            .cloned()
-            .collect();
+        let unread: Vec<InterMessage> = queue.iter().filter(|m| !m.read).cloned().collect();
 
         if mark_read {
             for msg in queue.iter_mut() {
@@ -250,10 +247,10 @@ impl InterSessionState {
     pub fn claim_role(&mut self, pane_id: u64, role: PaneRole) -> RoleClaimResult {
         // Check if any other pane already holds this role name.
         for (&existing_pane, existing_role) in &self.roles {
-            if existing_pane != pane_id
-                && existing_role.name.eq_ignore_ascii_case(&role.name)
-            {
-                return RoleClaimResult::AlreadyClaimed { held_by: existing_pane };
+            if existing_pane != pane_id && existing_role.name.eq_ignore_ascii_case(&role.name) {
+                return RoleClaimResult::AlreadyClaimed {
+                    held_by: existing_pane,
+                };
             }
         }
         self.roles.insert(pane_id, role);
@@ -489,7 +486,10 @@ mod tests {
     #[test]
     fn set_and_get_role() {
         let mut state = make_state();
-        let role = PaneRole { name: "architect".into(), description: "Designs the system".into() };
+        let role = PaneRole {
+            name: "architect".into(),
+            description: "Designs the system".into(),
+        };
         state.set_role(0, role.clone());
         assert_eq!(state.get_role(0), Some(&role));
     }
@@ -503,7 +503,10 @@ mod tests {
     #[test]
     fn claim_role_succeeds_when_unclaimed() {
         let mut state = make_state();
-        let role = PaneRole { name: "architect".into(), description: "Designs".into() };
+        let role = PaneRole {
+            name: "architect".into(),
+            description: "Designs".into(),
+        };
         let result = state.claim_role(0, role);
         assert_eq!(result, RoleClaimResult::Claimed);
         assert_eq!(state.get_role(0).unwrap().name, "architect");
@@ -512,8 +515,20 @@ mod tests {
     #[test]
     fn claim_role_rejected_when_taken_by_other() {
         let mut state = make_state();
-        state.claim_role(0, PaneRole { name: "architect".into(), description: "".into() });
-        let result = state.claim_role(1, PaneRole { name: "architect".into(), description: "".into() });
+        state.claim_role(
+            0,
+            PaneRole {
+                name: "architect".into(),
+                description: "".into(),
+            },
+        );
+        let result = state.claim_role(
+            1,
+            PaneRole {
+                name: "architect".into(),
+                description: "".into(),
+            },
+        );
         assert_eq!(result, RoleClaimResult::AlreadyClaimed { held_by: 0 });
         // Pane 1 should not have a role.
         assert!(state.get_role(1).is_none());
@@ -522,16 +537,40 @@ mod tests {
     #[test]
     fn claim_role_case_insensitive_rejection() {
         let mut state = make_state();
-        state.claim_role(0, PaneRole { name: "Architect".into(), description: "".into() });
-        let result = state.claim_role(1, PaneRole { name: "architect".into(), description: "".into() });
+        state.claim_role(
+            0,
+            PaneRole {
+                name: "Architect".into(),
+                description: "".into(),
+            },
+        );
+        let result = state.claim_role(
+            1,
+            PaneRole {
+                name: "architect".into(),
+                description: "".into(),
+            },
+        );
         assert_eq!(result, RoleClaimResult::AlreadyClaimed { held_by: 0 });
     }
 
     #[test]
     fn claim_role_idempotent_same_pane() {
         let mut state = make_state();
-        state.claim_role(0, PaneRole { name: "architect".into(), description: "v1".into() });
-        let result = state.claim_role(0, PaneRole { name: "architect".into(), description: "v2".into() });
+        state.claim_role(
+            0,
+            PaneRole {
+                name: "architect".into(),
+                description: "v1".into(),
+            },
+        );
+        let result = state.claim_role(
+            0,
+            PaneRole {
+                name: "architect".into(),
+                description: "v2".into(),
+            },
+        );
         assert_eq!(result, RoleClaimResult::Claimed);
         assert_eq!(state.get_role(0).unwrap().description, "v2");
     }
@@ -539,23 +578,65 @@ mod tests {
     #[test]
     fn claim_different_roles_both_succeed() {
         let mut state = make_state();
-        assert_eq!(state.claim_role(0, PaneRole { name: "architect".into(), description: "".into() }), RoleClaimResult::Claimed);
-        assert_eq!(state.claim_role(1, PaneRole { name: "implementer".into(), description: "".into() }), RoleClaimResult::Claimed);
+        assert_eq!(
+            state.claim_role(
+                0,
+                PaneRole {
+                    name: "architect".into(),
+                    description: "".into()
+                }
+            ),
+            RoleClaimResult::Claimed
+        );
+        assert_eq!(
+            state.claim_role(
+                1,
+                PaneRole {
+                    name: "implementer".into(),
+                    description: "".into()
+                }
+            ),
+            RoleClaimResult::Claimed
+        );
     }
 
     #[test]
     fn set_role_overwrites() {
         let mut state = make_state();
-        state.set_role(0, PaneRole { name: "a".into(), description: "".into() });
-        state.set_role(0, PaneRole { name: "b".into(), description: "".into() });
+        state.set_role(
+            0,
+            PaneRole {
+                name: "a".into(),
+                description: "".into(),
+            },
+        );
+        state.set_role(
+            0,
+            PaneRole {
+                name: "b".into(),
+                description: "".into(),
+            },
+        );
         assert_eq!(state.get_role(0).unwrap().name, "b");
     }
 
     #[test]
     fn get_partner_status_excludes_self() {
         let mut state = make_state();
-        state.set_role(0, PaneRole { name: "architect".into(), description: "".into() });
-        state.set_role(1, PaneRole { name: "implementer".into(), description: "".into() });
+        state.set_role(
+            0,
+            PaneRole {
+                name: "architect".into(),
+                description: "".into(),
+            },
+        );
+        state.set_role(
+            1,
+            PaneRole {
+                name: "implementer".into(),
+                description: "".into(),
+            },
+        );
         let statuses = state.get_partner_status(0);
         assert_eq!(statuses.len(), 1);
         assert_eq!(statuses[0].pane_id, 1);
@@ -565,7 +646,13 @@ mod tests {
     #[test]
     fn get_partner_status_includes_unread_count() {
         let mut state = make_state();
-        state.set_role(1, PaneRole { name: "implementer".into(), description: "".into() });
+        state.set_role(
+            1,
+            PaneRole {
+                name: "implementer".into(),
+                description: "".into(),
+            },
+        );
         state.send_message(0, 1, "a", MessagePriority::Normal);
         state.send_message(0, 1, "b", MessagePriority::Normal);
         let statuses = state.get_partner_status(0);
@@ -698,9 +785,15 @@ mod tests {
         state.claim_task("task-a", "A", 0);
         state.claim_task("task-b", "B", 1);
         // Pane 1 can't take task-a.
-        assert!(matches!(state.claim_task("task-a", "", 1), ClaimResult::AlreadyClaimed { .. }));
+        assert!(matches!(
+            state.claim_task("task-a", "", 1),
+            ClaimResult::AlreadyClaimed { .. }
+        ));
         // Pane 0 can't take task-b.
-        assert!(matches!(state.claim_task("task-b", "", 0), ClaimResult::AlreadyClaimed { .. }));
+        assert!(matches!(
+            state.claim_task("task-b", "", 0),
+            ClaimResult::AlreadyClaimed { .. }
+        ));
         // But pane 0 can release task-a.
         assert!(state.release_task("task-a", 0));
         // Now pane 1 can claim task-a.
@@ -711,8 +804,14 @@ mod tests {
 
     #[test]
     fn message_priority_serializes_lowercase() {
-        assert_eq!(serde_json::to_string(&MessagePriority::Normal).unwrap(), r#""normal""#);
-        assert_eq!(serde_json::to_string(&MessagePriority::Urgent).unwrap(), r#""urgent""#);
+        assert_eq!(
+            serde_json::to_string(&MessagePriority::Normal).unwrap(),
+            r#""normal""#
+        );
+        assert_eq!(
+            serde_json::to_string(&MessagePriority::Urgent).unwrap(),
+            r#""urgent""#
+        );
     }
 
     #[test]
@@ -765,15 +864,27 @@ mod tests {
         let mut state = make_state();
         state.register_pane(0);
         state.register_pane(1);
-        state.set_role(1, PaneRole { name: "tester".into(), description: "tests".into() });
+        state.set_role(
+            1,
+            PaneRole {
+                name: "tester".into(),
+                description: "tests".into(),
+            },
+        );
         state.send_message(0, 1, "hello", MessagePriority::Normal);
         state.claim_task("t-1", "fix bug", 1);
 
         state.unregister_pane(1);
 
         assert!(state.roles.get(&1).is_none(), "role should be cleaned up");
-        assert!(state.inboxes.get(&1).is_none(), "inbox should be cleaned up");
-        assert!(!state.task_board.contains_key("t-1"), "task claim should be released");
+        assert!(
+            state.inboxes.get(&1).is_none(),
+            "inbox should be cleaned up"
+        );
+        assert!(
+            !state.task_board.contains_key("t-1"),
+            "task claim should be released"
+        );
     }
 
     #[test]

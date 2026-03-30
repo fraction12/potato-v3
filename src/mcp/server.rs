@@ -5,12 +5,12 @@
 
 use std::sync::{Arc, Mutex};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::mcp::protocol::{
-    CallToolParams, InitializeParams, InitializeResult, JsonRpcError, JsonRpcRequest,
-    JsonRpcResponse, ListToolsResult, ServerCapabilities, ServerInfo, ToolsCapability,
-    INVALID_PARAMS, METHOD_NOT_FOUND,
+    CallToolParams, INVALID_PARAMS, InitializeParams, InitializeResult, JsonRpcError,
+    JsonRpcRequest, JsonRpcResponse, ListToolsResult, METHOD_NOT_FOUND, ServerCapabilities,
+    ServerInfo, ToolsCapability,
 };
 use crate::mcp::state::InterSessionState;
 use crate::mcp::tools::{handle_tool_call, tool_definitions};
@@ -66,10 +66,7 @@ impl McpServer {
             }
             "tools/list" => self.handle_list_tools(&id),
             "tools/call" => self.handle_call_tool(&id, request.params.as_ref()),
-            method => JsonRpcResponse::error(
-                id,
-                JsonRpcError::method_not_found(method),
-            ),
+            method => JsonRpcResponse::error(id, JsonRpcError::method_not_found(method)),
         };
 
         serde_json::to_string(&response).unwrap_or_default()
@@ -81,22 +78,23 @@ impl McpServer {
     fn json_response(id: &Value, result: impl serde::Serialize) -> JsonRpcResponse {
         match serde_json::to_value(result) {
             Ok(v) => JsonRpcResponse::success(id.clone(), v),
-            Err(e) => JsonRpcResponse::error(
-                id.clone(),
-                JsonRpcError::internal_error(&e.to_string()),
-            ),
+            Err(e) => {
+                JsonRpcResponse::error(id.clone(), JsonRpcError::internal_error(&e.to_string()))
+            }
         }
     }
 
     fn handle_initialize(&self, id: &Value, params: Option<&Value>) -> JsonRpcResponse {
         // Params are informational — we accept any client.
-        let _params: Option<InitializeParams> = params
-            .and_then(|p| serde_json::from_value(p.clone()).ok());
+        let _params: Option<InitializeParams> =
+            params.and_then(|p| serde_json::from_value(p.clone()).ok());
 
         let result = InitializeResult {
             protocol_version: PROTOCOL_VERSION.to_string(),
             capabilities: ServerCapabilities {
-                tools: ToolsCapability { list_changed: false },
+                tools: ToolsCapability {
+                    list_changed: false,
+                },
             },
             server_info: ServerInfo {
                 name: SERVER_NAME.to_string(),
@@ -163,8 +161,20 @@ mod tests {
         let state = Arc::new(Mutex::new(InterSessionState::new()));
         {
             let mut st = state.lock().unwrap();
-            st.set_role(0, PaneRole { name: "architect".into(), description: "Designs".into() });
-            st.set_role(1, PaneRole { name: "implementer".into(), description: "Builds".into() });
+            st.set_role(
+                0,
+                PaneRole {
+                    name: "architect".into(),
+                    description: "Designs".into(),
+                },
+            );
+            st.set_role(
+                1,
+                PaneRole {
+                    name: "implementer".into(),
+                    description: "Builds".into(),
+                },
+            );
         }
         let server0 = McpServer::new(0, Arc::clone(&state));
         let server1 = McpServer::new(1, Arc::clone(&state));
@@ -266,7 +276,11 @@ mod tests {
             "params": {"name": "potato_get_role", "arguments": {}}
         });
         let resp = parse_response(&server0.handle_request(&req.to_string()));
-        assert!(resp["error"].is_null(), "Unexpected error: {}", resp["error"]);
+        assert!(
+            resp["error"].is_null(),
+            "Unexpected error: {}",
+            resp["error"]
+        );
         let content_text = resp["result"]["content"][0]["text"].as_str().unwrap();
         assert!(content_text.contains("architect"));
     }
@@ -389,7 +403,9 @@ mod tests {
 
         // Pane 1 tries to claim same task — should fail.
         let claim2_resp = parse_response(&server1.handle_request(&claim_req.to_string()));
-        let claim2_text = claim2_resp["result"]["content"][0]["text"].as_str().unwrap();
+        let claim2_text = claim2_resp["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap();
         let parsed: Value = serde_json::from_str(claim2_text).unwrap();
         assert_eq!(parsed["claimed"], false);
 
@@ -399,12 +415,16 @@ mod tests {
             "params": {"name": "potato_release_task", "arguments": {"task_id": "feat-auth"}}
         });
         let release_resp = parse_response(&server.handle_request(&release_req.to_string()));
-        let release_text = release_resp["result"]["content"][0]["text"].as_str().unwrap();
+        let release_text = release_resp["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap();
         assert!(release_text.contains("Released"));
 
         // Pane 1 can now claim.
         let claim3_resp = parse_response(&server1.handle_request(&claim_req.to_string()));
-        let claim3_text = claim3_resp["result"]["content"][0]["text"].as_str().unwrap();
+        let claim3_text = claim3_resp["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap();
         let parsed3: Value = serde_json::from_str(claim3_text).unwrap();
         assert_eq!(parsed3["claimed"], true);
     }

@@ -395,21 +395,20 @@ impl LegacyLayoutManager {
         .areas(area);
 
         match self.preset {
-            crate::app::state::LayoutPreset::Wide
-            | crate::app::state::LayoutPreset::Minimal => PanelAreas {
-                chat: content_area,
-                input,
-                status_bar,
-                side: None,
-            },
+            crate::app::state::LayoutPreset::Wide | crate::app::state::LayoutPreset::Minimal => {
+                PanelAreas {
+                    chat: content_area,
+                    input,
+                    status_bar,
+                    side: None,
+                }
+            }
             crate::app::state::LayoutPreset::Sidebar => {
                 // ~70% chat / ~30% side panel
-                let [chat, side] = Layout::horizontal([
-                    Constraint::Percentage(70),
-                    Constraint::Percentage(30),
-                ])
-                .direction(Direction::Horizontal)
-                .areas(content_area);
+                let [chat, side] =
+                    Layout::horizontal([Constraint::Percentage(70), Constraint::Percentage(30)])
+                        .direction(Direction::Horizontal)
+                        .areas(content_area);
 
                 PanelAreas {
                     chat,
@@ -592,11 +591,7 @@ mod tests {
 
     #[test]
     fn test_focus_ring_cycles_through_visible_panels() {
-        let mut mgr = make_legacy_with(vec![
-            PanelId::Chat,
-            PanelId::ToolOutput,
-            PanelId::Sessions,
-        ]);
+        let mut mgr = make_legacy_with(vec![PanelId::Chat, PanelId::ToolOutput, PanelId::Sessions]);
         assert_eq!(mgr.focused(), &PanelId::Chat);
         mgr.focus_next();
         assert_eq!(mgr.focused(), &PanelId::ToolOutput);
@@ -606,11 +601,7 @@ mod tests {
 
     #[test]
     fn test_focus_ring_wraps_around() {
-        let mut mgr = make_legacy_with(vec![
-            PanelId::Chat,
-            PanelId::ToolOutput,
-            PanelId::Sessions,
-        ]);
+        let mut mgr = make_legacy_with(vec![PanelId::Chat, PanelId::ToolOutput, PanelId::Sessions]);
         mgr.focus_next();
         mgr.focus_next();
         assert_eq!(mgr.focused(), &PanelId::Sessions);
@@ -620,11 +611,7 @@ mod tests {
 
     #[test]
     fn test_shift_tab_reverses() {
-        let mut mgr = make_legacy_with(vec![
-            PanelId::Chat,
-            PanelId::ToolOutput,
-            PanelId::Sessions,
-        ]);
+        let mut mgr = make_legacy_with(vec![PanelId::Chat, PanelId::ToolOutput, PanelId::Sessions]);
         mgr.focus_prev();
         assert_eq!(mgr.focused(), &PanelId::Sessions);
         mgr.focus_prev();

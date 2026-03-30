@@ -17,7 +17,7 @@ use ratatui::{
 };
 
 use crate::app::state::{ToolCallInfo, ToolCallStatus};
-use crate::ui::theme::{Theme, AMBER, CHARCOAL, CREAM, RUST_RED, SPROUT};
+use crate::ui::theme::{AMBER, CHARCOAL, CREAM, RUST_RED, SPROUT, Theme};
 
 /// Status icon strings for each tool call state.
 const ICON_RUNNING: &str = "●";
@@ -184,7 +184,12 @@ mod tests {
     use super::*;
     use crate::app::state::{ToolCallInfo, ToolCallStatus};
 
-    fn make_tc(status: ToolCallStatus, args: &str, output: Option<&str>, expanded: bool) -> ToolCallInfo {
+    fn make_tc(
+        status: ToolCallStatus,
+        args: &str,
+        output: Option<&str>,
+        expanded: bool,
+    ) -> ToolCallInfo {
         ToolCallInfo {
             tool_name: "read_file".into(),
             args: args.into(),
@@ -244,7 +249,10 @@ mod tests {
 
     #[test]
     fn output_line_count_capped_at_8() {
-        let long = (1..=20).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
+        let long = (1..=20)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
         assert_eq!(output_line_count(&long, 80), 8);
     }
 
@@ -272,7 +280,10 @@ mod tests {
 
     #[test]
     fn card_height_expanded_output_capped() {
-        let long_out = (1..=20).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
+        let long_out = (1..=20)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
         let tc = make_tc(ToolCallStatus::Done, "arg", Some(&long_out), true);
         // 3 + 1 (args) + 1 (output label) + 8 (capped) + 1 (bottom) = 14
         assert_eq!(card_height(&tc, 80), 14);

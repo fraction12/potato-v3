@@ -32,37 +32,61 @@ pub enum QuickActionKind {
 }
 
 /// Build the context-sensitive list of available actions.
-pub fn actions_for_context(
-    is_session: bool,
-    has_approval: bool,
-) -> Vec<QuickAction> {
+pub fn actions_for_context(is_session: bool, has_approval: bool) -> Vec<QuickAction> {
     let mut actions = vec![
-        QuickAction { label: "Toggle Help", keybind_hint: "F1", kind: QuickActionKind::ToggleHelp },
-        QuickAction { label: "New Session", keybind_hint: "/new", kind: QuickActionKind::NewSession },
+        QuickAction {
+            label: "Toggle Help",
+            keybind_hint: "F1",
+            kind: QuickActionKind::ToggleHelp,
+        },
+        QuickAction {
+            label: "New Session",
+            keybind_hint: "/new",
+            kind: QuickActionKind::NewSession,
+        },
     ];
 
     if is_session {
-        actions.push(QuickAction { label: "Refresh Git", keybind_hint: "F5", kind: QuickActionKind::RefreshGit });
-        actions.push(QuickAction { label: "Export Session", keybind_hint: "/export", kind: QuickActionKind::ExportSession });
-        actions.push(QuickAction { label: "Focus Terminal", keybind_hint: "F6", kind: QuickActionKind::FocusTerminal });
-        actions.push(QuickAction { label: "Close Pane", keybind_hint: "Ctrl+W", kind: QuickActionKind::ClosePane });
+        actions.push(QuickAction {
+            label: "Refresh Git",
+            keybind_hint: "F5",
+            kind: QuickActionKind::RefreshGit,
+        });
+        actions.push(QuickAction {
+            label: "Export Session",
+            keybind_hint: "/export",
+            kind: QuickActionKind::ExportSession,
+        });
+        actions.push(QuickAction {
+            label: "Focus Terminal",
+            keybind_hint: "F6",
+            kind: QuickActionKind::FocusTerminal,
+        });
+        actions.push(QuickAction {
+            label: "Close Pane",
+            keybind_hint: "Ctrl+W",
+            kind: QuickActionKind::ClosePane,
+        });
     }
 
     if has_approval {
-        actions.push(QuickAction { label: "Approve", keybind_hint: "y", kind: QuickActionKind::Approve });
-        actions.push(QuickAction { label: "Deny", keybind_hint: "n", kind: QuickActionKind::Deny });
+        actions.push(QuickAction {
+            label: "Approve",
+            keybind_hint: "y",
+            kind: QuickActionKind::Approve,
+        });
+        actions.push(QuickAction {
+            label: "Deny",
+            keybind_hint: "n",
+            kind: QuickActionKind::Deny,
+        });
     }
 
     actions
 }
 
 /// Render the Quick Actions panel into the given area.
-pub fn render(
-    frame: &mut Frame,
-    area: Rect,
-    state: &AppState,
-    focused: bool,
-) {
+pub fn render(frame: &mut Frame, area: Rect, state: &AppState, focused: bool) {
     let title_color = if focused { AMBER } else { TAN };
     let border_fg = if focused { AMBER } else { BRASS };
 
@@ -74,10 +98,7 @@ pub fn render(
     let is_session = matches!(state.screen, crate::app::state::AppScreen::Session(_));
     let actions = actions_for_context(is_session, has_approval);
 
-    let selected = state
-        .session()
-        .map(|s| s.selected_action)
-        .unwrap_or(0);
+    let selected = state.session().map(|s| s.selected_action).unwrap_or(0);
 
     let inner_w = area.width.saturating_sub(4) as usize;
     let mut lines: Vec<Line> = Vec::new();
@@ -97,7 +118,11 @@ pub fn render(
         lines.push(Line::from(vec![
             Span::styled(
                 format!(" {}", action.label),
-                Style::default().fg(fg).bg(bg).add_modifier(if is_selected { Modifier::BOLD } else { Modifier::empty() }),
+                Style::default().fg(fg).bg(bg).add_modifier(if is_selected {
+                    Modifier::BOLD
+                } else {
+                    Modifier::empty()
+                }),
             ),
             Span::styled(pad_str, Style::default().bg(bg)),
             Span::styled(
@@ -137,18 +162,38 @@ mod tests {
     #[test]
     fn always_shows_help_and_new_session() {
         let actions = actions_for_context(false, false);
-        assert!(actions.iter().any(|a| a.kind == QuickActionKind::ToggleHelp));
-        assert!(actions.iter().any(|a| a.kind == QuickActionKind::NewSession));
+        assert!(
+            actions
+                .iter()
+                .any(|a| a.kind == QuickActionKind::ToggleHelp)
+        );
+        assert!(
+            actions
+                .iter()
+                .any(|a| a.kind == QuickActionKind::NewSession)
+        );
         assert_eq!(actions.len(), 2);
     }
 
     #[test]
     fn session_context_adds_session_actions() {
         let actions = actions_for_context(true, false);
-        assert!(actions.iter().any(|a| a.kind == QuickActionKind::RefreshGit));
-        assert!(actions.iter().any(|a| a.kind == QuickActionKind::FocusTerminal));
+        assert!(
+            actions
+                .iter()
+                .any(|a| a.kind == QuickActionKind::RefreshGit)
+        );
+        assert!(
+            actions
+                .iter()
+                .any(|a| a.kind == QuickActionKind::FocusTerminal)
+        );
         assert!(actions.iter().any(|a| a.kind == QuickActionKind::ClosePane));
-        assert!(actions.iter().any(|a| a.kind == QuickActionKind::ExportSession));
+        assert!(
+            actions
+                .iter()
+                .any(|a| a.kind == QuickActionKind::ExportSession)
+        );
         assert_eq!(actions.len(), 6);
     }
 

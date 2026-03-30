@@ -2,11 +2,7 @@
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use super::{
-    action::Action,
-    message::Message,
-    state::AppState,
-};
+use super::{action::Action, message::Message, state::AppState};
 use crate::ui::panels::PanelId;
 
 /// Number of ticks before an error message is auto-dismissed.

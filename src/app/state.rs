@@ -215,22 +215,22 @@ impl CockpitFocus {
     /// Advance to the next focus in the ring (Tab).
     pub fn next(self) -> Self {
         match self {
-            Self::Agents   => Self::Git,
-            Self::Git      => Self::Input,
-            Self::Input    => Self::Terminal,
+            Self::Agents => Self::Git,
+            Self::Git => Self::Input,
+            Self::Input => Self::Terminal,
             Self::Terminal => Self::Sidebar,
-            Self::Sidebar  => Self::Agents,
+            Self::Sidebar => Self::Agents,
         }
     }
 
     /// Retreat to the previous focus in the ring (Shift+Tab).
     pub fn prev(self) -> Self {
         match self {
-            Self::Agents   => Self::Sidebar,
-            Self::Git      => Self::Agents,
-            Self::Input    => Self::Git,
+            Self::Agents => Self::Sidebar,
+            Self::Git => Self::Agents,
+            Self::Input => Self::Git,
             Self::Terminal => Self::Input,
-            Self::Sidebar  => Self::Terminal,
+            Self::Sidebar => Self::Terminal,
         }
     }
 }
@@ -274,15 +274,30 @@ pub struct TranscriptEntry {
 impl TranscriptEntry {
     /// Create an assistant transcript entry timestamped to now.
     pub fn assistant(content: impl Into<String>) -> Self {
-        Self { role: MessageRole::Assistant, content: content.into(), timestamp: Utc::now(), tool_call: None }
+        Self {
+            role: MessageRole::Assistant,
+            content: content.into(),
+            timestamp: Utc::now(),
+            tool_call: None,
+        }
     }
     /// Create a user transcript entry timestamped to now.
     pub fn user(content: impl Into<String>) -> Self {
-        Self { role: MessageRole::User, content: content.into(), timestamp: Utc::now(), tool_call: None }
+        Self {
+            role: MessageRole::User,
+            content: content.into(),
+            timestamp: Utc::now(),
+            tool_call: None,
+        }
     }
     /// Create a system transcript entry timestamped to now.
     pub fn system(content: impl Into<String>) -> Self {
-        Self { role: MessageRole::System, content: content.into(), timestamp: Utc::now(), tool_call: None }
+        Self {
+            role: MessageRole::System,
+            content: content.into(),
+            timestamp: Utc::now(),
+            tool_call: None,
+        }
     }
 }
 
@@ -311,13 +326,21 @@ pub enum AgentStatus {
 }
 
 impl Default for AgentStatus {
-    fn default() -> Self { Self::Idle }
+    fn default() -> Self {
+        Self::Idle
+    }
 }
 
 impl AgentStatus {
     /// Returns true if the agent is actively doing something.
     pub fn is_active(&self) -> bool {
-        matches!(self, Self::Starting | Self::Thinking | Self::RunningTool { .. } | Self::WaitingApproval { .. })
+        matches!(
+            self,
+            Self::Starting
+                | Self::Thinking
+                | Self::RunningTool { .. }
+                | Self::WaitingApproval { .. }
+        )
     }
 }
 
@@ -536,7 +559,8 @@ pub struct AppState {
     ///
     /// The bridge sends `InjectRequest`s after `send_message`; the main loop
     /// drains this each tick and writes into the target pane's PTY.
-    pub inject_rx: Option<tokio::sync::mpsc::UnboundedReceiver<crate::mcp::injection::InjectRequest>>,
+    pub inject_rx:
+        Option<tokio::sync::mpsc::UnboundedReceiver<crate::mcp::injection::InjectRequest>>,
 
     /// OpenSpec watcher — tracks `openspec/changes/*/tasks.md` for live task data.
     pub openspec: Option<crate::openspec::OpenSpecWatcher>,
@@ -578,12 +602,20 @@ impl AppState {
 
     /// Return a mutable reference to the dashboard state if active.
     pub fn dashboard_mut(&mut self) -> Option<&mut DashboardState> {
-        if let AppScreen::Dashboard(ref mut d) = self.screen { Some(d) } else { None }
+        if let AppScreen::Dashboard(ref mut d) = self.screen {
+            Some(d)
+        } else {
+            None
+        }
     }
 
     /// Return a reference to the dashboard state if active.
     pub fn dashboard(&self) -> Option<&DashboardState> {
-        if let AppScreen::Dashboard(ref d) = self.screen { Some(d) } else { None }
+        if let AppScreen::Dashboard(ref d) = self.screen {
+            Some(d)
+        } else {
+            None
+        }
     }
 
     /// Transition to a session screen.
@@ -593,12 +625,20 @@ impl AppState {
 
     /// Return a mutable reference to the session state if active.
     pub fn session_mut(&mut self) -> Option<&mut SessionState> {
-        if let AppScreen::Session(ref mut s) = self.screen { Some(s) } else { None }
+        if let AppScreen::Session(ref mut s) = self.screen {
+            Some(s)
+        } else {
+            None
+        }
     }
 
     /// Return a reference to the session state if active.
     pub fn session(&self) -> Option<&SessionState> {
-        if let AppScreen::Session(ref s) = self.screen { Some(s) } else { None }
+        if let AppScreen::Session(ref s) = self.screen {
+            Some(s)
+        } else {
+            None
+        }
     }
 
     // ── Error helpers ─────────────────────────────────────────────────────────

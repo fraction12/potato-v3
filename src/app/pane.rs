@@ -35,7 +35,6 @@ pub struct Pane {
     pub role_name: Option<String>,
     /// Optional free-text description accompanying the role.
     pub role_description: Option<String>,
-
 }
 
 impl Pane {
@@ -103,7 +102,11 @@ impl PaneManager {
     }
 
     /// Open a new pane. Returns `Some(&mut Pane)` on success, `None` if at capacity.
-    pub fn open(&mut self, session_id: impl Into<String>, agent_name: impl Into<String>) -> Option<&mut Pane> {
+    pub fn open(
+        &mut self,
+        session_id: impl Into<String>,
+        agent_name: impl Into<String>,
+    ) -> Option<&mut Pane> {
         if !self.can_open() {
             return None;
         }
@@ -199,9 +202,9 @@ impl PaneManager {
 
     /// Find the pane index whose session has the given claude_session_id.
     pub fn find_by_session_id(&self, session_id: &str) -> Option<usize> {
-        self.panes.iter().position(|p| {
-            p.session.claude_session_id.as_deref() == Some(session_id)
-        })
+        self.panes
+            .iter()
+            .position(|p| p.session.claude_session_id.as_deref() == Some(session_id))
     }
 
     /// Find the pane index whose pane.id matches.
@@ -390,7 +393,10 @@ mod tests {
         let mut pm = PaneManager::new();
         pm.open("sess-1", "claude");
         pm.open("sess-2", "claude");
-        let ids: Vec<_> = pm.iter().map(|(i, p)| (i, p.session.session_id.clone())).collect();
+        let ids: Vec<_> = pm
+            .iter()
+            .map(|(i, p)| (i, p.session.session_id.clone()))
+            .collect();
         assert_eq!(ids, vec![(0, "sess-1".into()), (1, "sess-2".into())]);
     }
 
@@ -413,7 +419,10 @@ mod tests {
 
         let pane = pm.active_pane().unwrap();
         assert_eq!(pane.role_name.as_deref(), Some("architect"));
-        assert_eq!(pane.role_description.as_deref(), Some("Frontend API design"));
+        assert_eq!(
+            pane.role_description.as_deref(),
+            Some("Frontend API design")
+        );
     }
 
     #[test]

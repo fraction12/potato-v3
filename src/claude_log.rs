@@ -108,7 +108,10 @@ pub struct ClaudeSessionLogTracker {
 impl ClaudeSessionLogTracker {
     /// Create a new tracker for the given log file path.
     pub fn new(path: PathBuf) -> Self {
-        Self { path, ..Self::default() }
+        Self {
+            path,
+            ..Self::default()
+        }
     }
 
     /// Returns the path of the log file being tracked.
@@ -195,7 +198,10 @@ impl ClaudeSessionLogTracker {
             return false;
         };
 
-        let role = message.get("role").and_then(Value::as_str).unwrap_or_default();
+        let role = message
+            .get("role")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
         let mut changed = false;
 
         if role == "assistant" {
@@ -263,22 +269,35 @@ impl ClaudeSessionLogTracker {
     }
 
     fn apply_usage(&mut self, usage: Option<&Value>) -> bool {
-        let Some(usage) = usage else { return false; };
+        let Some(usage) = usage else {
+            return false;
+        };
         let before = self.usage.clone();
 
-        self.usage.input_tokens = self
-            .usage
-            .input_tokens
-            .saturating_add(usage.get("input_tokens").and_then(Value::as_u64).unwrap_or(0));
-        self.usage.output_tokens = self
-            .usage
-            .output_tokens
-            .saturating_add(usage.get("output_tokens").and_then(Value::as_u64).unwrap_or(0));
-        self.usage.cache_creation_input_tokens = self.usage.cache_creation_input_tokens.saturating_add(
-            usage.get("cache_creation_input_tokens").and_then(Value::as_u64).unwrap_or(0),
+        self.usage.input_tokens = self.usage.input_tokens.saturating_add(
+            usage
+                .get("input_tokens")
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
         );
+        self.usage.output_tokens = self.usage.output_tokens.saturating_add(
+            usage
+                .get("output_tokens")
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+        );
+        self.usage.cache_creation_input_tokens =
+            self.usage.cache_creation_input_tokens.saturating_add(
+                usage
+                    .get("cache_creation_input_tokens")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0),
+            );
         self.usage.cache_read_input_tokens = self.usage.cache_read_input_tokens.saturating_add(
-            usage.get("cache_read_input_tokens").and_then(Value::as_u64).unwrap_or(0),
+            usage
+                .get("cache_read_input_tokens")
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
         );
 
         if let Some(server_tool_use) = usage.get("server_tool_use") {
@@ -305,16 +324,18 @@ impl ClaudeSessionLogTracker {
         }
         let order = self.next_order;
         self.next_order = self.next_order.saturating_add(1);
-        self.tools.entry(id.to_string()).or_insert_with(|| ToolSlot {
-            order,
-            entry: ClaudeToolEntry {
-                id: id.to_string(),
-                name: name.to_string(),
-                status: ClaudeToolStatus::Running,
-                input_preview,
-                result_preview: None,
-            },
-        });
+        self.tools
+            .entry(id.to_string())
+            .or_insert_with(|| ToolSlot {
+                order,
+                entry: ClaudeToolEntry {
+                    id: id.to_string(),
+                    name: name.to_string(),
+                    status: ClaudeToolStatus::Running,
+                    input_preview,
+                    result_preview: None,
+                },
+            });
     }
 
     fn upsert_tool_result(&mut self, id: &str, result_preview: String, is_error: bool) {
@@ -413,12 +434,18 @@ fn truncate_str(s: &str, max: usize) -> String {
 }
 
 fn compact_json(value: Option<&Value>) -> String {
-    let Some(value) = value else { return String::new(); };
+    let Some(value) = value else {
+        return String::new();
+    };
     let raw = match value {
         Value::String(s) => s.clone(),
         other => serde_json::to_string(other).unwrap_or_default(),
     };
-    let compact = raw.replace('\n', " ").split_whitespace().collect::<Vec<_>>().join(" ");
+    let compact = raw
+        .replace('\n', " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
     if compact.len() > 120 {
         // Find a char boundary at or before byte 119.
         let mut end = 119;
@@ -490,7 +517,9 @@ mod tests {
         let path = session_log_path(home, cwd, "abc-123");
         assert_eq!(
             path,
-            PathBuf::from("/Users/tester/.claude/projects/-Users-tester-Documents-Projects-potato-v3/abc-123.jsonl")
+            PathBuf::from(
+                "/Users/tester/.claude/projects/-Users-tester-Documents-Projects-potato-v3/abc-123.jsonl"
+            )
         );
     }
 
@@ -511,7 +540,8 @@ mod tests {
 
     #[test]
     fn poll_handles_partial_lines() {
-        let tmp = std::env::temp_dir().join(format!("potato-claude-log-{}.jsonl", std::process::id()));
+        let tmp =
+            std::env::temp_dir().join(format!("potato-claude-log-{}.jsonl", std::process::id()));
         let _ = fs::remove_file(&tmp);
         fs::write(&tmp, b"{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"usage\":{\"input_tokens\":1}")
             .unwrap();

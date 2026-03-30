@@ -79,8 +79,8 @@ impl GitSnapshot {
         snap.is_repo = true;
 
         // Current branch.
-        snap.current_branch = git_output(&["rev-parse", "--abbrev-ref", "HEAD"])
-            .unwrap_or_default();
+        snap.current_branch =
+            git_output(&["rev-parse", "--abbrev-ref", "HEAD"]).unwrap_or_default();
 
         // Branches.
         if let Some(raw) = git_output(&["branch", "--format=%(refname:short) %(HEAD)"]) {
@@ -96,12 +96,9 @@ impl GitSnapshot {
         }
 
         // Recent commits (last 8).
-        if let Some(raw) = git_output(&[
-            "log",
-            "--oneline",
-            "--format=%h\x1f%s\x1f%an\x1f%ar",
-            "-8",
-        ]) {
+        if let Some(raw) =
+            git_output(&["log", "--oneline", "--format=%h\x1f%s\x1f%an\x1f%ar", "-8"])
+        {
             snap.recent_commits = raw
                 .lines()
                 .filter(|l| !l.is_empty())
@@ -133,8 +130,14 @@ impl GitSnapshot {
 
         // Open PRs via gh (best-effort).
         if let Some(raw) = gh_output(&[
-            "pr", "list", "--state", "open", "--limit", "5",
-            "--json", "number,title,author,headRefName",
+            "pr",
+            "list",
+            "--state",
+            "open",
+            "--limit",
+            "5",
+            "--json",
+            "number,title,author,headRefName",
         ]) {
             if let Ok(prs) = serde_json::from_str::<Vec<serde_json::Value>>(&raw) {
                 snap.open_prs = prs

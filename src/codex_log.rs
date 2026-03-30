@@ -98,7 +98,10 @@ pub struct CodexSessionLogTracker {
 impl CodexSessionLogTracker {
     /// Create a tracker for the JSONL file at `path`.
     pub fn new(path: PathBuf) -> Self {
-        Self { path, ..Self::default() }
+        Self {
+            path,
+            ..Self::default()
+        }
     }
 
     /// Path to the tracked JSONL file.
@@ -165,7 +168,9 @@ impl CodexSessionLogTracker {
     }
 
     fn process_line_bytes(&mut self, line: &[u8]) -> bool {
-        let Ok(text) = std::str::from_utf8(line) else { return false; };
+        let Ok(text) = std::str::from_utf8(line) else {
+            return false;
+        };
         self.process_line(text)
     }
 
@@ -179,7 +184,9 @@ impl CodexSessionLogTracker {
     /// - `{"timestamp":"…","type":"event_msg","payload":{"type":"item_started","item":{"id":"…","type":"command_execution","command":"…"}}}`
     /// - `{"timestamp":"…","type":"event_msg","payload":{"type":"item_completed","item":{"id":"…","type":"command_execution","aggregated_output":"…","exit_code":0}}}`
     pub fn process_line(&mut self, line: &str) -> bool {
-        let Ok(v) = serde_json::from_str::<Value>(line) else { return false; };
+        let Ok(v) = serde_json::from_str::<Value>(line) else {
+            return false;
+        };
 
         let record_type = v["type"].as_str().unwrap_or("");
         let payload = &v["payload"];
@@ -206,7 +213,9 @@ impl CodexSessionLogTracker {
                         if self.title.is_empty() && (role == "user" || role == "developer") {
                             if let Some(content) = payload["content"].as_array() {
                                 for item in content {
-                                    if item["type"].as_str() == Some("input_text") || item["type"].as_str() == Some("text") {
+                                    if item["type"].as_str() == Some("input_text")
+                                        || item["type"].as_str() == Some("text")
+                                    {
                                         if let Some(text) = item["text"].as_str() {
                                             if !text.is_empty() {
                                                 self.title = truncate_str(text, 80);
@@ -247,16 +256,19 @@ impl CodexSessionLogTracker {
                                 let order = self.next_order;
                                 self.next_order = self.next_order.saturating_add(1);
                                 self.item_id_to_order.insert(id.clone(), order);
-                                self.tools.insert(order, ToolSlot {
+                                self.tools.insert(
                                     order,
-                                    entry: CodexToolEntry {
-                                        id,
-                                        command,
-                                        status: CodexToolStatus::Running,
-                                        output_preview: None,
-                                        exit_code: None,
+                                    ToolSlot {
+                                        order,
+                                        entry: CodexToolEntry {
+                                            id,
+                                            command,
+                                            status: CodexToolStatus::Running,
+                                            output_preview: None,
+                                            exit_code: None,
+                                        },
                                     },
-                                });
+                                );
                                 changed = true;
                             }
                         }
@@ -295,15 +307,18 @@ impl CodexSessionLogTracker {
 
     fn apply_usage(&mut self, usage: &Value) -> bool {
         let before = self.usage.clone();
-        self.usage.input_tokens = self.usage.input_tokens.saturating_add(
-            usage["input_tokens"].as_u64().unwrap_or(0),
-        );
-        self.usage.cached_input_tokens = self.usage.cached_input_tokens.saturating_add(
-            usage["cached_input_tokens"].as_u64().unwrap_or(0),
-        );
-        self.usage.output_tokens = self.usage.output_tokens.saturating_add(
-            usage["output_tokens"].as_u64().unwrap_or(0),
-        );
+        self.usage.input_tokens = self
+            .usage
+            .input_tokens
+            .saturating_add(usage["input_tokens"].as_u64().unwrap_or(0));
+        self.usage.cached_input_tokens = self
+            .usage
+            .cached_input_tokens
+            .saturating_add(usage["cached_input_tokens"].as_u64().unwrap_or(0));
+        self.usage.output_tokens = self
+            .usage
+            .output_tokens
+            .saturating_add(usage["output_tokens"].as_u64().unwrap_or(0));
         self.usage != before
     }
 }
@@ -530,10 +545,8 @@ mod tests {
 
     #[test]
     fn poll_handles_partial_lines() {
-        let tmp = std::env::temp_dir().join(format!(
-            "potato-codex-log-{}.jsonl",
-            std::process::id()
-        ));
+        let tmp =
+            std::env::temp_dir().join(format!("potato-codex-log-{}.jsonl", std::process::id()));
         let _ = std::fs::remove_file(&tmp);
         // Write partial line (no trailing newline).
         std::fs::write(

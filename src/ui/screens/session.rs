@@ -38,7 +38,9 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Widget, Wrap},
+    widgets::{
+        Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Widget, Wrap,
+    },
 };
 
 use crate::app::state::{AgentStatus, AppScreen, AppState, CockpitFocus, Overlay, SessionState};
@@ -59,17 +61,16 @@ const RAIL_WIDTH: u16 = 22;
 /// Takes `&mut AppState` so it can call `real_pty.resize()` every frame to
 /// keep the PTY size in sync with the rendered output area.
 pub fn render_session(frame: &mut Frame, area: Rect, state: &mut AppState) {
-    let AppScreen::Session(_) = state.screen else { return };
+    let AppScreen::Session(_) = state.screen else {
+        return;
+    };
 
     // Outer background fill.
     frame.render_widget(Block::default().style(Style::default().bg(BG)), area);
 
     // ── Outer vertical split: [content_rows] | [status_bar 1 line] ───────────
-    let [content_area, status_area] = Layout::vertical([
-        Constraint::Min(0),
-        Constraint::Length(1),
-    ])
-    .areas(area);
+    let [content_area, status_area] =
+        Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(area);
 
     // ── Horizontal split: [left_rail] | [center_col] | [right_rail] ──────────
     let [left_area, center_area, right_area] = Layout::horizontal([
@@ -88,14 +89,13 @@ pub fn render_session(frame: &mut Frame, area: Rect, state: &mut AppState) {
     let input_lines = if center_inner_w == 0 {
         1
     } else {
-        ((content_chars as f64) / (center_inner_w as f64)).ceil().max(1.0) as u16
+        ((content_chars as f64) / (center_inner_w as f64))
+            .ceil()
+            .max(1.0) as u16
     };
     let input_height = (input_lines + 2).min(8); // +2 for borders, cap at 8 lines
-    let [pty_area, input_area] = Layout::vertical([
-        Constraint::Min(0),
-        Constraint::Length(input_height),
-    ])
-    .areas(center_area);
+    let [pty_area, input_area] =
+        Layout::vertical([Constraint::Min(0), Constraint::Length(input_height)]).areas(center_area);
 
     // Pull focus out before borrowing state mutably for the PTY resize.
     let focus = state
@@ -124,12 +124,21 @@ pub fn render_session(frame: &mut Frame, area: Rect, state: &mut AppState) {
     }
 
     // Now borrow session immutably for the rest.
-    let AppScreen::Session(ref session) = state.screen else { return };
+    let AppScreen::Session(ref session) = state.screen else {
+        return;
+    };
 
     render_left_rail(frame, left_area, state, focus);
     render_input_bar(frame, input_area, session, focus);
     render_right_rail(frame, right_area, state, focus);
-    render_status_bar(frame, status_area, session, &state.model, focus, state.panes.len());
+    render_status_bar(
+        frame,
+        status_area,
+        session,
+        &state.model,
+        focus,
+        state.panes.len(),
+    );
 
     // ── Overlay (rendered on top of everything) ───────────────────────────────
     if let Some(ref overlay) = session.overlay {
@@ -165,10 +174,7 @@ fn render_left_rail(frame: &mut Frame, area: Rect, state: &AppState, focus: Cock
     let agents_height = 2 + agent_row_count; // border top + bottom + rows
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(agents_height),
-            Constraint::Min(4),
-        ])
+        .constraints([Constraint::Length(agents_height), Constraint::Min(4)])
         .split(area);
     let agents_area = chunks[0];
     let sessions_area = chunks[1];
@@ -188,10 +194,7 @@ fn render_agents_section(
     let focused = focus == CockpitFocus::Agents;
     let (border_style, title_style) = focus_styles(focused, TAN);
 
-    let selected_idx = state
-        .session()
-        .map(|s| s.selected_agent)
-        .unwrap_or(0);
+    let selected_idx = state.session().map(|s| s.selected_agent).unwrap_or(0);
 
     let items: Vec<ListItem<'_>> = agent_rows
         .iter()
@@ -234,7 +237,11 @@ fn render_agents_section(
                     Style::default()
                         .fg(name_color)
                         .bg(bg_color)
-                        .add_modifier(if is_selected { Modifier::BOLD } else { Modifier::empty() }),
+                        .add_modifier(if is_selected {
+                            Modifier::BOLD
+                        } else {
+                            Modifier::empty()
+                        }),
                 ),
             ]);
             ListItem::new(line)
@@ -334,17 +341,18 @@ fn render_git_section(frame: &mut Frame, area: Rect, state: &AppState, focus: Co
             )));
             for pr in &git.open_prs {
                 lines.push(Line::from(vec![
-                    Span::styled(
-                        format!("  #{} ", pr.number),
-                        Style::default().fg(SPROUT),
-                    ),
+                    Span::styled(format!("  #{} ", pr.number), Style::default().fg(SPROUT)),
                     Span::styled(
                         truncate_str(&pr.title, inner_w.saturating_sub(6)),
                         Style::default().fg(CREAM),
                     ),
                 ]));
                 lines.push(Line::from(Span::styled(
-                    format!("    {} → {}", pr.author, truncate_str(&pr.branch, inner_w.saturating_sub(pr.author.len() + 7))),
+                    format!(
+                        "    {} → {}",
+                        pr.author,
+                        truncate_str(&pr.branch, inner_w.saturating_sub(pr.author.len() + 7))
+                    ),
                     Style::default().fg(STONE),
                 )));
             }
@@ -359,10 +367,7 @@ fn render_git_section(frame: &mut Frame, area: Rect, state: &AppState, focus: Co
             )));
             for c in git.recent_commits.iter().take(6) {
                 lines.push(Line::from(vec![
-                    Span::styled(
-                        format!("  {} ", c.short_sha),
-                        Style::default().fg(STONE),
-                    ),
+                    Span::styled(format!("  {} ", c.short_sha), Style::default().fg(STONE)),
                     Span::styled(
                         truncate_str(&c.message, inner_w.saturating_sub(c.short_sha.len() + 3)),
                         Style::default().fg(TAN),
@@ -376,10 +381,7 @@ fn render_git_section(frame: &mut Frame, area: Rect, state: &AppState, focus: Co
         }
     }
 
-    let git_scroll = state
-        .session()
-        .map(|s| s.git_scroll)
-        .unwrap_or(0);
+    let git_scroll = state.session().map(|s| s.git_scroll).unwrap_or(0);
 
     let block = Block::default()
         .borders(Borders::ALL)
@@ -443,7 +445,10 @@ fn render_pane_viewport(
             let display_name = pane.role_name.as_deref().unwrap_or(&fallback);
             let pane_label = format!(" {display_name}{active_marker} ");
             let title = if actual_scroll > 0 {
-                Span::styled(format!("{} ↑{} ", pane_label.trim(), actual_scroll), title_style)
+                Span::styled(
+                    format!("{} ↑{} ", pane_label.trim(), actual_scroll),
+                    title_style,
+                )
             } else {
                 Span::styled(pane_label, title_style)
             };
@@ -510,17 +515,21 @@ fn render_pane_viewport(
 }
 
 /// Placeholder shown when no panes are active (zero PTYs).
-fn render_pty_viewport_legacy(frame: &mut Frame, area: Rect, _state: &mut AppState, _focus: CockpitFocus) {
-    let placeholder = Paragraph::new(
-        "\n  No active session.\n  Select an agent above and press Enter.",
-    )
-    .block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(BRASS))
-            .title(Span::styled(" Terminal ", Style::default().fg(STONE))),
-    )
-    .style(Style::default().fg(STONE));
+fn render_pty_viewport_legacy(
+    frame: &mut Frame,
+    area: Rect,
+    _state: &mut AppState,
+    _focus: CockpitFocus,
+) {
+    let placeholder =
+        Paragraph::new("\n  No active session.\n  Select an agent above and press Enter.")
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(BRASS))
+                    .title(Span::styled(" Terminal ", Style::default().fg(STONE))),
+            )
+            .style(Style::default().fg(STONE));
     frame.render_widget(placeholder, area);
 }
 
@@ -642,28 +651,43 @@ fn render_right_rail(frame: &mut Frame, area: Rect, state: &AppState, focus: Coc
     let (roles, task_claims, ctx_keys, unread_counts) = match state.inter_session_state {
         Some(ref iss) => match iss.lock() {
             Ok(st) => {
-                let roles: Vec<(u64, String, String)> = st.list_roles()
+                let roles: Vec<(u64, String, String)> = st
+                    .list_roles()
                     .into_iter()
                     .map(|(id, r)| (id, r.name.clone(), r.description.clone()))
                     .collect();
-                let tasks: Vec<(String, String, u64)> = st.task_board
+                let tasks: Vec<(String, String, u64)> = st
+                    .task_board
                     .values()
                     .map(|t| (t.task_id.clone(), t.description.clone(), t.claimed_by))
                     .collect();
                 let ctx: Vec<String> = st.shared_context_list();
-                let unread: std::collections::HashMap<u64, usize> = st.inboxes
+                let unread: std::collections::HashMap<u64, usize> = st
+                    .inboxes
                     .iter()
                     .map(|(&id, q)| (id, q.iter().filter(|m| !m.read).count()))
                     .collect();
                 (roles, tasks, ctx, unread)
             }
-            Err(_) => (Vec::new(), Vec::new(), Vec::new(), std::collections::HashMap::new()),
+            Err(_) => (
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                std::collections::HashMap::new(),
+            ),
         },
-        None => (Vec::new(), Vec::new(), Vec::new(), std::collections::HashMap::new()),
+        None => (
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            std::collections::HashMap::new(),
+        ),
     };
 
     // ── Gather OpenSpec tasks ─────────────────────────────────────────────────
-    let openspec_tasks = state.openspec.as_ref()
+    let openspec_tasks = state
+        .openspec
+        .as_ref()
         .map(|os| os.open_tasks())
         .unwrap_or_default();
 
@@ -682,22 +706,29 @@ fn render_right_rail(frame: &mut Frame, area: Rect, state: &AppState, focus: Coc
 
     let task_height = if has_tasks {
         (openspec_tasks.len().max(task_claims.len()) as u16).clamp(3, 8) + 2
-    } else { 4 };
+    } else {
+        4
+    };
     let ctx_height = if has_context {
         (ctx_keys.len() as u16).clamp(2, 5) + 2
-    } else { 4 };
+    } else {
+        4
+    };
 
     // Quick Actions height: 2 (border) + number of actions.
-    let has_approval = state.session().and_then(|s| s.approval_pending.as_ref()).is_some();
+    let has_approval = state
+        .session()
+        .and_then(|s| s.approval_pending.as_ref())
+        .is_some();
     let qa_count = crate::ui::panels::quick_actions::actions_for_context(true, has_approval).len();
     let qa_height = (qa_count as u16) + 2; // actions + border
 
     let [qa_area, claude_area, team_area, tasks_area, ctx_area] = Layout::vertical([
         Constraint::Length(qa_height), // Quick Actions
-        Constraint::Length(5),   // Claude compact
+        Constraint::Length(5),         // Claude compact
         Constraint::Length(((roles.len().max(1)) as u16) * 2 + 3), // Team
-        Constraint::Length(task_height),  // Tasks
-        Constraint::Min(ctx_height),     // Context (fills remaining)
+        Constraint::Length(task_height), // Tasks
+        Constraint::Min(ctx_height),   // Context (fills remaining)
     ])
     .areas(area);
 
@@ -718,12 +749,14 @@ fn render_right_rail(frame: &mut Frame, area: Rect, state: &AppState, focus: Coc
         metric_line(" Model", model_short, label, value),
         metric_line(
             " Tkns",
-            &format!("{}↓ {}↑ {}Σ",
+            &format!(
+                "{}↓ {}↑ {}Σ",
                 fmt_tokens(sidebar.usage.input_tokens),
                 fmt_tokens(sidebar.usage.output_tokens),
                 fmt_tokens(total_tokens),
             ),
-            label, value,
+            label,
+            value,
         ),
     ];
 
@@ -744,8 +777,7 @@ fn render_right_rail(frame: &mut Frame, area: Rect, state: &AppState, focus: Coc
         let mut lines = vec![Line::from(Span::raw(""))];
         for (pane_id, name, _desc) in &roles {
             let unread = unread_counts.get(pane_id).copied().unwrap_or(0);
-            let active = state.panes.active_pane()
-                .is_some_and(|p| p.id == *pane_id);
+            let active = state.panes.active_pane().is_some_and(|p| p.id == *pane_id);
             let indicator = if active {
                 Span::styled(" ● ", Style::default().fg(SPROUT))
             } else {
@@ -800,22 +832,10 @@ fn render_right_rail(frame: &mut Frame, area: Rect, state: &AppState, focus: Coc
         // Show OpenSpec tasks exactly as they appear — no extra decoration.
         for task in openspec_tasks.iter().take(max_tasks) {
             let (icon, status_style) = match task.status {
-                crate::openspec::TaskStatus::Claimed => (
-                    " ●",
-                    Style::default().fg(AMBER),
-                ),
-                crate::openspec::TaskStatus::InProgress => (
-                    " ◐",
-                    Style::default().fg(AMBER),
-                ),
-                crate::openspec::TaskStatus::Blocked => (
-                    " ✗",
-                    Style::default().fg(ROSE),
-                ),
-                _ => (
-                    " ○",
-                    Style::default().fg(STONE),
-                ),
+                crate::openspec::TaskStatus::Claimed => (" ●", Style::default().fg(AMBER)),
+                crate::openspec::TaskStatus::InProgress => (" ◐", Style::default().fg(AMBER)),
+                crate::openspec::TaskStatus::Blocked => (" ✗", Style::default().fg(ROSE)),
+                _ => (" ○", Style::default().fg(STONE)),
             };
             let max_title = inner_w.saturating_sub(icon.len() + task.id.len() + 2);
             let title = truncate_str(&task.title, max_title);
@@ -854,7 +874,10 @@ fn render_right_rail(frame: &mut Frame, area: Rect, state: &AppState, focus: Coc
     let ctx_text: Vec<Line> = if ctx_keys.is_empty() {
         vec![
             Line::from(Span::raw("")),
-            Line::from(Span::styled(" no shared context", Style::default().fg(STONE))),
+            Line::from(Span::styled(
+                " no shared context",
+                Style::default().fg(STONE),
+            )),
         ]
     } else {
         let mut lines: Vec<Line> = Vec::new();
@@ -892,12 +915,7 @@ fn sidebar_block(title: &str, title_color: Color, border_color: Color) -> Block<
 }
 
 /// Render a `label  value` metric line with right-aligned value appearance.
-fn metric_line<'a>(
-    name: &'a str,
-    val: &str,
-    label_style: Style,
-    value_style: Style,
-) -> Line<'a> {
+fn metric_line<'a>(name: &'a str, val: &str, label_style: Style, value_style: Style) -> Line<'a> {
     // Pad label to 6 chars for alignment.
     let padded_label = format!("{:<6}", name);
     Line::from(vec![
@@ -940,7 +958,10 @@ fn render_status_bar(
 
     let agent_span = Span::styled(
         format!(" {} ", session.agent_name),
-        Style::default().fg(AMBER).bg(CHARCOAL).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(AMBER)
+            .bg(CHARCOAL)
+            .add_modifier(Modifier::BOLD),
     );
     let model_span = Span::styled(model.to_string(), Style::default().fg(TAN).bg(CHARCOAL));
 
@@ -953,11 +974,11 @@ fn render_status_bar(
     );
 
     let focus_label = match focus {
-        CockpitFocus::Agents   => "Agents",
+        CockpitFocus::Agents => "Agents",
         CockpitFocus::Git => "Git",
-        CockpitFocus::Input    => "Broadcast",
+        CockpitFocus::Input => "Broadcast",
         CockpitFocus::Terminal => "Terminal",
-        CockpitFocus::Sidebar  => "Sidebar",
+        CockpitFocus::Sidebar => "Sidebar",
     };
     let focus_span = Span::styled(
         format!("focus: {}", focus_label),
@@ -969,10 +990,7 @@ fn render_status_bar(
     } else {
         " Tab:cycle  F1:help  F2:agent  F3:sessions  F5:refresh  F6:term  Ctrl+\\:quit "
     };
-    let keys_span = Span::styled(
-        keys_text,
-        Style::default().fg(STONE).bg(CHARCOAL),
-    );
+    let keys_span = Span::styled(keys_text, Style::default().fg(STONE).bg(CHARCOAL));
 
     let line = Line::from(vec![
         agent_span,
@@ -988,7 +1006,10 @@ fn render_status_bar(
         keys_span,
     ]);
 
-    frame.render_widget(Paragraph::new(line).style(Style::default().bg(CHARCOAL)), area);
+    frame.render_widget(
+        Paragraph::new(line).style(Style::default().bg(CHARCOAL)),
+        area,
+    );
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -1074,9 +1095,7 @@ fn agent_status_display(status: &AgentStatus) -> (String, Color) {
         AgentStatus::Idle => ("Idle".to_string(), SPROUT),
         AgentStatus::Thinking => ("Thinking…".to_string(), AMBER),
         AgentStatus::RunningTool { name } => (format!("▶ {}", name), AMBER),
-        AgentStatus::WaitingApproval { tool_name } => {
-            (format!("⚠ Approve: {}", tool_name), ROSE)
-        }
+        AgentStatus::WaitingApproval { tool_name } => (format!("⚠ Approve: {}", tool_name), ROSE),
         AgentStatus::Exited { code } => (format!("Exited ({})", code.unwrap_or(-1)), MUTED),
         AgentStatus::Error { message } => {
             let short = if message.len() > 30 {
@@ -1147,8 +1166,9 @@ mod tests {
 
     #[test]
     fn agent_status_display_running_tool_is_amber() {
-        let (label, color) =
-            agent_status_display(&AgentStatus::RunningTool { name: "shell".to_string() });
+        let (label, color) = agent_status_display(&AgentStatus::RunningTool {
+            name: "shell".to_string(),
+        });
         assert!(label.contains("shell"));
         assert_eq!(color, AMBER);
     }
@@ -1162,8 +1182,9 @@ mod tests {
 
     #[test]
     fn agent_status_display_error_is_rust() {
-        let (label, color) =
-            agent_status_display(&AgentStatus::Error { message: "boom".to_string() });
+        let (label, color) = agent_status_display(&AgentStatus::Error {
+            message: "boom".to_string(),
+        });
         assert!(label.contains("Error"));
         assert_eq!(color, ROSE);
     }
@@ -1186,19 +1207,23 @@ mod tests {
         assert!(agent_status_label(&AgentStatus::Idle).contains("Idle"));
         assert!(agent_status_label(&AgentStatus::Thinking).contains("Thinking"));
         assert!(
-            agent_status_label(&AgentStatus::RunningTool { name: "grep".into() })
-                .contains("grep")
+            agent_status_label(&AgentStatus::RunningTool {
+                name: "grep".into()
+            })
+            .contains("grep")
         );
         assert!(
-            agent_status_label(&AgentStatus::WaitingApproval { tool_name: "shell".into() })
-                .contains("shell")
+            agent_status_label(&AgentStatus::WaitingApproval {
+                tool_name: "shell".into()
+            })
+            .contains("shell")
         );
+        assert!(agent_status_label(&AgentStatus::Exited { code: Some(1) }).contains("Exited"));
         assert!(
-            agent_status_label(&AgentStatus::Exited { code: Some(1) }).contains("Exited")
-        );
-        assert!(
-            agent_status_label(&AgentStatus::Error { message: "oops".into() })
-                .contains("oops")
+            agent_status_label(&AgentStatus::Error {
+                message: "oops".into()
+            })
+            .contains("oops")
         );
     }
 
@@ -1207,19 +1232,19 @@ mod tests {
     #[test]
     fn cockpit_focus_tab_cycle() {
         assert_eq!(CockpitFocus::Agents.next(), CockpitFocus::Git);
-        assert_eq!(CockpitFocus::Git.next(),    CockpitFocus::Input);
-        assert_eq!(CockpitFocus::Input.next(),    CockpitFocus::Terminal);
+        assert_eq!(CockpitFocus::Git.next(), CockpitFocus::Input);
+        assert_eq!(CockpitFocus::Input.next(), CockpitFocus::Terminal);
         assert_eq!(CockpitFocus::Terminal.next(), CockpitFocus::Sidebar);
-        assert_eq!(CockpitFocus::Sidebar.next(),  CockpitFocus::Agents);
+        assert_eq!(CockpitFocus::Sidebar.next(), CockpitFocus::Agents);
     }
 
     #[test]
     fn cockpit_focus_shift_tab_cycle() {
-        assert_eq!(CockpitFocus::Agents.prev(),   CockpitFocus::Sidebar);
+        assert_eq!(CockpitFocus::Agents.prev(), CockpitFocus::Sidebar);
         assert_eq!(CockpitFocus::Git.prev(), CockpitFocus::Agents);
-        assert_eq!(CockpitFocus::Input.prev(),    CockpitFocus::Git);
+        assert_eq!(CockpitFocus::Input.prev(), CockpitFocus::Git);
         assert_eq!(CockpitFocus::Terminal.prev(), CockpitFocus::Input);
-        assert_eq!(CockpitFocus::Sidebar.prev(),  CockpitFocus::Terminal);
+        assert_eq!(CockpitFocus::Sidebar.prev(), CockpitFocus::Terminal);
     }
 
     #[test]
@@ -1237,7 +1262,11 @@ mod tests {
         for _ in 0..5 {
             f = f.prev();
         }
-        assert_eq!(f, CockpitFocus::Input, "5 Shift+Tabs should wrap back to Input");
+        assert_eq!(
+            f,
+            CockpitFocus::Input,
+            "5 Shift+Tabs should wrap back to Input"
+        );
     }
 
     // ── Left-rail helpers ─────────────────────────────────────────────────────
@@ -1297,10 +1326,7 @@ mod tests {
 
     #[test]
     fn wrap_text_wraps() {
-        assert_eq!(
-            wrap_text("hello world foo", 11),
-            vec!["hello world", "foo"],
-        );
+        assert_eq!(wrap_text("hello world foo", 11), vec!["hello world", "foo"],);
     }
 
     #[test]

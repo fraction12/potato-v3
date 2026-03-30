@@ -45,7 +45,7 @@ pub fn render_dashboard(frame: &mut Frame, area: Rect, state: &AppState) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3), // title bar
-            Constraint::Min(0),   // main content
+            Constraint::Min(0),    // main content
             Constraint::Length(1), // footer
         ])
         .split(area);
@@ -104,11 +104,7 @@ fn render_content(frame: &mut Frame, area: Rect, state: &AppState) {
 
 // ── Left menu rail ────────────────────────────────────────────────────────────
 
-fn render_menu(
-    frame: &mut Frame,
-    area: Rect,
-    dash: &crate::app::state::DashboardState,
-) {
+fn render_menu(frame: &mut Frame, area: Rect, dash: &crate::app::state::DashboardState) {
     let focused = dash.focus == DashboardFocus::Menu;
     let border_style = if focused {
         Style::default().fg(AMBER)
@@ -169,9 +165,12 @@ fn render_menu(
     let mut list_state = ListState::default();
     list_state.select(Some(visual_index));
 
-    let list = List::new(items)
-        .block(block)
-        .highlight_style(Style::default().fg(CREAM).bg(CHARCOAL).add_modifier(Modifier::BOLD));
+    let list = List::new(items).block(block).highlight_style(
+        Style::default()
+            .fg(CREAM)
+            .bg(CHARCOAL)
+            .add_modifier(Modifier::BOLD),
+    );
 
     frame.render_stateful_widget(list, area, &mut list_state);
 }
@@ -221,7 +220,10 @@ fn render_detail_roast(frame: &mut Frame, area: Rect, state: &AppState) {
     // Helper: draw a subtle section underline.
     let section_under = |width: u16| -> Line<'static> {
         let dashes = "─".repeat((width as usize).saturating_sub(2).min(40));
-        Line::from(Span::styled(format!("  {}", dashes), Style::default().fg(STONE)))
+        Line::from(Span::styled(
+            format!("  {}", dashes),
+            Style::default().fg(STONE),
+        ))
     };
 
     // Agents summary.
@@ -236,7 +238,11 @@ fn render_detail_roast(frame: &mut Frame, area: Rect, state: &AppState) {
         } else {
             ("○", MUTED)
         };
-        let status = if agent.available { "ready" } else { "not found" };
+        let status = if agent.available {
+            "ready"
+        } else {
+            "not found"
+        };
         lines.push(Line::from(vec![
             Span::styled(format!("    {} ", indicator), Style::default().fg(fg)),
             Span::styled(
@@ -263,10 +269,7 @@ fn render_detail_roast(frame: &mut Frame, area: Rect, state: &AppState) {
     } else {
         for (i, role) in dash.roles.iter().enumerate() {
             lines.push(Line::from(vec![
-                Span::styled(
-                    format!("    Pane {} ", i + 1),
-                    Style::default().fg(TAN),
-                ),
+                Span::styled(format!("    Pane {} ", i + 1), Style::default().fg(TAN)),
                 Span::styled(&role.name, Style::default().fg(CREAM)),
             ]));
         }
@@ -333,10 +336,7 @@ fn render_detail_roast(frame: &mut Frame, area: Rect, state: &AppState) {
                     Style::default().fg(BRASS).bg(bg),
                 ),
                 Span::styled(date, Style::default().fg(fg).bg(bg)),
-                Span::styled(
-                    format!("  {}", cost),
-                    Style::default().fg(AMBER).bg(bg),
-                ),
+                Span::styled(format!("  {}", cost), Style::default().fg(AMBER).bg(bg)),
             ]));
         }
     }
@@ -408,7 +408,10 @@ fn render_detail_roles(frame: &mut Frame, area: Rect, state: &AppState) {
             )));
         }
         if result.is_empty() {
-            result.push(Line::from(Span::styled(format!("{}...", " ".repeat(indent)), style)));
+            result.push(Line::from(Span::styled(
+                format!("{}...", " ".repeat(indent)),
+                style,
+            )));
         }
         result
     };
@@ -452,7 +455,10 @@ fn render_detail_roles(frame: &mut Frame, area: Rect, state: &AppState) {
                 ),
                 Span::styled(
                     role.name.clone(),
-                    Style::default().fg(CREAM).bg(bg).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(CREAM)
+                        .bg(bg)
+                        .add_modifier(Modifier::BOLD),
                 ),
             ]));
             // Show full instructions, wrapped.
@@ -500,7 +506,9 @@ fn render_detail_roles(frame: &mut Frame, area: Rect, state: &AppState) {
         result
     };
 
-    let input_style = Style::default().fg(CREAM).add_modifier(Modifier::UNDERLINED);
+    let input_style = Style::default()
+        .fg(CREAM)
+        .add_modifier(Modifier::UNDERLINED);
 
     match &dash.input {
         DashboardInput::RoleName(buf) => {
@@ -510,21 +518,34 @@ fn render_detail_roles(frame: &mut Frame, area: Rect, state: &AppState) {
             let title_str = "─ Role Name ";
             let fill_count = box_width.saturating_sub(title_str.len() + 2);
             let top = format!("  ┌{}{}┐", title_str, "─".repeat(fill_count));
-            let content = if buf.is_empty() { "Type here...".to_string() } else { buf.clone() };
+            let content = if buf.is_empty() {
+                "Type here...".to_string()
+            } else {
+                buf.clone()
+            };
             let padded = format!("{:<width$}", content, width = box_width);
             let mid = format!("  │ {} │", &padded[..box_width.min(padded.len())]);
             let bot = format!("  └{}┘", "─".repeat(box_width + 2));
             let content_style = if buf.is_empty() {
                 Style::default().fg(MUTED)
             } else {
-                Style::default().fg(CREAM).add_modifier(Modifier::UNDERLINED)
+                Style::default()
+                    .fg(CREAM)
+                    .add_modifier(Modifier::UNDERLINED)
             };
             lines.push(Line::from(Span::styled(top, Style::default().fg(AMBER))));
             lines.push(Line::from(vec![
                 Span::styled("  │ ", Style::default().fg(AMBER)),
                 Span::styled(content, content_style),
                 Span::styled(
-                    format!("{} │", " ".repeat(box_width.saturating_sub(if buf.is_empty() { 12 } else { buf.len().min(box_width) }))),
+                    format!(
+                        "{} │",
+                        " ".repeat(box_width.saturating_sub(if buf.is_empty() {
+                            12
+                        } else {
+                            buf.len().min(box_width)
+                        }))
+                    ),
                     Style::default().fg(AMBER),
                 ),
             ]));
@@ -538,20 +559,33 @@ fn render_detail_roles(frame: &mut Frame, area: Rect, state: &AppState) {
             lines.push(Line::from(""));
             lines.push(Line::from(vec![
                 Span::styled("  Role: ", Style::default().fg(TAN)),
-                Span::styled(name.to_string(), Style::default().fg(CREAM).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    name.to_string(),
+                    Style::default().fg(CREAM).add_modifier(Modifier::BOLD),
+                ),
             ]));
             // Bordered input box for role prompt.
             let box_width = (inner.width as usize).saturating_sub(6).min(48);
             let title_str = "─ Instructions ";
             let fill_count = box_width.saturating_sub(title_str.len() + 2);
             let top = format!("  ┌{}{}┐", title_str, "─".repeat(fill_count));
-            let content = if prompt.is_empty() { "Type here...".to_string() } else { prompt.clone() };
-            let content_len = if prompt.is_empty() { 12 } else { prompt.len().min(box_width) };
+            let content = if prompt.is_empty() {
+                "Type here...".to_string()
+            } else {
+                prompt.clone()
+            };
+            let content_len = if prompt.is_empty() {
+                12
+            } else {
+                prompt.len().min(box_width)
+            };
             let bot = format!("  └{}┘", "─".repeat(box_width + 2));
             let content_style = if prompt.is_empty() {
                 Style::default().fg(MUTED)
             } else {
-                Style::default().fg(CREAM).add_modifier(Modifier::UNDERLINED)
+                Style::default()
+                    .fg(CREAM)
+                    .add_modifier(Modifier::UNDERLINED)
             };
             lines.push(Line::from(Span::styled(top, Style::default().fg(AMBER))));
             lines.push(Line::from(vec![
@@ -851,13 +885,25 @@ pub(crate) fn build_settings_lines(state: &AppState) -> Vec<Line<'static>> {
     lines.push(kv("Session DB", &cfg.db_path));
     lines.push(kv("CWD", &dash.path_snapshots.cwd));
 
-    let potato_status = if dash.path_snapshots.potato_exists { "found" } else { "not found" };
+    let potato_status = if dash.path_snapshots.potato_exists {
+        "found"
+    } else {
+        "not found"
+    };
     lines.push(kv(".potato/", potato_status));
 
-    let openspec_status = if dash.path_snapshots.openspec_exists { "found" } else { "not found" };
+    let openspec_status = if dash.path_snapshots.openspec_exists {
+        "found"
+    } else {
+        "not found"
+    };
     lines.push(kv("openspec/", openspec_status));
 
-    let mcp_json_status = if dash.path_snapshots.mcp_json_exists { "found" } else { "not found" };
+    let mcp_json_status = if dash.path_snapshots.mcp_json_exists {
+        "found"
+    } else {
+        "not found"
+    };
     lines.push(kv(".mcp.json", mcp_json_status));
     lines.push(separator());
     lines.push(section_div());
@@ -956,15 +1002,9 @@ fn render_footer(frame: &mut Frame, area: Rect, state: &AppState) {
         (DashboardMenuItem::RoastPotato, DashboardFocus::Menu) => {
             "↑↓ navigate  Tab details  Enter launch  Ctrl+\\ quit"
         }
-        (_, DashboardFocus::Menu) => {
-            "↑↓ navigate  Tab details  Enter select  Ctrl+\\ quit"
-        }
-        (DashboardMenuItem::Settings, DashboardFocus::Detail) => {
-            "↑↓ scroll  Tab menu  Esc back"
-        }
-        (_, DashboardFocus::Detail) => {
-            "↑↓ navigate  Tab menu  Esc back  Enter select"
-        }
+        (_, DashboardFocus::Menu) => "↑↓ navigate  Tab details  Enter select  Ctrl+\\ quit",
+        (DashboardMenuItem::Settings, DashboardFocus::Detail) => "↑↓ scroll  Tab menu  Esc back",
+        (_, DashboardFocus::Detail) => "↑↓ navigate  Tab menu  Esc back  Enter select",
     };
 
     let footer = Paragraph::new(Span::styled(hints, Style::default().fg(BRASS)))
@@ -978,7 +1018,10 @@ fn render_footer(frame: &mut Frame, area: Rect, state: &AppState) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::state::{AgentInfo, DashboardFocus, DashboardState, DashboardMenuItem, RoleDefinition, SessionSummary};
+    use crate::app::state::{
+        AgentInfo, DashboardFocus, DashboardMenuItem, DashboardState, RoleDefinition,
+        SessionSummary,
+    };
     use chrono::Utc;
 
     fn make_dashboard_state() -> AppState {
@@ -1110,9 +1153,16 @@ mod tests {
 
     /// Helper: collect all lines into a single string for substring matching.
     fn lines_to_string(lines: &[ratatui::text::Line<'_>]) -> String {
-        lines.iter().map(|l| {
-            l.spans.iter().map(|s| s.content.as_ref()).collect::<String>()
-        }).collect::<Vec<_>>().join("\n")
+        lines
+            .iter()
+            .map(|l| {
+                l.spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     #[test]
@@ -1152,11 +1202,20 @@ mod tests {
         let lines = super::build_settings_lines(&state);
         let text = lines_to_string(&lines);
         assert!(text.contains("PATHS"), "missing PATHS header");
-        assert!(text.contains("/home/user/.potato/config.toml"), "missing config path");
-        assert!(text.contains("/home/user/projects/potato"), "missing CWD from snapshot");
+        assert!(
+            text.contains("/home/user/.potato/config.toml"),
+            "missing config path"
+        );
+        assert!(
+            text.contains("/home/user/projects/potato"),
+            "missing CWD from snapshot"
+        );
         // .potato/ should be "found", .mcp.json should be "not found" per snapshot
         assert!(text.contains(".potato/: found"), "missing .potato/ status");
-        assert!(text.contains(".mcp.json: not found"), "missing .mcp.json status");
+        assert!(
+            text.contains(".mcp.json: not found"),
+            "missing .mcp.json status"
+        );
     }
 
     #[test]
@@ -1168,13 +1227,16 @@ mod tests {
         assert!(text.contains("/tmp/potato.sock"), "missing socket path");
         // No InterSessionState set up → panes 0, roles "none"
         assert!(text.contains("Registered Panes: 0"), "missing pane count");
-        assert!(text.contains("Active Roles: none"), "missing roles when ISS absent");
+        assert!(
+            text.contains("Active Roles: none"),
+            "missing roles when ISS absent"
+        );
     }
 
     #[test]
     fn settings_lines_mcp_shows_live_roles() {
-        use std::sync::{Arc, Mutex};
         use crate::mcp::state::{InterSessionState, PaneRole};
+        use std::sync::{Arc, Mutex};
 
         let mut state = make_settings_state();
         let iss = Arc::new(Mutex::new(InterSessionState::default()));
@@ -1182,14 +1244,29 @@ mod tests {
             let mut st = iss.lock().unwrap();
             st.register_pane(0);
             st.register_pane(1);
-            st.set_role(0, PaneRole { name: "Planner".to_string(), description: String::new() });
-            st.set_role(1, PaneRole { name: "Worker".to_string(), description: String::new() });
+            st.set_role(
+                0,
+                PaneRole {
+                    name: "Planner".to_string(),
+                    description: String::new(),
+                },
+            );
+            st.set_role(
+                1,
+                PaneRole {
+                    name: "Worker".to_string(),
+                    description: String::new(),
+                },
+            );
         }
         state.inter_session_state = Some(iss);
 
         let lines = super::build_settings_lines(&state);
         let text = lines_to_string(&lines);
-        assert!(text.contains("Registered Panes: 2"), "should show 2 live panes");
+        assert!(
+            text.contains("Registered Panes: 2"),
+            "should show 2 live panes"
+        );
         assert!(text.contains("Planner"), "should show Planner role");
         assert!(text.contains("Worker"), "should show Worker role");
     }
@@ -1208,7 +1285,14 @@ mod tests {
         let lines = super::build_settings_lines(&state);
         let text = lines_to_string(&lines);
         // 6 sections: GENERAL, AGENTS, KEYBINDS, PATHS, MCP, PERMISSIONS
-        let section_headers = ["GENERAL", "AGENTS", "KEYBINDS", "PATHS", "MCP", "PERMISSIONS"];
+        let section_headers = [
+            "GENERAL",
+            "AGENTS",
+            "KEYBINDS",
+            "PATHS",
+            "MCP",
+            "PERMISSIONS",
+        ];
         for header in &section_headers {
             assert!(text.contains(header), "missing section: {}", header);
         }

@@ -18,8 +18,8 @@ mod log;
 mod mcp;
 mod metrics;
 mod openspec;
-mod roles;
 mod pty;
+mod roles;
 mod session;
 mod terminal;
 mod ui;
@@ -39,17 +39,17 @@ use crossterm::{
 use ratatui::DefaultTerminal;
 use uuid::Uuid;
 
+use crate::pty::{TurnHandle, key_event_to_bytes};
+use adapters::{AgentAdapter, claude::ClaudeAdapter, codex::CodexAdapter, generic::GenericAdapter};
 use app::message::Message;
+use app::state::{AgentInfo, DashboardState};
 use app::state::{AppScreen, AppState, CockpitFocus, DashboardFocus};
 use app::update::update;
 use config::load_config;
 use session::{SessionStore, discover_historical_sessions, unix_now};
 use terminal::events::event_stream;
 use terminal::panic_hook::install_panic_hook;
-use adapters::{AgentAdapter, claude::ClaudeAdapter, codex::CodexAdapter, generic::GenericAdapter};
-use app::state::{AgentInfo, DashboardState};
 use ui::screens::{dashboard::render_dashboard, session::render_session};
-use crate::pty::{TurnHandle, key_event_to_bytes};
 
 // ── CLI arguments ─────────────────────────────────────────────────────────────
 
@@ -344,10 +344,13 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                                 pane.role_name = Some(role.name.clone());
                                 if let Some(ref iss) = state.inter_session_state {
                                     if let Ok(mut st) = iss.lock() {
-                                        st.set_role(pane.id, crate::mcp::state::PaneRole {
-                                            name: role.name.clone(),
-                                            description: role.prompt.clone(),
-                                        });
+                                        st.set_role(
+                                            pane.id,
+                                            crate::mcp::state::PaneRole {
+                                                name: role.name.clone(),
+                                                description: role.prompt.clone(),
+                                            },
+                                        );
                                     }
                                 }
                             }
@@ -404,7 +407,8 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                                                 pending.push(crate::mcp::injection::PendingEnter {
                                                     pane_index: i,
                                                     written_at_tick: state.tick_count,
-                                                    delay_ticks: crate::mcp::injection::ENTER_DELAY_TICKS,
+                                                    delay_ticks:
+                                                        crate::mcp::injection::ENTER_DELAY_TICKS,
                                                 });
                                             }
                                         }
@@ -426,7 +430,6 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                 }
                 // Old key handling removed — now in src/input/ module.
             } // end if let Message::Key
-
 
             if let Message::Mouse(ref mouse) = m {
                 if matches!(state.screen, AppScreen::Session(_)) {
@@ -548,7 +551,8 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                     let _ = crate::mcp::config_writer::remove_mcp_config(&cwd);
                 }
             }
-            if had_panes && state.panes.is_empty() && matches!(state.screen, AppScreen::Session(_)) {
+            if had_panes && state.panes.is_empty() && matches!(state.screen, AppScreen::Session(_))
+            {
                 tracing::info!("All panes closed, returning to dashboard");
                 state.screen = AppScreen::Dashboard(DashboardState {
                     available_agents: detect_agents(),
@@ -595,10 +599,7 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
 /// Otherwise creates a new session with `--session-id <uuid>`.
 ///
 /// Returns the session id on success.
-fn spawn_claude_pane(
-    state: &mut AppState,
-    resume_id: Option<&str>,
-) -> Result<String, String> {
+fn spawn_claude_pane(state: &mut AppState, resume_id: Option<&str>) -> Result<String, String> {
     let binary = which::which("claude").map_err(|_| "Claude binary not found".to_string())?;
 
     if !state.panes.can_open() {
@@ -615,14 +616,19 @@ fn spawn_claude_pane(
     let launch_cwd = std::env::current_dir().ok();
 
     let (session_id, session_args_owned): (String, Vec<String>) = if let Some(rid) = resume_id {
-        (rid.to_string(), vec![
-            "--resume".into(), rid.into(),
-            "--dangerously-skip-permissions".into(),
-        ])
+        (
+            rid.to_string(),
+            vec![
+                "--resume".into(),
+                rid.into(),
+                "--dangerously-skip-permissions".into(),
+            ],
+        )
     } else {
         let id = uuid::Uuid::new_v4().to_string();
         let args = vec![
-            "--session-id".into(), id.clone(),
+            "--session-id".into(),
+            id.clone(),
             "--dangerously-skip-permissions".into(),
         ];
         (id, args)
@@ -706,7 +712,10 @@ fn spawn_claude_pane(
             .as_deref()
             .map(crate::claude_log::project_dir_name)
             .unwrap_or_default();
-        let cwd_str = launch_cwd.as_deref().and_then(|p| p.to_str()).map(str::to_string);
+        let cwd_str = launch_cwd
+            .as_deref()
+            .and_then(|p| p.to_str())
+            .map(str::to_string);
         let now = unix_now();
         if let Err(e) = store.upsert_session(
             &session_id,
@@ -715,8 +724,11 @@ fn spawn_claude_pane(
             None,
             "",
             cwd_str.as_deref(),
-            0, 0, 0,
-            now, now,
+            0,
+            0,
+            0,
+            now,
+            now,
         ) {
             tracing::warn!("Failed to create session row: {e}");
         }
@@ -741,9 +753,15 @@ fn spawn_claude_pane(
                     tracing::info!("Wrote .mcp.json (shared potato MCP entry)");
                     true
                 }
-            } else { false }
-        } else { false }
-    } else { false };
+            } else {
+                false
+            }
+        } else {
+            false
+        }
+    } else {
+        false
+    };
 
     // ── Auto-fill broadcast bar with collaboration prompt ───────────────────
     // When the second pane spawns, pre-fill the input (broadcast) bar with
@@ -793,8 +811,8 @@ fn spawn_agent_pane(
     match adapter {
         "claude" => spawn_claude_pane(state, resume_id),
         "codex" => {
-            use crate::adapters::codex::CodexAdapter;
             use crate::adapters::AgentAdapter;
+            use crate::adapters::codex::CodexAdapter;
 
             let codex = CodexAdapter;
             let binary = codex
@@ -813,7 +831,8 @@ fn spawn_agent_pane(
 
             let launch_cwd = std::env::current_dir().ok();
 
-            let (session_id, spawn_args_owned): (String, Vec<String>) = if let Some(rid) = resume_id {
+            let (session_id, spawn_args_owned): (String, Vec<String>) = if let Some(rid) = resume_id
+            {
                 (rid.to_string(), vec!["resume".into(), rid.into()])
             } else {
                 let id = uuid::Uuid::new_v4().to_string();
@@ -872,8 +891,11 @@ fn spawn_agent_pane(
                     None,
                     "",
                     launch_cwd.as_deref().and_then(|p| p.to_str()),
-                    0, 0, 0,
-                    now, now,
+                    0,
+                    0,
+                    0,
+                    now,
+                    now,
                 ) {
                     tracing::warn!("Failed to create codex session row: {e}");
                 }
@@ -885,8 +907,8 @@ fn spawn_agent_pane(
         }
         other => {
             // Generic adapter — spawn the binary directly as a PTY.
-            use crate::adapters::generic::GenericAdapter;
             use crate::adapters::AgentAdapter;
+            use crate::adapters::generic::GenericAdapter;
 
             let generic = GenericAdapter::new(other);
             let binary = generic
@@ -966,7 +988,8 @@ fn drain_inject_requests(state: &mut AppState) {
                         Ok(true) => {
                             tracing::info!(
                                 "Injected text from pane {} to pane {} (Enter pending)",
-                                req.from_pane, req.to_pane
+                                req.from_pane,
+                                req.to_pane
                             );
                             if let Ok(mut pending) = PENDING_ENTERS.lock() {
                                 pending.push(crate::mcp::injection::PendingEnter {
@@ -1005,7 +1028,10 @@ fn drain_inject_requests(state: &mut AppState) {
                             if let Err(e) = pty.write_input(b"\r") {
                                 tracing::warn!("Failed to send Enter to pane: {e}");
                             } else {
-                                tracing::info!("Sent deferred Enter to pane index {}", p.pane_index);
+                                tracing::info!(
+                                    "Sent deferred Enter to pane index {}",
+                                    p.pane_index
+                                );
                             }
                         }
                     }
@@ -1023,7 +1049,11 @@ fn drain_inject_requests(state: &mut AppState) {
 fn sync_mcp_roles_to_panes(state: &mut AppState) {
     let roles: Vec<(u64, crate::mcp::state::PaneRole)> = match state.inter_session_state {
         Some(ref inter) => match inter.lock() {
-            Ok(st) => st.list_roles().into_iter().map(|(id, r)| (id, r.clone())).collect(),
+            Ok(st) => st
+                .list_roles()
+                .into_iter()
+                .map(|(id, r)| (id, r.clone()))
+                .collect(),
             Err(_) => return,
         },
         None => return,
@@ -1057,19 +1087,23 @@ fn sync_openspec(state: &mut AppState) {
     if changed {
         if let (Some(openspec), Some(iss)) = (&state.openspec, &state.inter_session_state) {
             let tasks = openspec.open_tasks();
-            let snapshots: Vec<mcp::state::OpenSpecTaskSnapshot> = tasks.iter().map(|t| {
-                mcp::state::OpenSpecTaskSnapshot {
+            let snapshots: Vec<mcp::state::OpenSpecTaskSnapshot> = tasks
+                .iter()
+                .map(|t| mcp::state::OpenSpecTaskSnapshot {
                     id: t.id.clone(),
                     title: t.title.clone(),
                     status: t.status.to_string(),
                     phase: t.phase.clone(),
                     severity: t.severity.clone(),
-                }
-            }).collect();
+                })
+                .collect();
             if let Ok(mut st) = iss.lock() {
                 st.openspec_tasks = snapshots;
             }
-            tracing::debug!("OpenSpec task snapshot refreshed ({} open tasks)", tasks.len());
+            tracing::debug!(
+                "OpenSpec task snapshot refreshed ({} open tasks)",
+                tasks.len()
+            );
         }
     }
 }
@@ -1088,7 +1122,9 @@ fn sync_all_panes(state: &mut AppState) {
             Some(t) => t,
             None => continue,
         };
-        let Ok(changed) = tracker.poll() else { continue; };
+        let Ok(changed) = tracker.poll() else {
+            continue;
+        };
         if !changed {
             continue;
         }
@@ -1117,13 +1153,17 @@ fn sync_all_panes(state: &mut AppState) {
             let title = if !snapshot.title.is_empty() {
                 snapshot.title.clone()
             } else {
-                state.rail_sessions.iter()
+                state
+                    .rail_sessions
+                    .iter()
                     .find(|s| s.id == session_id)
                     .map(|s| s.title.clone())
                     .unwrap_or_default()
             };
 
-            let old_title = state.rail_sessions.iter()
+            let old_title = state
+                .rail_sessions
+                .iter()
                 .find(|s| s.id == session_id)
                 .map(|s| s.title.clone())
                 .unwrap_or_default();
@@ -1138,11 +1178,15 @@ fn sync_all_panes(state: &mut AppState) {
                 "claude",
                 snapshot.model.as_deref(),
                 &title,
-                std::env::current_dir().ok().as_deref().and_then(|p| p.to_str()),
+                std::env::current_dir()
+                    .ok()
+                    .as_deref()
+                    .and_then(|p| p.to_str()),
                 snapshot.usage.input_tokens,
                 snapshot.usage.output_tokens,
                 snapshot.turns,
-                now, now,
+                now,
+                now,
             ) {
                 tracing::warn!("sync pane {}: upsert_session failed: {e}", i);
             }
@@ -1180,11 +1224,13 @@ fn apply_pty_event(state: &mut AppState, event: crate::events::AgentEvent) {
         }
         AgentEvent::Raw { payload } => {
             // Raw lines are appended as assistant text; delegate to reducer.
-            let text_event = AgentEvent::TextDelta { text: {
-                let mut s = payload.clone();
-                s.push('\n');
-                s
-            }};
+            let text_event = AgentEvent::TextDelta {
+                text: {
+                    let mut s = payload.clone();
+                    s.push('\n');
+                    s
+                },
+            };
             if let Some(session) = state.session_mut() {
                 app::session_reducer::apply_event(session, text_event, chrono::Utc::now());
             }
@@ -1207,7 +1253,12 @@ fn apply_pty_event(state: &mut AppState, event: crate::events::AgentEvent) {
             };
             state.tool_output_panel.add_entry(&record);
         }
-        AgentEvent::ToolDone { id, output, duration_ms, success } => {
+        AgentEvent::ToolDone {
+            id,
+            output,
+            duration_ms,
+            success,
+        } => {
             state.tool_output_panel.update_entry(
                 id,
                 Some(output.clone()),
@@ -1216,7 +1267,9 @@ fn apply_pty_event(state: &mut AppState, event: crate::events::AgentEvent) {
             );
         }
         AgentEvent::ToolError { id, error } => {
-            state.tool_output_panel.update_entry(id, Some(error.clone()), Some(0), Some(false));
+            state
+                .tool_output_panel
+                .update_entry(id, Some(error.clone()), Some(0), Some(false));
         }
         _ => {}
     }
@@ -1295,44 +1348,45 @@ async fn main() -> Result<()> {
 
     // Start MCP bridge (UDS listener for inter-session communication).
     // Open project-scoped persistent store at `<cwd>/.potato/state.db`.
-    let project_store: Option<Arc<std::sync::Mutex<mcp::project_store::ProjectStore>>> = match std::env::current_dir() {
-        Ok(cwd) => match mcp::project_store::ProjectStore::open(&cwd) {
-            Ok(ps) => {
-                tracing::info!("Project store opened at {}/.potato/state.db", cwd.display());
-                Some(Arc::new(std::sync::Mutex::new(ps)))
-            }
+    let project_store: Option<Arc<std::sync::Mutex<mcp::project_store::ProjectStore>>> =
+        match std::env::current_dir() {
+            Ok(cwd) => match mcp::project_store::ProjectStore::open(&cwd) {
+                Ok(ps) => {
+                    tracing::info!("Project store opened at {}/.potato/state.db", cwd.display());
+                    Some(Arc::new(std::sync::Mutex::new(ps)))
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to open project store: {e}");
+                    None
+                }
+            },
             Err(e) => {
-                tracing::warn!("Failed to open project store: {e}");
+                tracing::warn!("Could not determine cwd for project store: {e}");
                 None
             }
-        },
-        Err(e) => {
-            tracing::warn!("Could not determine cwd for project store: {e}");
-            None
-        }
-    };
-    let inter_state = Arc::new(std::sync::Mutex::new(
-        match project_store {
-            Some(ref ps) => mcp::state::InterSessionState::with_store(Arc::clone(ps)),
-            None => mcp::state::InterSessionState::new(),
-        }
-    ));
+        };
+    let inter_state = Arc::new(std::sync::Mutex::new(match project_store {
+        Some(ref ps) => mcp::state::InterSessionState::with_store(Arc::clone(ps)),
+        None => mcp::state::InterSessionState::new(),
+    }));
     let (inject_tx, inject_rx) = tokio::sync::mpsc::unbounded_channel();
-    let (_mcp_bridge, mcp_socket_path) = mcp::bridge::McpBridge::start(Arc::clone(&inter_state), inject_tx)?;
+    let (_mcp_bridge, mcp_socket_path) =
+        mcp::bridge::McpBridge::start(Arc::clone(&inter_state), inject_tx)?;
 
     // Initialize OpenSpec watcher if `openspec/changes/` exists.
-    let openspec_watcher = std::env::current_dir()
-        .ok()
-        .and_then(|cwd| {
-            tracing::info!("Looking for OpenSpec at {}/openspec/changes/", cwd.display());
-            let w = openspec::OpenSpecWatcher::new(&cwd);
-            if w.is_some() {
-                tracing::info!("OpenSpec watcher active");
-            } else {
-                tracing::warn!("No OpenSpec changes found in {}", cwd.display());
-            }
-            w
-        });
+    let openspec_watcher = std::env::current_dir().ok().and_then(|cwd| {
+        tracing::info!(
+            "Looking for OpenSpec at {}/openspec/changes/",
+            cwd.display()
+        );
+        let w = openspec::OpenSpecWatcher::new(&cwd);
+        if w.is_some() {
+            tracing::info!("OpenSpec watcher active");
+        } else {
+            tracing::warn!("No OpenSpec changes found in {}", cwd.display());
+        }
+        w
+    });
 
     // Load persisted role definitions from `.potato/roles.toml`.
     let project_roles = std::env::current_dir()
@@ -1363,15 +1417,16 @@ async fn main() -> Result<()> {
     // Seed OpenSpec snapshot into InterSessionState so agents can read it immediately.
     if let (Some(openspec), Some(iss)) = (&state.openspec, &state.inter_session_state) {
         let tasks = openspec.open_tasks();
-        let snapshots: Vec<mcp::state::OpenSpecTaskSnapshot> = tasks.iter().map(|t| {
-            mcp::state::OpenSpecTaskSnapshot {
+        let snapshots: Vec<mcp::state::OpenSpecTaskSnapshot> = tasks
+            .iter()
+            .map(|t| mcp::state::OpenSpecTaskSnapshot {
                 id: t.id.clone(),
                 title: t.title.clone(),
                 status: t.status.to_string(),
                 phase: t.phase.clone(),
                 severity: t.severity.clone(),
-            }
-        }).collect();
+            })
+            .collect();
         if let Ok(mut st) = iss.lock() {
             st.openspec_tasks = snapshots;
         }
@@ -1447,42 +1502,95 @@ mod tests {
     #[test]
     fn collab_prompt_includes_role_names_in_pane_labels() {
         let panes = vec![
-            PaneSummary { id: 0, agent_name: "claude".into(), role_name: Some("Planner".into()) },
-            PaneSummary { id: 1, agent_name: "claude".into(), role_name: Some("Worker".into()) },
+            PaneSummary {
+                id: 0,
+                agent_name: "claude".into(),
+                role_name: Some("Planner".into()),
+            },
+            PaneSummary {
+                id: 1,
+                agent_name: "claude".into(),
+                role_name: Some("Worker".into()),
+            },
         ];
         let prompt = build_collaboration_prompt_from_panes(&panes);
-        assert!(prompt.contains("Pane 0 (claude, role: Planner)"), "missing pane 0 role label");
-        assert!(prompt.contains("Pane 1 (claude, role: Worker)"), "missing pane 1 role label");
+        assert!(
+            prompt.contains("Pane 0 (claude, role: Planner)"),
+            "missing pane 0 role label"
+        );
+        assert!(
+            prompt.contains("Pane 1 (claude, role: Worker)"),
+            "missing pane 1 role label"
+        );
     }
 
     #[test]
     fn collab_prompt_with_roles_tells_agents_not_to_pick() {
         let panes = vec![
-            PaneSummary { id: 0, agent_name: "claude".into(), role_name: Some("Planner".into()) },
-            PaneSummary { id: 1, agent_name: "claude".into(), role_name: Some("Worker".into()) },
+            PaneSummary {
+                id: 0,
+                agent_name: "claude".into(),
+                role_name: Some("Planner".into()),
+            },
+            PaneSummary {
+                id: 1,
+                agent_name: "claude".into(),
+                role_name: Some("Worker".into()),
+            },
         ];
         let prompt = build_collaboration_prompt_from_panes(&panes);
-        assert!(prompt.contains("already been assigned"), "should tell agents role is pre-assigned");
-        assert!(prompt.contains("Do NOT pick a different role"), "should forbid self-selection");
-        assert!(!prompt.contains("Before picking a role"), "should NOT include self-selection instructions");
+        assert!(
+            prompt.contains("already been assigned"),
+            "should tell agents role is pre-assigned"
+        );
+        assert!(
+            prompt.contains("Do NOT pick a different role"),
+            "should forbid self-selection"
+        );
+        assert!(
+            !prompt.contains("Before picking a role"),
+            "should NOT include self-selection instructions"
+        );
     }
 
     #[test]
     fn collab_prompt_without_roles_allows_self_selection() {
         let panes = vec![
-            PaneSummary { id: 0, agent_name: "claude".into(), role_name: None },
-            PaneSummary { id: 1, agent_name: "claude".into(), role_name: None },
+            PaneSummary {
+                id: 0,
+                agent_name: "claude".into(),
+                role_name: None,
+            },
+            PaneSummary {
+                id: 1,
+                agent_name: "claude".into(),
+                role_name: None,
+            },
         ];
         let prompt = build_collaboration_prompt_from_panes(&panes);
-        assert!(prompt.contains("Before picking a role"), "should include self-selection instructions");
-        assert!(!prompt.contains("already been assigned"), "should NOT say pre-assigned");
+        assert!(
+            prompt.contains("Before picking a role"),
+            "should include self-selection instructions"
+        );
+        assert!(
+            !prompt.contains("already been assigned"),
+            "should NOT say pre-assigned"
+        );
     }
 
     #[test]
     fn collab_prompt_no_role_labels_without_roles() {
         let panes = vec![
-            PaneSummary { id: 0, agent_name: "claude".into(), role_name: None },
-            PaneSummary { id: 1, agent_name: "codex".into(), role_name: None },
+            PaneSummary {
+                id: 0,
+                agent_name: "claude".into(),
+                role_name: None,
+            },
+            PaneSummary {
+                id: 1,
+                agent_name: "codex".into(),
+                role_name: None,
+            },
         ];
         let prompt = build_collaboration_prompt_from_panes(&panes);
         assert!(prompt.contains("Pane 0 (claude)"), "should show agent only");
@@ -1494,20 +1602,39 @@ mod tests {
     fn collab_prompt_mixed_roles_treats_as_has_roles() {
         // If even one pane has a role, use pre-assigned instructions
         let panes = vec![
-            PaneSummary { id: 0, agent_name: "claude".into(), role_name: Some("Planner".into()) },
-            PaneSummary { id: 1, agent_name: "claude".into(), role_name: None },
+            PaneSummary {
+                id: 0,
+                agent_name: "claude".into(),
+                role_name: Some("Planner".into()),
+            },
+            PaneSummary {
+                id: 1,
+                agent_name: "claude".into(),
+                role_name: None,
+            },
         ];
         let prompt = build_collaboration_prompt_from_panes(&panes);
-        assert!(prompt.contains("already been assigned"), "mixed roles should use pre-assigned path");
+        assert!(
+            prompt.contains("already been assigned"),
+            "mixed roles should use pre-assigned path"
+        );
     }
 
     #[test]
     fn collab_prompt_includes_stand_by_instruction() {
-        let panes = vec![
-            PaneSummary { id: 0, agent_name: "claude".into(), role_name: Some("X".into()) },
-        ];
+        let panes = vec![PaneSummary {
+            id: 0,
+            agent_name: "claude".into(),
+            role_name: Some("X".into()),
+        }];
         let prompt = build_collaboration_prompt_from_panes(&panes);
-        assert!(prompt.contains("WAIT for the user"), "should tell agents to wait");
-        assert!(prompt.contains("Do NOT start working"), "should forbid auto-start");
+        assert!(
+            prompt.contains("WAIT for the user"),
+            "should tell agents to wait"
+        );
+        assert!(
+            prompt.contains("Do NOT start working"),
+            "should forbid auto-start"
+        );
     }
 }

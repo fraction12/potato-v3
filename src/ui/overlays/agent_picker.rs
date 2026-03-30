@@ -24,7 +24,10 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Clear, Paragraph},
 };
 
-use crate::adapters::{AdapterCapabilities, AgentAdapter, claude::ClaudeAdapter, codex::CodexAdapter, generic::GenericAdapter};
+use crate::adapters::{
+    AdapterCapabilities, AgentAdapter, claude::ClaudeAdapter, codex::CodexAdapter,
+    generic::GenericAdapter,
+};
 use crate::app::state::AgentPickerState;
 
 // ── Theme colors ──────────────────────────────────────────────────────────────
@@ -58,9 +61,21 @@ impl AgentRow {
     #[must_use]
     pub fn caps_str(&self) -> String {
         let mut s = String::with_capacity(4);
-        s.push(if self.caps.structured_output { 'S' } else { '.' });
-        s.push(if self.caps.session_resumable { 'R' } else { '.' });
-        s.push(if self.caps.approval_intercept { 'A' } else { '.' });
+        s.push(if self.caps.structured_output {
+            'S'
+        } else {
+            '.'
+        });
+        s.push(if self.caps.session_resumable {
+            'R'
+        } else {
+            '.'
+        });
+        s.push(if self.caps.approval_intercept {
+            'A'
+        } else {
+            '.'
+        });
         s.push(if self.caps.tool_events { 'T' } else { '.' });
         s
     }
@@ -124,7 +139,12 @@ pub fn render_agent_picker(
     let x = area.x + (area.width.saturating_sub(width)) / 2;
     let y = area.y + (area.height.saturating_sub(height)) / 2;
 
-    let overlay_area = Rect { x, y, width, height };
+    let overlay_area = Rect {
+        x,
+        y,
+        width,
+        height,
+    };
 
     // Clear underlying content.
     frame.render_widget(Clear, overlay_area);
@@ -162,7 +182,10 @@ pub fn render_agent_picker(
             Span::raw(format!("{:<binary_w$}", "Binary")),
             Span::styled("Caps", Style::default().fg(CAP_COLOR)),
         ]);
-        frame.render_widget(Paragraph::new(header).style(Style::default().fg(HEADER)), chunks[0]);
+        frame.render_widget(
+            Paragraph::new(header).style(Style::default().fg(HEADER)),
+            chunks[0],
+        );
     }
 
     // ── Agent rows ────────────────────────────────────────────────────────────
@@ -183,8 +206,16 @@ pub fn render_agent_picker(
             row.binary_display.clone()
         };
 
-        let name_color = if row.available { AVAILABLE } else { UNAVAILABLE };
-        let bin_color = if row.available { AVAILABLE } else { UNAVAILABLE };
+        let name_color = if row.available {
+            AVAILABLE
+        } else {
+            UNAVAILABLE
+        };
+        let bin_color = if row.available {
+            AVAILABLE
+        } else {
+            UNAVAILABLE
+        };
 
         let row_style = if is_selected {
             Style::default().bg(SELECTED_BG)
@@ -195,17 +226,17 @@ pub fn render_agent_picker(
         let line = Line::from(vec![
             Span::raw(format!("{cursor} ")),
             Span::styled(
-                format!("{:<name_w$}", &row.display_name[..row.display_name.len().min(name_w)]),
+                format!(
+                    "{:<name_w$}",
+                    &row.display_name[..row.display_name.len().min(name_w)]
+                ),
                 Style::default().fg(name_color),
             ),
             Span::styled(
                 format!("{:<binary_w$}", bin_display),
                 Style::default().fg(bin_color),
             ),
-            Span::styled(
-                row.caps_str(),
-                Style::default().fg(CAP_COLOR),
-            ),
+            Span::styled(row.caps_str(), Style::default().fg(CAP_COLOR)),
         ]);
         frame.render_widget(Paragraph::new(line).style(row_style), chunks[chunk_idx]);
     }

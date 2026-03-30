@@ -259,7 +259,8 @@ impl ChatPanel {
 
                 let match_index = search_query.as_ref().and_then(|_| {
                     all_matches.and_then(|m| {
-                        m.iter().position(|&(ei, li)| ei == entry_idx && li == line_idx)
+                        m.iter()
+                            .position(|&(ei, li)| ei == entry_idx && li == line_idx)
                     })
                 });
                 let is_match = match_index.is_some();
@@ -405,7 +406,11 @@ impl ChatPanel {
                 let query_display = format!(
                     " / {} ({}/{}) ",
                     s.query,
-                    if s.matches.is_empty() { 0 } else { s.current + 1 },
+                    if s.matches.is_empty() {
+                        0
+                    } else {
+                        s.current + 1
+                    },
                     s.matches.len()
                 );
                 let style = Style::default().fg(CREAM).bg(CHARCOAL);
@@ -430,14 +435,8 @@ fn role_prefix(entry: &TranscriptEntry) -> Span<'static> {
             Style::default().fg(AMBER).add_modifier(Modifier::BOLD),
         ),
         MessageRole::Assistant => Span::styled("  ".to_string(), Style::default()),
-        MessageRole::System => Span::styled(
-            "\u{2022} ".to_string(),
-            Style::default().fg(BRASS),
-        ),
-        MessageRole::Error => Span::styled(
-            "\u{2717} ".to_string(),
-            Style::default().fg(ROSE),
-        ),
+        MessageRole::System => Span::styled("\u{2022} ".to_string(), Style::default().fg(BRASS)),
+        MessageRole::Error => Span::styled("\u{2717} ".to_string(), Style::default().fg(ROSE)),
     }
 }
 
@@ -711,7 +710,9 @@ mod tests {
             user_entry("nothing here"),
         ]);
         panel.open_search();
-        for c in "world".chars() { panel.search_query_push(c); }
+        for c in "world".chars() {
+            panel.search_query_push(c);
+        }
 
         let s = panel.search.as_ref().unwrap();
         assert_eq!(s.matches.len(), 2);
@@ -737,11 +738,11 @@ mod tests {
 
     #[test]
     fn find_matches_multiline_content() {
-        let mut panel = ChatPanel::new(vec![
-            assistant_entry("line one\nline two\nline THREE"),
-        ]);
+        let mut panel = ChatPanel::new(vec![assistant_entry("line one\nline two\nline THREE")]);
         panel.open_search();
-        for c in "three".chars() { panel.search_query_push(c); }
+        for c in "three".chars() {
+            panel.search_query_push(c);
+        }
 
         let s = panel.search.as_ref().unwrap();
         assert!(s.matches.contains(&(0, 2)));
@@ -757,7 +758,9 @@ mod tests {
             user_entry("foo baz"),
         ]);
         panel.open_search();
-        for c in "foo".chars() { panel.search_query_push(c); }
+        for c in "foo".chars() {
+            panel.search_query_push(c);
+        }
         {
             let s = panel.search.as_ref().unwrap();
             assert_eq!(s.matches.len(), 3);
@@ -774,12 +777,11 @@ mod tests {
 
     #[test]
     fn search_prev_wraps() {
-        let mut panel = ChatPanel::new(vec![
-            user_entry("foo"),
-            assistant_entry("foo bar"),
-        ]);
+        let mut panel = ChatPanel::new(vec![user_entry("foo"), assistant_entry("foo bar")]);
         panel.open_search();
-        for c in "foo".chars() { panel.search_query_push(c); }
+        for c in "foo".chars() {
+            panel.search_query_push(c);
+        }
         {
             let s = panel.search.as_ref().unwrap();
             assert_eq!(s.matches.len(), 2);

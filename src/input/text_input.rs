@@ -36,8 +36,14 @@ pub fn handle(state: &mut AppState, key: &KeyEvent) -> KeyAction {
                 session.input_cursor += 1;
                 return KeyAction::Handled;
             }
-            KeyCode::Home => { session.input_cursor = 0; return KeyAction::Handled; }
-            KeyCode::End => { session.input_cursor = session.input_buffer.len(); return KeyAction::Handled; }
+            KeyCode::Home => {
+                session.input_cursor = 0;
+                return KeyAction::Handled;
+            }
+            KeyCode::End => {
+                session.input_cursor = session.input_buffer.len();
+                return KeyAction::Handled;
+            }
             KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 session.input_buffer.push(c);
                 session.input_cursor = session.input_buffer.len();

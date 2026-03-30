@@ -157,7 +157,10 @@ impl Theme {
     /// Style for the approval bar header.
     #[must_use]
     pub fn approval_header(&self) -> Style {
-        Style::default().fg(BG).bg(AMBER).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(BG)
+            .bg(AMBER)
+            .add_modifier(Modifier::BOLD)
     }
 
     /// Style for approval bar body text.
@@ -181,7 +184,9 @@ mod tests {
 
     #[test]
     fn palette_colors_are_distinct() {
-        let colors = [TAN, BROWN, SOIL, SPROUT, RUST_RED, AMBER, CREAM, CHARCOAL, BG, BRASS, STONE, ROSE];
+        let colors = [
+            TAN, BROWN, SOIL, SPROUT, RUST_RED, AMBER, CREAM, CHARCOAL, BG, BRASS, STONE, ROSE,
+        ];
         for (i, a) in colors.iter().enumerate() {
             for (j, b) in colors.iter().enumerate() {
                 if i != j {
@@ -203,14 +208,27 @@ mod tests {
     #[test]
     fn default_theme_fields_are_from_palette() {
         let theme = Theme::default();
-        let palette = [TAN, BROWN, SOIL, SPROUT, RUST_RED, AMBER, CREAM, CHARCOAL, BG, BRASS, STONE, ROSE];
+        let palette = [
+            TAN, BROWN, SOIL, SPROUT, RUST_RED, AMBER, CREAM, CHARCOAL, BG, BRASS, STONE, ROSE,
+        ];
         let theme_colors = [
-            theme.background, theme.foreground, theme.border, theme.border_focused,
-            theme.user_bubble, theme.assistant_bubble, theme.tool_highlight,
-            theme.error, theme.warning, theme.success, theme.muted,
+            theme.background,
+            theme.foreground,
+            theme.border,
+            theme.border_focused,
+            theme.user_bubble,
+            theme.assistant_bubble,
+            theme.tool_highlight,
+            theme.error,
+            theme.warning,
+            theme.success,
+            theme.muted,
         ];
         for (i, c) in theme_colors.iter().enumerate() {
-            assert!(palette.contains(c), "theme field at index {i} ({c:?}) is not from the palette");
+            assert!(
+                palette.contains(c),
+                "theme field at index {i} ({c:?}) is not from the palette"
+            );
         }
     }
 

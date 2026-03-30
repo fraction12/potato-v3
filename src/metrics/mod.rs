@@ -139,7 +139,11 @@ mod tests {
         let (bus, mut collector) = make_collector();
 
         bus.publish(AgentEvent::TurnDone {
-            usage: Some(UsageInfo { input_tokens: 100, output_tokens: 50, cost_usd: Some(0.001) }),
+            usage: Some(UsageInfo {
+                input_tokens: 100,
+                output_tokens: 50,
+                cost_usd: Some(0.001),
+            }),
         });
         collector.process().await;
 
@@ -164,9 +168,14 @@ mod tests {
             name: "shell".into(),
             input: serde_json::json!({}),
         });
-        bus.publish(AgentEvent::ToolError { id: "t1".into(), error: "oops".into() });
+        bus.publish(AgentEvent::ToolError {
+            id: "t1".into(),
+            error: "oops".into(),
+        });
 
-        for _ in 0..3 { collector.process().await; }
+        for _ in 0..3 {
+            collector.process().await;
+        }
 
         let snap = collector.snapshot();
         assert_eq!(snap.tool_calls, 2);
@@ -179,10 +188,16 @@ mod tests {
 
         for i in 0..3u64 {
             bus.publish(AgentEvent::TurnDone {
-                usage: Some(UsageInfo { input_tokens: 10 * i, output_tokens: 5 * i, cost_usd: None }),
+                usage: Some(UsageInfo {
+                    input_tokens: 10 * i,
+                    output_tokens: 5 * i,
+                    cost_usd: None,
+                }),
             });
         }
-        for _ in 0..3 { collector.process().await; }
+        for _ in 0..3 {
+            collector.process().await;
+        }
 
         let snap = collector.snapshot();
         assert_eq!(snap.turn_count, 3);
@@ -192,7 +207,11 @@ mod tests {
 
     #[test]
     fn total_tokens_helper() {
-        let m = SessionMetrics { input_tokens: 30, output_tokens: 20, ..Default::default() };
+        let m = SessionMetrics {
+            input_tokens: 30,
+            output_tokens: 20,
+            ..Default::default()
+        };
         assert_eq!(m.total_tokens(), 50);
     }
 

@@ -9,8 +9,8 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Clear, Paragraph},
 };
 
-use crate::ui::theme::{AMBER, BG, CHARCOAL, CREAM, SOIL, STONE};
 use super::{Overlay, OverlayAction};
+use crate::ui::theme::{AMBER, BG, CHARCOAL, CREAM, SOIL, STONE};
 
 // ── Keybind entry ─────────────────────────────────────────────────────────────
 
@@ -21,7 +21,10 @@ struct KeyEntry {
 
 impl KeyEntry {
     const fn new(keybind: &'static str, description: &'static str) -> Self {
-        Self { keybind, description }
+        Self {
+            keybind,
+            description,
+        }
     }
 }
 
@@ -35,40 +38,52 @@ struct Section {
 // ── Keybind data ──────────────────────────────────────────────────────────────
 
 static GLOBAL_ENTRIES: &[KeyEntry] = &[
-    KeyEntry::new("Ctrl+\\",     "Quit"),
-    KeyEntry::new("Ctrl+W",      "Close active pane"),
-    KeyEntry::new("Tab",         "Next focus panel / cycle panes"),
-    KeyEntry::new("Shift+Tab",   "Previous focus panel"),
-    KeyEntry::new("F1",          "Toggle help"),
-    KeyEntry::new("F2",          "Agent picker"),
-    KeyEntry::new("F3",          "Session picker"),
-    KeyEntry::new("F5",          "Refresh git / tasks"),
-    KeyEntry::new("F6",          "Focus terminal"),
+    KeyEntry::new("Ctrl+\\", "Quit"),
+    KeyEntry::new("Ctrl+W", "Close active pane"),
+    KeyEntry::new("Tab", "Next focus panel / cycle panes"),
+    KeyEntry::new("Shift+Tab", "Previous focus panel"),
+    KeyEntry::new("F1", "Toggle help"),
+    KeyEntry::new("F2", "Agent picker"),
+    KeyEntry::new("F3", "Session picker"),
+    KeyEntry::new("F5", "Refresh git / tasks"),
+    KeyEntry::new("F6", "Focus terminal"),
 ];
 
 static INPUT_ENTRIES: &[KeyEntry] = &[
-    KeyEntry::new("Enter",  "Broadcast to all agents"),
-    KeyEntry::new("Esc",    "Clear input"),
+    KeyEntry::new("Enter", "Broadcast to all agents"),
+    KeyEntry::new("Esc", "Clear input"),
 ];
 
 static TERMINAL_ENTRIES: &[KeyEntry] = &[
-    KeyEntry::new("Tab",        "Exit terminal focus (forward)"),
-    KeyEntry::new("Ctrl+\\",    "Quit (only intercept)"),
-    KeyEntry::new("PgUp/PgDn",  "Scroll terminal viewport"),
-    KeyEntry::new("End",        "Jump to bottom"),
-    KeyEntry::new("*",          "All other keys → agent PTY"),
+    KeyEntry::new("Tab", "Exit terminal focus (forward)"),
+    KeyEntry::new("Ctrl+\\", "Quit (only intercept)"),
+    KeyEntry::new("PgUp/PgDn", "Scroll terminal viewport"),
+    KeyEntry::new("End", "Jump to bottom"),
+    KeyEntry::new("*", "All other keys → agent PTY"),
 ];
 
 static NAVIGATION_ENTRIES: &[KeyEntry] = &[
-    KeyEntry::new("Tab",        "Next focus panel"),
-    KeyEntry::new("Shift+Tab",  "Previous focus panel"),
+    KeyEntry::new("Tab", "Next focus panel"),
+    KeyEntry::new("Shift+Tab", "Previous focus panel"),
 ];
 
 static SECTIONS: &[Section] = &[
-    Section { title: "Global",     entries: GLOBAL_ENTRIES },
-    Section { title: "Input",      entries: INPUT_ENTRIES },
-    Section { title: "Terminal",   entries: TERMINAL_ENTRIES },
-    Section { title: "Navigation", entries: NAVIGATION_ENTRIES },
+    Section {
+        title: "Global",
+        entries: GLOBAL_ENTRIES,
+    },
+    Section {
+        title: "Input",
+        entries: INPUT_ENTRIES,
+    },
+    Section {
+        title: "Terminal",
+        entries: TERMINAL_ENTRIES,
+    },
+    Section {
+        title: "Navigation",
+        entries: NAVIGATION_ENTRIES,
+    },
 ];
 
 // ── HelpOverlay ───────────────────────────────────────────────────────────────
@@ -102,10 +117,7 @@ impl HelpOverlay {
                     format!("  {:<16}", entry.keybind),
                     Style::default().fg(AMBER),
                 );
-                let desc_span = Span::styled(
-                    entry.description,
-                    Style::default().fg(CREAM),
-                );
+                let desc_span = Span::styled(entry.description, Style::default().fg(CREAM));
                 lines.push(Line::from(vec![key_span, desc_span]));
             }
 
@@ -169,18 +181,15 @@ impl Overlay for HelpOverlay {
 
         let content_area = if total > visible {
             // Reserve bottom row for scroll hint.
-            let [content, hint_area] = Layout::vertical([
-                Constraint::Fill(1),
-                Constraint::Length(1),
-            ]).areas(inner);
+            let [content, hint_area] =
+                Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).areas(inner);
 
             let hint = if self.scroll + visible < total {
                 "↓ more"
             } else {
                 "— end —"
             };
-            let hint_line = Paragraph::new(hint)
-                .style(Style::default().fg(STONE));
+            let hint_line = Paragraph::new(hint).style(Style::default().fg(STONE));
             frame.render_widget(hint_line, hint_area);
 
             content
@@ -194,8 +203,7 @@ impl Overlay for HelpOverlay {
             .take(content_area.height as usize)
             .collect();
 
-        let para = Paragraph::new(sliced)
-            .style(Style::default().fg(CREAM).bg(BG));
+        let para = Paragraph::new(sliced).style(Style::default().fg(CREAM).bg(BG));
         frame.render_widget(para, content_area);
     }
 

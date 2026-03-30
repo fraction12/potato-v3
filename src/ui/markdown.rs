@@ -83,10 +83,7 @@ fn parse_inline(line: &str) -> Vec<Span<'static>> {
     macro_rules! flush_plain {
         () => {
             if !buf.is_empty() {
-                spans.push(Span::styled(
-                    buf.clone(),
-                    Style::default().fg(CREAM),
-                ));
+                spans.push(Span::styled(buf.clone(), Style::default().fg(CREAM)));
                 buf.clear();
             }
         };
@@ -100,10 +97,7 @@ fn parse_inline(line: &str) -> Vec<Span<'static>> {
             if let Some(close) = line[i + 1..].find('`') {
                 let code = line[i + 1..i + 1 + close].to_string();
                 flush_plain!();
-                spans.push(Span::styled(
-                    code,
-                    Style::default().fg(CREAM).bg(CHARCOAL),
-                ));
+                spans.push(Span::styled(code, Style::default().fg(CREAM).bg(CHARCOAL)));
                 i = i + 1 + close + 1;
                 continue;
             }
@@ -235,7 +229,11 @@ mod tests {
     fn mixed_inline_produces_multiple_spans() {
         let spans = render_markdown_line("hello **world** foo");
         // Should produce: "hello " (plain), "world" (bold), " foo" (plain)
-        assert!(spans.len() >= 3, "expected at least 3 spans, got {}", spans.len());
+        assert!(
+            spans.len() >= 3,
+            "expected at least 3 spans, got {}",
+            spans.len()
+        );
         let bold = spans.iter().find(|s| s.content == "world").unwrap();
         assert!(bold.style.add_modifier.contains(Modifier::BOLD));
     }

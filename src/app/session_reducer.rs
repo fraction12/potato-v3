@@ -13,8 +13,7 @@
 use chrono::{DateTime, Utc};
 
 use crate::app::state::{
-    AgentStatus, MessageRole, PendingApprovalSession, SessionState, ToolCallRecord,
-    TranscriptEntry,
+    AgentStatus, MessageRole, PendingApprovalSession, SessionState, ToolCallRecord, TranscriptEntry,
 };
 use crate::events::{AgentEvent, UsageInfo};
 
@@ -68,7 +67,12 @@ pub fn apply_event(session: &mut SessionState, event: AgentEvent, now: DateTime<
             });
         }
 
-        AgentEvent::ToolDone { id, output, duration_ms, success } => {
+        AgentEvent::ToolDone {
+            id,
+            output,
+            duration_ms,
+            success,
+        } => {
             if let Some(tc) = session.tool_calls.iter_mut().find(|t| t.id == id) {
                 tc.output = Some(output);
                 tc.duration_ms = Some(duration_ms);
@@ -89,8 +93,14 @@ pub fn apply_event(session: &mut SessionState, event: AgentEvent, now: DateTime<
         }
 
         // ── Approval flow ─────────────────────────────────────────────────────
-        AgentEvent::ApprovalRequired { tool_id, tool_name, input } => {
-            session.status = AgentStatus::WaitingApproval { tool_name: tool_name.clone() };
+        AgentEvent::ApprovalRequired {
+            tool_id,
+            tool_name,
+            input,
+        } => {
+            session.status = AgentStatus::WaitingApproval {
+                tool_name: tool_name.clone(),
+            };
             session.approval_pending = Some(PendingApprovalSession {
                 tool_id,
                 tool_name,
@@ -98,7 +108,10 @@ pub fn apply_event(session: &mut SessionState, event: AgentEvent, now: DateTime<
             });
         }
 
-        AgentEvent::ApprovalDecision { tool_id: _, approved: _ } => {
+        AgentEvent::ApprovalDecision {
+            tool_id: _,
+            approved: _,
+        } => {
             // The UI decision has been sent to the agent; clear the pending prompt.
             session.approval_pending = None;
             // Resume thinking while the agent processes the decision.
@@ -140,7 +153,9 @@ pub fn apply_event(session: &mut SessionState, event: AgentEvent, now: DateTime<
 
         // ── Diagnostics ───────────────────────────────────────────────────────
         AgentEvent::Error { message } => {
-            session.status = AgentStatus::Error { message: message.clone() };
+            session.status = AgentStatus::Error {
+                message: message.clone(),
+            };
             session.transcript.push(TranscriptEntry {
                 role: MessageRole::System,
                 content: format!("Error: {}", message),
@@ -197,18 +212,35 @@ mod tests {
         let mut s = fresh_session();
         assert_eq!(s.session_id, "sess-001");
 
-        apply_event(&mut s, AgentEvent::SessionBound { agent_session_id: "native-abc-123".into() }, t0());
+        apply_event(
+            &mut s,
+            AgentEvent::SessionBound {
+                agent_session_id: "native-abc-123".into(),
+            },
+            t0(),
+        );
 
-        assert_eq!(s.session_id, "native-abc-123",
-            "SessionBound should overwrite the local placeholder id with the native agent session id");
+        assert_eq!(
+            s.session_id, "native-abc-123",
+            "SessionBound should overwrite the local placeholder id with the native agent session id"
+        );
     }
 
     #[test]
     fn session_bound_populates_claude_session_id() {
         let mut s = fresh_session();
-        assert!(s.claude_session_id.is_none(), "claude_session_id should start as None");
+        assert!(
+            s.claude_session_id.is_none(),
+            "claude_session_id should start as None"
+        );
 
-        apply_event(&mut s, AgentEvent::SessionBound { agent_session_id: "claude-sess-xyz".into() }, t0());
+        apply_event(
+            &mut s,
+            AgentEvent::SessionBound {
+                agent_session_id: "claude-sess-xyz".into(),
+            },
+            t0(),
+        );
 
         assert_eq!(
             s.claude_session_id.as_deref(),
@@ -220,8 +252,20 @@ mod tests {
     #[test]
     fn session_bound_updates_claude_session_id_on_subsequent_turns() {
         let mut s = fresh_session();
-        apply_event(&mut s, AgentEvent::SessionBound { agent_session_id: "id-first".into() }, t0());
-        apply_event(&mut s, AgentEvent::SessionBound { agent_session_id: "id-second".into() }, t0());
+        apply_event(
+            &mut s,
+            AgentEvent::SessionBound {
+                agent_session_id: "id-first".into(),
+            },
+            t0(),
+        );
+        apply_event(
+            &mut s,
+            AgentEvent::SessionBound {
+                agent_session_id: "id-second".into(),
+            },
+            t0(),
+        );
         assert_eq!(s.claude_session_id.as_deref(), Some("id-second"));
     }
 
@@ -229,9 +273,25 @@ mod tests {
     fn session_bound_does_not_clear_transcript() {
         let mut s = fresh_session();
         // Seed a transcript entry.
-        apply_event(&mut s, AgentEvent::TextDelta { text: "hello".into() }, t0());
-        apply_event(&mut s, AgentEvent::SessionBound { agent_session_id: "x".into() }, t0());
-        assert_eq!(s.transcript.len(), 1, "SessionBound must not clear transcript");
+        apply_event(
+            &mut s,
+            AgentEvent::TextDelta {
+                text: "hello".into(),
+            },
+            t0(),
+        );
+        apply_event(
+            &mut s,
+            AgentEvent::SessionBound {
+                agent_session_id: "x".into(),
+            },
+            t0(),
+        );
+        assert_eq!(
+            s.transcript.len(),
+            1,
+            "SessionBound must not clear transcript"
+        );
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -241,7 +301,13 @@ mod tests {
     #[test]
     fn text_delta_creates_assistant_entry_when_transcript_empty() {
         let mut s = fresh_session();
-        apply_event(&mut s, AgentEvent::TextDelta { text: "Hello".into() }, t0());
+        apply_event(
+            &mut s,
+            AgentEvent::TextDelta {
+                text: "Hello".into(),
+            },
+            t0(),
+        );
 
         assert_eq!(s.transcript.len(), 1);
         let entry = &s.transcript[0];
@@ -253,11 +319,27 @@ mod tests {
     #[test]
     fn text_delta_appends_to_existing_assistant_entry() {
         let mut s = fresh_session();
-        apply_event(&mut s, AgentEvent::TextDelta { text: "Hello ".into() }, t0());
-        apply_event(&mut s, AgentEvent::TextDelta { text: "world".into() }, t0());
+        apply_event(
+            &mut s,
+            AgentEvent::TextDelta {
+                text: "Hello ".into(),
+            },
+            t0(),
+        );
+        apply_event(
+            &mut s,
+            AgentEvent::TextDelta {
+                text: "world".into(),
+            },
+            t0(),
+        );
         apply_event(&mut s, AgentEvent::TextDelta { text: "!".into() }, t0());
 
-        assert_eq!(s.transcript.len(), 1, "all deltas should merge into one entry");
+        assert_eq!(
+            s.transcript.len(),
+            1,
+            "all deltas should merge into one entry"
+        );
         assert_eq!(s.transcript[0].content, "Hello world!");
     }
 
@@ -266,7 +348,13 @@ mod tests {
         let mut s = fresh_session();
         // Simulate a user entry pushed externally.
         s.transcript.push(TranscriptEntry::user("What time is it?"));
-        apply_event(&mut s, AgentEvent::TextDelta { text: "It's noon.".into() }, t0());
+        apply_event(
+            &mut s,
+            AgentEvent::TextDelta {
+                text: "It's noon.".into(),
+            },
+            t0(),
+        );
 
         assert_eq!(s.transcript.len(), 2);
         assert_eq!(s.transcript[1].role, MessageRole::Assistant);
@@ -285,9 +373,21 @@ mod tests {
         let mut s = fresh_session();
         // Stream a few deltas.
         apply_event(&mut s, AgentEvent::TextDelta { text: "par".into() }, t0());
-        apply_event(&mut s, AgentEvent::TextDelta { text: "tial".into() }, t0());
+        apply_event(
+            &mut s,
+            AgentEvent::TextDelta {
+                text: "tial".into(),
+            },
+            t0(),
+        );
         // TextDone delivers authoritative full text.
-        apply_event(&mut s, AgentEvent::TextDone { full_text: "complete answer".into() }, t0());
+        apply_event(
+            &mut s,
+            AgentEvent::TextDone {
+                full_text: "complete answer".into(),
+            },
+            t0(),
+        );
 
         assert_eq!(s.transcript.len(), 1);
         assert_eq!(s.transcript[0].content, "complete answer");
@@ -296,7 +396,13 @@ mod tests {
     #[test]
     fn text_done_does_not_add_entry_if_no_assistant_entry() {
         let mut s = fresh_session();
-        apply_event(&mut s, AgentEvent::TextDone { full_text: "orphan".into() }, t0());
+        apply_event(
+            &mut s,
+            AgentEvent::TextDone {
+                full_text: "orphan".into(),
+            },
+            t0(),
+        );
         // Nothing to patch, transcript stays empty.
         assert!(s.transcript.is_empty());
     }
@@ -327,18 +433,44 @@ mod tests {
         assert!(tc.output.is_none());
         assert!(tc.duration_ms.is_none());
         assert!(tc.success.is_none());
-        assert_eq!(s.status, AgentStatus::RunningTool { name: "read_file".into() });
+        assert_eq!(
+            s.status,
+            AgentStatus::RunningTool {
+                name: "read_file".into()
+            }
+        );
     }
 
     #[test]
     fn tool_start_multiple_tools_stacked() {
         let mut s = fresh_session();
-        apply_event(&mut s, AgentEvent::ToolStart { id: "t1".into(), name: "shell".into(), input: json!({}) }, t0());
-        apply_event(&mut s, AgentEvent::ToolStart { id: "t2".into(), name: "write_file".into(), input: json!({}) }, t0());
+        apply_event(
+            &mut s,
+            AgentEvent::ToolStart {
+                id: "t1".into(),
+                name: "shell".into(),
+                input: json!({}),
+            },
+            t0(),
+        );
+        apply_event(
+            &mut s,
+            AgentEvent::ToolStart {
+                id: "t2".into(),
+                name: "write_file".into(),
+                input: json!({}),
+            },
+            t0(),
+        );
 
         assert_eq!(s.tool_calls.len(), 2);
         // Status reflects the most recent start.
-        assert_eq!(s.status, AgentStatus::RunningTool { name: "write_file".into() });
+        assert_eq!(
+            s.status,
+            AgentStatus::RunningTool {
+                name: "write_file".into()
+            }
+        );
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -348,10 +480,23 @@ mod tests {
     #[test]
     fn tool_done_patches_matching_record() {
         let mut s = fresh_session();
-        apply_event(&mut s, AgentEvent::ToolStart { id: "t1".into(), name: "shell".into(), input: json!({}) }, t0());
         apply_event(
             &mut s,
-            AgentEvent::ToolDone { id: "t1".into(), output: "ok".into(), duration_ms: 42, success: true },
+            AgentEvent::ToolStart {
+                id: "t1".into(),
+                name: "shell".into(),
+                input: json!({}),
+            },
+            t0(),
+        );
+        apply_event(
+            &mut s,
+            AgentEvent::ToolDone {
+                id: "t1".into(),
+                output: "ok".into(),
+                duration_ms: 42,
+                success: true,
+            },
             t0(),
         );
 
@@ -364,8 +509,25 @@ mod tests {
     #[test]
     fn tool_done_sets_status_to_thinking() {
         let mut s = fresh_session();
-        apply_event(&mut s, AgentEvent::ToolStart { id: "t1".into(), name: "shell".into(), input: json!({}) }, t0());
-        apply_event(&mut s, AgentEvent::ToolDone { id: "t1".into(), output: "".into(), duration_ms: 0, success: true }, t0());
+        apply_event(
+            &mut s,
+            AgentEvent::ToolStart {
+                id: "t1".into(),
+                name: "shell".into(),
+                input: json!({}),
+            },
+            t0(),
+        );
+        apply_event(
+            &mut s,
+            AgentEvent::ToolDone {
+                id: "t1".into(),
+                output: "".into(),
+                duration_ms: 0,
+                success: true,
+            },
+            t0(),
+        );
         assert_eq!(s.status, AgentStatus::Thinking);
     }
 
@@ -373,7 +535,16 @@ mod tests {
     fn tool_done_ignores_unknown_id() {
         let mut s = fresh_session();
         // No panic, no change.
-        apply_event(&mut s, AgentEvent::ToolDone { id: "ghost".into(), output: "noop".into(), duration_ms: 0, success: true }, t0());
+        apply_event(
+            &mut s,
+            AgentEvent::ToolDone {
+                id: "ghost".into(),
+                output: "noop".into(),
+                duration_ms: 0,
+                success: true,
+            },
+            t0(),
+        );
         assert!(s.tool_calls.is_empty());
     }
 
@@ -384,8 +555,23 @@ mod tests {
     #[test]
     fn tool_error_marks_failure() {
         let mut s = fresh_session();
-        apply_event(&mut s, AgentEvent::ToolStart { id: "t1".into(), name: "shell".into(), input: json!({}) }, t0());
-        apply_event(&mut s, AgentEvent::ToolError { id: "t1".into(), error: "permission denied".into() }, t0());
+        apply_event(
+            &mut s,
+            AgentEvent::ToolStart {
+                id: "t1".into(),
+                name: "shell".into(),
+                input: json!({}),
+            },
+            t0(),
+        );
+        apply_event(
+            &mut s,
+            AgentEvent::ToolError {
+                id: "t1".into(),
+                error: "permission denied".into(),
+            },
+            t0(),
+        );
 
         let tc = &s.tool_calls[0];
         assert_eq!(tc.success, Some(false));
@@ -395,10 +581,28 @@ mod tests {
     #[test]
     fn tool_error_sets_status_to_thinking() {
         let mut s = fresh_session();
-        apply_event(&mut s, AgentEvent::ToolStart { id: "t1".into(), name: "shell".into(), input: json!({}) }, t0());
-        apply_event(&mut s, AgentEvent::ToolError { id: "t1".into(), error: "boom".into() }, t0());
-        assert_eq!(s.status, AgentStatus::Thinking,
-            "after ToolError the agent should continue thinking (handle the error)");
+        apply_event(
+            &mut s,
+            AgentEvent::ToolStart {
+                id: "t1".into(),
+                name: "shell".into(),
+                input: json!({}),
+            },
+            t0(),
+        );
+        apply_event(
+            &mut s,
+            AgentEvent::ToolError {
+                id: "t1".into(),
+                error: "boom".into(),
+            },
+            t0(),
+        );
+        assert_eq!(
+            s.status,
+            AgentStatus::Thinking,
+            "after ToolError the agent should continue thinking (handle the error)"
+        );
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -418,8 +622,16 @@ mod tests {
             t0(),
         );
 
-        assert_eq!(s.status, AgentStatus::WaitingApproval { tool_name: "shell".into() });
-        let pending = s.approval_pending.as_ref().expect("should have pending approval");
+        assert_eq!(
+            s.status,
+            AgentStatus::WaitingApproval {
+                tool_name: "shell".into()
+            }
+        );
+        let pending = s
+            .approval_pending
+            .as_ref()
+            .expect("should have pending approval");
         assert_eq!(pending.tool_id, "tool-42");
         assert_eq!(pending.tool_name, "shell");
         assert_eq!(pending.input, json!({ "cmd": "rm -rf /" }));
@@ -443,10 +655,24 @@ mod tests {
         );
         assert!(s.approval_pending.is_some());
 
-        apply_event(&mut s, AgentEvent::ApprovalDecision { tool_id: "t-x".into(), approved: true }, t0());
+        apply_event(
+            &mut s,
+            AgentEvent::ApprovalDecision {
+                tool_id: "t-x".into(),
+                approved: true,
+            },
+            t0(),
+        );
 
-        assert!(s.approval_pending.is_none(), "approval_pending should be cleared after decision");
-        assert_eq!(s.status, AgentStatus::Thinking, "status should return to Thinking after approval");
+        assert!(
+            s.approval_pending.is_none(),
+            "approval_pending should be cleared after decision"
+        );
+        assert_eq!(
+            s.status,
+            AgentStatus::Thinking,
+            "status should return to Thinking after approval"
+        );
     }
 
     #[test]
@@ -462,7 +688,14 @@ mod tests {
             t0(),
         );
 
-        apply_event(&mut s, AgentEvent::ApprovalDecision { tool_id: "t-x".into(), approved: false }, t0());
+        apply_event(
+            &mut s,
+            AgentEvent::ApprovalDecision {
+                tool_id: "t-x".into(),
+                approved: false,
+            },
+            t0(),
+        );
 
         assert!(s.approval_pending.is_none());
     }
@@ -477,7 +710,11 @@ mod tests {
         apply_event(
             &mut s,
             AgentEvent::TurnDone {
-                usage: Some(UsageInfo { input_tokens: 100, output_tokens: 50, cost_usd: Some(0.002) }),
+                usage: Some(UsageInfo {
+                    input_tokens: 100,
+                    output_tokens: 50,
+                    cost_usd: Some(0.002),
+                }),
             },
             t0(),
         );
@@ -506,7 +743,11 @@ mod tests {
             apply_event(
                 &mut s,
                 AgentEvent::TurnDone {
-                    usage: Some(UsageInfo { input_tokens: 10 * i, output_tokens: 5 * i, cost_usd: Some(0.001 * i as f64) }),
+                    usage: Some(UsageInfo {
+                        input_tokens: 10 * i,
+                        output_tokens: 5 * i,
+                        cost_usd: Some(0.001 * i as f64),
+                    }),
                 },
                 t0(),
             );
@@ -545,7 +786,13 @@ mod tests {
     #[test]
     fn agent_exited_does_not_clear_transcript() {
         let mut s = fresh_session();
-        apply_event(&mut s, AgentEvent::TextDelta { text: "some output".into() }, t0());
+        apply_event(
+            &mut s,
+            AgentEvent::TextDelta {
+                text: "some output".into(),
+            },
+            t0(),
+        );
         apply_event(&mut s, AgentEvent::AgentExited { exit_code: Some(0) }, t0());
         assert!(!s.transcript.is_empty(), "transcript should survive exit");
     }
@@ -568,9 +815,21 @@ mod tests {
             timestamp: t1,
             tool_call: None,
         });
-        apply_event(&mut s, AgentEvent::TextDelta { text: "hello!".into() }, t2);
+        apply_event(
+            &mut s,
+            AgentEvent::TextDelta {
+                text: "hello!".into(),
+            },
+            t2,
+        );
         // TextDone comes later with the full text.
-        apply_event(&mut s, AgentEvent::TextDone { full_text: "hello, world!".into() }, t3);
+        apply_event(
+            &mut s,
+            AgentEvent::TextDone {
+                full_text: "hello, world!".into(),
+            },
+            t3,
+        );
 
         assert_eq!(s.transcript.len(), 2);
         assert_eq!(s.transcript[0].role, MessageRole::User);
@@ -588,7 +847,13 @@ mod tests {
         let ta = Utc.with_ymd_and_hms(2025, 6, 15, 10, 0, 0).unwrap();
         let tb = Utc.with_ymd_and_hms(2025, 6, 15, 10, 0, 5).unwrap();
 
-        apply_event(&mut s, AgentEvent::TextDelta { text: "first".into() }, ta);
+        apply_event(
+            &mut s,
+            AgentEvent::TextDelta {
+                text: "first".into(),
+            },
+            ta,
+        );
         // Simulate a turn boundary.
         apply_event(&mut s, AgentEvent::TurnDone { usage: None }, ta);
         // User message arrives (external push, simulated here).
@@ -598,7 +863,13 @@ mod tests {
             timestamp: tb,
             tool_call: None,
         });
-        apply_event(&mut s, AgentEvent::TextDelta { text: "second".into() }, tb);
+        apply_event(
+            &mut s,
+            AgentEvent::TextDelta {
+                text: "second".into(),
+            },
+            tb,
+        );
 
         assert_eq!(s.transcript.len(), 3);
         assert_eq!(s.transcript[0].timestamp, ta);
@@ -615,7 +886,13 @@ mod tests {
         let now = t0();
 
         // 1. Agent binds to a session.
-        apply_event(&mut s, AgentEvent::SessionBound { agent_session_id: "nat-001".into() }, now);
+        apply_event(
+            &mut s,
+            AgentEvent::SessionBound {
+                agent_session_id: "nat-001".into(),
+            },
+            now,
+        );
         assert_eq!(s.session_id, "nat-001");
 
         // 2. Agent starts thinking (TurnStart).
@@ -623,35 +900,65 @@ mod tests {
         assert_eq!(s.status, AgentStatus::Thinking);
 
         // 3. Streaming text arrives.
-        apply_event(&mut s, AgentEvent::TextDelta { text: "I'll run a tool...".into() }, now);
+        apply_event(
+            &mut s,
+            AgentEvent::TextDelta {
+                text: "I'll run a tool...".into(),
+            },
+            now,
+        );
         assert_eq!(s.transcript.len(), 1);
 
         // 4. Tool starts.
         apply_event(
             &mut s,
-            AgentEvent::ToolStart { id: "tool-1".into(), name: "shell".into(), input: json!({ "cmd": "ls" }) },
+            AgentEvent::ToolStart {
+                id: "tool-1".into(),
+                name: "shell".into(),
+                input: json!({ "cmd": "ls" }),
+            },
             now,
         );
         assert_eq!(s.tool_calls.len(), 1);
-        assert_eq!(s.status, AgentStatus::RunningTool { name: "shell".into() });
+        assert_eq!(
+            s.status,
+            AgentStatus::RunningTool {
+                name: "shell".into()
+            }
+        );
 
         // 5. Tool completes.
         apply_event(
             &mut s,
-            AgentEvent::ToolDone { id: "tool-1".into(), output: "file.txt\n".into(), duration_ms: 10, success: true },
+            AgentEvent::ToolDone {
+                id: "tool-1".into(),
+                output: "file.txt\n".into(),
+                duration_ms: 10,
+                success: true,
+            },
             now,
         );
         assert_eq!(s.tool_calls[0].success, Some(true));
         assert_eq!(s.status, AgentStatus::Thinking);
 
         // 6. More streaming text.
-        apply_event(&mut s, AgentEvent::TextDelta { text: " Done!".into() }, now);
+        apply_event(
+            &mut s,
+            AgentEvent::TextDelta {
+                text: " Done!".into(),
+            },
+            now,
+        );
 
         // 7. Turn done.
         apply_event(
             &mut s,
             AgentEvent::TurnDone {
-                usage: Some(UsageInfo { input_tokens: 50, output_tokens: 30, cost_usd: Some(0.001) }),
+                usage: Some(UsageInfo {
+                    input_tokens: 50,
+                    output_tokens: 30,
+                    cost_usd: Some(0.001),
+                }),
             },
             now,
         );
@@ -666,7 +973,13 @@ mod tests {
         let now = t0();
 
         apply_event(&mut s, AgentEvent::TurnStart, now);
-        apply_event(&mut s, AgentEvent::TextDelta { text: "About to run shell...".into() }, now);
+        apply_event(
+            &mut s,
+            AgentEvent::TextDelta {
+                text: "About to run shell...".into(),
+            },
+            now,
+        );
         apply_event(
             &mut s,
             AgentEvent::ApprovalRequired {
@@ -676,23 +989,44 @@ mod tests {
             },
             now,
         );
-        assert_eq!(s.status, AgentStatus::WaitingApproval { tool_name: "shell".into() });
+        assert_eq!(
+            s.status,
+            AgentStatus::WaitingApproval {
+                tool_name: "shell".into()
+            }
+        );
         assert!(s.approval_pending.is_some());
 
         // User approves.
-        apply_event(&mut s, AgentEvent::ApprovalDecision { tool_id: "t-rm".into(), approved: true }, now);
+        apply_event(
+            &mut s,
+            AgentEvent::ApprovalDecision {
+                tool_id: "t-rm".into(),
+                approved: true,
+            },
+            now,
+        );
         assert!(s.approval_pending.is_none());
         assert_eq!(s.status, AgentStatus::Thinking);
 
         // Tool runs after approval.
         apply_event(
             &mut s,
-            AgentEvent::ToolStart { id: "t-rm".into(), name: "shell".into(), input: json!({}) },
+            AgentEvent::ToolStart {
+                id: "t-rm".into(),
+                name: "shell".into(),
+                input: json!({}),
+            },
             now,
         );
         apply_event(
             &mut s,
-            AgentEvent::ToolDone { id: "t-rm".into(), output: "removed".into(), duration_ms: 5, success: true },
+            AgentEvent::ToolDone {
+                id: "t-rm".into(),
+                output: "removed".into(),
+                duration_ms: 5,
+                success: true,
+            },
             now,
         );
         apply_event(&mut s, AgentEvent::TurnDone { usage: None }, now);

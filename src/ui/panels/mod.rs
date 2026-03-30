@@ -98,8 +98,14 @@ mod tests {
 
     #[test]
     fn panel_id_custom_equality() {
-        assert_eq!(PanelId::Custom("x".to_string()), PanelId::Custom("x".to_string()));
-        assert_ne!(PanelId::Custom("x".to_string()), PanelId::Custom("y".to_string()));
+        assert_eq!(
+            PanelId::Custom("x".to_string()),
+            PanelId::Custom("x".to_string())
+        );
+        assert_ne!(
+            PanelId::Custom("x".to_string()),
+            PanelId::Custom("y".to_string())
+        );
     }
 
     #[test]
@@ -140,7 +146,10 @@ mod tests {
     fn panel_id_debug_format() {
         assert_eq!(format!("{:?}", PanelId::Chat), "Chat");
         assert_eq!(format!("{:?}", PanelId::ToolOutput), "ToolOutput");
-        assert_eq!(format!("{:?}", PanelId::Custom("foo".to_string())), r#"Custom("foo")"#);
+        assert_eq!(
+            format!("{:?}", PanelId::Custom("foo".to_string())),
+            r#"Custom("foo")"#
+        );
     }
 
     // ── PanelAction equality ──────────────────────────────────────────────────

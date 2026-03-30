@@ -63,9 +63,8 @@ impl OpenSpecBacklog {
             .with_context(|| format!("failed to read directory {}", changes_dir.display()))?;
 
         for entry in entries {
-            let entry = entry.with_context(|| {
-                format!("failed to read entry in {}", changes_dir.display())
-            })?;
+            let entry = entry
+                .with_context(|| format!("failed to read entry in {}", changes_dir.display()))?;
 
             let entry_path = entry.path();
             if !entry_path.is_dir() {
@@ -206,9 +205,9 @@ mod tests {
     #[test]
     fn open_and_done_status() {
         let tasks = parse_tasks_md(SAMPLE_TASKS_MD, Some("bugfix-sweep"));
-        assert_eq!(tasks[0].status, TaskStatus::Open);   // T-850
-        assert_eq!(tasks[1].status, TaskStatus::Open);   // T-1001
-        assert_eq!(tasks[2].status, TaskStatus::Done);   // T-887
+        assert_eq!(tasks[0].status, TaskStatus::Open); // T-850
+        assert_eq!(tasks[1].status, TaskStatus::Open); // T-1001
+        assert_eq!(tasks[2].status, TaskStatus::Done); // T-887
     }
 
     #[test]
@@ -224,13 +223,13 @@ mod tests {
         let tasks = parse_tasks_md(SAMPLE_TASKS_MD, Some("bugfix-sweep"));
         assert_eq!(tasks[0].severity.as_deref(), Some("CRITICAL"));
         assert_eq!(tasks[2].severity.as_deref(), Some("LOW"));
-        assert_eq!(tasks[3].severity, None);  // T-999 has no severity
+        assert_eq!(tasks[3].severity, None); // T-999 has no severity
     }
 
     #[test]
     fn severity_high() {
         let tasks = parse_tasks_md(SAMPLE_TASKS_MD, Some("bugfix-sweep"));
-        assert_eq!(tasks[4].severity.as_deref(), Some("HIGH"));  // T-777
+        assert_eq!(tasks[4].severity.as_deref(), Some("HIGH")); // T-777
     }
 
     #[test]

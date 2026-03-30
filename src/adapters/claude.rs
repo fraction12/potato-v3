@@ -92,7 +92,9 @@ impl AgentAdapter for ClaudeAdapter {
         let value: serde_json::Value = match serde_json::from_str(trimmed) {
             Ok(v) => v,
             Err(_) => {
-                return vec![AgentEvent::Raw { payload: trimmed.to_string() }];
+                return vec![AgentEvent::Raw {
+                    payload: trimmed.to_string(),
+                }];
             }
         };
 
@@ -107,12 +109,18 @@ impl AgentAdapter for ClaudeAdapter {
                     // init → bind the agent session id.
                     Some("init") => {
                         if let Some(session_id) = value["session_id"].as_str() {
-                            vec![AgentEvent::SessionBound { agent_session_id: session_id.to_string() }]
+                            vec![AgentEvent::SessionBound {
+                                agent_session_id: session_id.to_string(),
+                            }]
                         } else {
-                            vec![AgentEvent::Raw { payload: trimmed.to_string() }]
+                            vec![AgentEvent::Raw {
+                                payload: trimmed.to_string(),
+                            }]
                         }
                     }
-                    _ => vec![AgentEvent::Raw { payload: trimmed.to_string() }],
+                    _ => vec![AgentEvent::Raw {
+                        payload: trimmed.to_string(),
+                    }],
                 }
             }
 
@@ -125,19 +133,27 @@ impl AgentAdapter for ClaudeAdapter {
                             Some("text") => {
                                 if let Some(text) = item["text"].as_str() {
                                     if !text.is_empty() {
-                                        events.push(AgentEvent::TextDelta { text: text.to_string() });
+                                        events.push(AgentEvent::TextDelta {
+                                            text: text.to_string(),
+                                        });
                                     }
                                 }
                             }
                             Some("tool_use") => {
-                                let id = item["id"].as_str().unwrap_or_else(|| {
-                                    warn!("claude adapter: tool_use missing 'id' field");
-                                    ""
-                                }).to_string();
-                                let name = item["name"].as_str().unwrap_or_else(|| {
-                                    warn!("claude adapter: tool_use missing 'name' field");
-                                    ""
-                                }).to_string();
+                                let id = item["id"]
+                                    .as_str()
+                                    .unwrap_or_else(|| {
+                                        warn!("claude adapter: tool_use missing 'id' field");
+                                        ""
+                                    })
+                                    .to_string();
+                                let name = item["name"]
+                                    .as_str()
+                                    .unwrap_or_else(|| {
+                                        warn!("claude adapter: tool_use missing 'name' field");
+                                        ""
+                                    })
+                                    .to_string();
                                 let input = item["input"].clone();
                                 events.push(AgentEvent::ToolStart { id, name, input });
                             }
@@ -146,7 +162,9 @@ impl AgentAdapter for ClaudeAdapter {
                     }
                 }
                 if events.is_empty() {
-                    vec![AgentEvent::Raw { payload: trimmed.to_string() }]
+                    vec![AgentEvent::Raw {
+                        payload: trimmed.to_string(),
+                    }]
                 } else {
                     events
                 }
@@ -174,13 +192,18 @@ impl AgentAdapter for ClaudeAdapter {
                     let mut events = vec![];
                     if let Some(result_text) = value["result"].as_str() {
                         if !result_text.is_empty() {
-                            events.push(AgentEvent::TextDone { full_text: result_text.to_string() });
+                            events.push(AgentEvent::TextDone {
+                                full_text: result_text.to_string(),
+                            });
                         }
                     }
                     events.push(AgentEvent::TurnDone { usage });
                     events
                 } else if subtype == "error" {
-                    let msg = value["error"].as_str().unwrap_or("unknown error").to_string();
+                    let msg = value["error"]
+                        .as_str()
+                        .unwrap_or("unknown error")
+                        .to_string();
                     vec![
                         AgentEvent::Error { message: msg },
                         AgentEvent::TurnDone { usage },
@@ -198,7 +221,9 @@ impl AgentAdapter for ClaudeAdapter {
 
             // ── Unknown / passthrough ─────────────────────────────────────────
             _ => {
-                vec![AgentEvent::Raw { payload: trimmed.to_string() }]
+                vec![AgentEvent::Raw {
+                    payload: trimmed.to_string(),
+                }]
             }
         }
     }
@@ -210,7 +235,11 @@ impl AgentAdapter for ClaudeAdapter {
 
     /// Approval decision: `"y\n"` for approved, `"n\n"` for denied.
     fn format_approval(&self, approved: bool) -> Option<String> {
-        if approved { Some("y\n".to_string()) } else { Some("n\n".to_string()) }
+        if approved {
+            Some("y\n".to_string())
+        } else {
+            Some("n\n".to_string())
+        }
     }
 }
 
@@ -225,7 +254,11 @@ fn parse_usage(value: &serde_json::Value) -> Option<UsageInfo> {
     let input_tokens = usage["input_tokens"].as_u64().unwrap_or(0);
     let output_tokens = usage["output_tokens"].as_u64().unwrap_or(0);
     let cost_usd = value["cost_usd"].as_f64();
-    Some(UsageInfo { input_tokens, output_tokens, cost_usd })
+    Some(UsageInfo {
+        input_tokens,
+        output_tokens,
+        cost_usd,
+    })
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -235,7 +268,9 @@ mod tests {
     use super::*;
     use std::ffi::OsStr;
 
-    fn adapter() -> ClaudeAdapter { ClaudeAdapter }
+    fn adapter() -> ClaudeAdapter {
+        ClaudeAdapter
+    }
 
     // ── parse_line: empty / whitespace ────────────────────────────────────────
 
@@ -279,7 +314,8 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert!(
             matches!(&events[0], AgentEvent::SessionBound { agent_session_id } if agent_session_id == "s-abc"),
-            "expected SessionBound with s-abc, got {:?}", events[0]
+            "expected SessionBound with s-abc, got {:?}",
+            events[0]
         );
     }
 
@@ -303,7 +339,8 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert!(
             matches!(&events[0], AgentEvent::Raw { .. }),
-            "expected Raw when session_id is absent, got {:?}", events[0]
+            "expected Raw when session_id is absent, got {:?}",
+            events[0]
         );
     }
 
@@ -319,39 +356,54 @@ mod tests {
     fn parse_system_hook_started_returns_empty() {
         let line = r#"{"type":"system","subtype":"hook_started","hook_id":"h1"}"#;
         let events = adapter().parse_line(line);
-        assert!(events.is_empty(), "hook_started should be silently ignored, got {:?}", events);
+        assert!(
+            events.is_empty(),
+            "hook_started should be silently ignored, got {:?}",
+            events
+        );
     }
 
     #[test]
     fn parse_system_hook_response_returns_empty() {
         let line = r#"{"type":"system","subtype":"hook_response","hook_id":"h1","response":{}}"#;
         let events = adapter().parse_line(line);
-        assert!(events.is_empty(), "hook_response should be silently ignored, got {:?}", events);
+        assert!(
+            events.is_empty(),
+            "hook_response should be silently ignored, got {:?}",
+            events
+        );
     }
 
     #[test]
     fn parse_rate_limit_event_returns_empty() {
         let line = r#"{"type":"rate_limit_event","retry_after_ms":5000}"#;
         let events = adapter().parse_line(line);
-        assert!(events.is_empty(), "rate_limit_event should be silently ignored, got {:?}", events);
+        assert!(
+            events.is_empty(),
+            "rate_limit_event should be silently ignored, got {:?}",
+            events
+        );
     }
 
     // ── parse_line: assistant text → TextDelta ────────────────────────────────
 
     #[test]
     fn parse_text_delta_basic() {
-        let line = r#"{"type":"assistant","message":{"content":[{"type":"text","text":"Hello!"}]}}"#;
+        let line =
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"Hello!"}]}}"#;
         let events = adapter().parse_line(line);
         assert_eq!(events.len(), 1);
         assert!(
             matches!(&events[0], AgentEvent::TextDelta { text } if text == "Hello!"),
-            "expected TextDelta 'Hello!', got {:?}", events[0]
+            "expected TextDelta 'Hello!', got {:?}",
+            events[0]
         );
     }
 
     #[test]
     fn parse_text_delta_multiline_text() {
-        let line = r#"{"type":"assistant","message":{"content":[{"type":"text","text":"line1\nline2"}]}}"#;
+        let line =
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"line1\nline2"}]}}"#;
         let events = adapter().parse_line(line);
         assert_eq!(events.len(), 1);
         if let AgentEvent::TextDelta { text } = &events[0] {
@@ -369,7 +421,8 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert!(
             matches!(&events[0], AgentEvent::Raw { .. }),
-            "empty text should fall back to Raw, got {:?}", events[0]
+            "empty text should fall back to Raw, got {:?}",
+            events[0]
         );
     }
 
@@ -382,7 +435,8 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert!(
             matches!(&events[0], AgentEvent::ToolStart { id, name, .. } if id == "t1" && name == "read_file"),
-            "expected ToolStart t1/read_file, got {:?}", events[0]
+            "expected ToolStart t1/read_file, got {:?}",
+            events[0]
         );
     }
 
@@ -407,7 +461,10 @@ mod tests {
         let events = adapter().parse_line(line);
         assert_eq!(events.len(), 1);
         if let AgentEvent::ToolStart { input, .. } = &events[0] {
-            assert!(input.is_object(), "input should be an object even when empty");
+            assert!(
+                input.is_object(),
+                "input should be an object even when empty"
+            );
         } else {
             panic!("expected ToolStart, got {:?}", events[0]);
         }
@@ -423,8 +480,16 @@ mod tests {
         ]}}"#;
         let events = adapter().parse_line(line);
         assert_eq!(events.len(), 2);
-        assert!(events.iter().any(|e| matches!(e, AgentEvent::TextDelta { .. })));
-        assert!(events.iter().any(|e| matches!(e, AgentEvent::ToolStart { .. })));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, AgentEvent::TextDelta { .. }))
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, AgentEvent::ToolStart { .. }))
+        );
     }
 
     // ── parse_line: tool_result → ToolDone ───────────────────────────────────
@@ -437,7 +502,8 @@ mod tests {
         assert!(
             matches!(&events[0], AgentEvent::ToolDone { id, output, success, .. }
                 if id == "t1" && output == "file contents here" && *success),
-            "expected ToolDone with correct id/output, got {:?}", events[0]
+            "expected ToolDone with correct id/output, got {:?}",
+            events[0]
         );
     }
 
@@ -447,15 +513,25 @@ mod tests {
     fn parse_result_success_emits_text_done_and_turn_done() {
         let line = r#"{"type":"result","subtype":"success","result":"All done","usage":{"input_tokens":100,"output_tokens":50},"cost_usd":0.001}"#;
         let events = adapter().parse_line(line);
-        assert!(events.iter().any(|e| matches!(e, AgentEvent::TextDone { .. })));
-        assert!(events.iter().any(|e| matches!(e, AgentEvent::TurnDone { usage: Some(_) })));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, AgentEvent::TextDone { .. }))
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, AgentEvent::TurnDone { usage: Some(_) }))
+        );
     }
 
     #[test]
     fn parse_result_success_usage_values_correct() {
         let line = r#"{"type":"result","subtype":"success","result":"","usage":{"input_tokens":200,"output_tokens":75},"cost_usd":0.005}"#;
         let events = adapter().parse_line(line);
-        let turn_done = events.iter().find(|e| matches!(e, AgentEvent::TurnDone { .. }))
+        let turn_done = events
+            .iter()
+            .find(|e| matches!(e, AgentEvent::TurnDone { .. }))
             .expect("must have TurnDone");
         if let AgentEvent::TurnDone { usage: Some(u) } = turn_done {
             assert_eq!(u.input_tokens, 200);
@@ -470,7 +546,11 @@ mod tests {
     fn parse_result_success_no_usage_gives_turn_done_none() {
         let line = r#"{"type":"result","subtype":"success","result":""}"#;
         let events = adapter().parse_line(line);
-        assert!(events.iter().any(|e| matches!(e, AgentEvent::TurnDone { usage: None })));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, AgentEvent::TurnDone { usage: None }))
+        );
     }
 
     #[test]
@@ -478,15 +558,27 @@ mod tests {
         // Empty result string → no TextDone emitted, just TurnDone
         let line = r#"{"type":"result","subtype":"success","result":"","usage":null}"#;
         let events = adapter().parse_line(line);
-        assert!(!events.iter().any(|e| matches!(e, AgentEvent::TextDone { .. })));
-        assert!(events.iter().any(|e| matches!(e, AgentEvent::TurnDone { .. })));
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, AgentEvent::TextDone { .. }))
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, AgentEvent::TurnDone { .. }))
+        );
     }
 
     #[test]
     fn parse_result_error_max_turns_emits_turn_done() {
         let line = r#"{"type":"result","subtype":"error_max_turns","result":"","usage":{"input_tokens":10,"output_tokens":5}}"#;
         let events = adapter().parse_line(line);
-        assert!(events.iter().any(|e| matches!(e, AgentEvent::TurnDone { .. })));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, AgentEvent::TurnDone { .. }))
+        );
     }
 
     #[test]
@@ -494,17 +586,28 @@ mod tests {
         let line = r#"{"type":"result","subtype":"error","error":"Something failed","usage":null}"#;
         let events = adapter().parse_line(line);
         assert!(
-            events.iter().any(|e| matches!(e, AgentEvent::Error { message } if message == "Something failed")),
-            "expected Error event with message, got {:?}", events
+            events.iter().any(
+                |e| matches!(e, AgentEvent::Error { message } if message == "Something failed")
+            ),
+            "expected Error event with message, got {:?}",
+            events
         );
-        assert!(events.iter().any(|e| matches!(e, AgentEvent::TurnDone { .. })));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, AgentEvent::TurnDone { .. }))
+        );
     }
 
     #[test]
     fn parse_result_unknown_subtype_emits_turn_done() {
         let line = r#"{"type":"result","subtype":"future_thing"}"#;
         let events = adapter().parse_line(line);
-        assert!(events.iter().any(|e| matches!(e, AgentEvent::TurnDone { .. })));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, AgentEvent::TurnDone { .. }))
+        );
     }
 
     // ── parse_line: user echo → empty ─────────────────────────────────────────
@@ -513,7 +616,11 @@ mod tests {
     fn parse_user_message_returns_empty() {
         let line = r#"{"type":"user","message":{"content":[{"type":"text","text":"hi"}]}}"#;
         let events = adapter().parse_line(line);
-        assert!(events.is_empty(), "user echo should produce no events, got {:?}", events);
+        assert!(
+            events.is_empty(),
+            "user echo should produce no events, got {:?}",
+            events
+        );
     }
 
     // ── parse_line: unknown type → Raw ────────────────────────────────────────
@@ -532,7 +639,10 @@ mod tests {
         let events = adapter().parse_line(line);
         assert_eq!(events.len(), 1);
         if let AgentEvent::Raw { payload } = &events[0] {
-            assert!(payload.contains("metrics"), "payload should contain original content");
+            assert!(
+                payload.contains("metrics"),
+                "payload should contain original content"
+            );
         } else {
             panic!("expected Raw, got {:?}", events[0]);
         }
@@ -598,23 +708,37 @@ mod tests {
     fn build_command_includes_print_flag() {
         let cmd = adapter().build_command(&default_config());
         let args = cmd_args(&cmd);
-        assert!(args.contains(&"--print".to_string()), "--print must be in args (required for stream-json), got {:?}", args);
+        assert!(
+            args.contains(&"--print".to_string()),
+            "--print must be in args (required for stream-json), got {:?}",
+            args
+        );
     }
 
     #[test]
     fn build_command_includes_output_format_stream_json() {
         let cmd = adapter().build_command(&default_config());
         let args = cmd_args(&cmd);
-        let pos = args.iter().position(|a| a == "--output-format")
+        let pos = args
+            .iter()
+            .position(|a| a == "--output-format")
             .expect("--output-format flag must be present");
-        assert_eq!(args[pos + 1], "stream-json", "next arg after --output-format must be stream-json");
+        assert_eq!(
+            args[pos + 1],
+            "stream-json",
+            "next arg after --output-format must be stream-json"
+        );
     }
 
     #[test]
     fn build_command_includes_verbose_flag() {
         let cmd = adapter().build_command(&default_config());
         let args = cmd_args(&cmd);
-        assert!(args.contains(&"--verbose".to_string()), "--verbose must be in args, got {:?}", args);
+        assert!(
+            args.contains(&"--verbose".to_string()),
+            "--verbose must be in args, got {:?}",
+            args
+        );
     }
 
     #[test]
@@ -628,9 +752,15 @@ mod tests {
         };
         let cmd = adapter().build_command(&config);
         let args = cmd_args(&cmd);
-        assert!(args.contains(&"--print".to_string()), "--print must always be present");
+        assert!(
+            args.contains(&"--print".to_string()),
+            "--print must always be present"
+        );
         assert!(args.contains(&"--verbose".to_string()));
-        let pos = args.iter().position(|a| a == "--output-format").expect("--output-format missing");
+        let pos = args
+            .iter()
+            .position(|a| a == "--output-format")
+            .expect("--output-format missing");
         assert_eq!(args[pos + 1], "stream-json");
     }
 
@@ -640,7 +770,10 @@ mod tests {
     fn build_command_no_resume_when_not_configured() {
         let cmd = adapter().build_command(&default_config());
         let args = cmd_args(&cmd);
-        assert!(!args.contains(&"--resume".to_string()), "--resume should not be present without config");
+        assert!(
+            !args.contains(&"--resume".to_string()),
+            "--resume should not be present without config"
+        );
     }
 
     #[test]
@@ -651,7 +784,9 @@ mod tests {
         };
         let cmd = adapter().build_command(&config);
         let args = cmd_args(&cmd);
-        let pos = args.iter().position(|a| a == "--resume")
+        let pos = args
+            .iter()
+            .position(|a| a == "--resume")
             .expect("--resume must be present when resume_session_id is set");
         assert_eq!(args[pos + 1], "sess-42");
     }
@@ -660,7 +795,10 @@ mod tests {
     fn build_command_no_model_when_not_configured() {
         let cmd = adapter().build_command(&default_config());
         let args = cmd_args(&cmd);
-        assert!(!args.contains(&"--model".to_string()), "--model should not be present without config");
+        assert!(
+            !args.contains(&"--model".to_string()),
+            "--model should not be present without config"
+        );
     }
 
     #[test]
@@ -671,7 +809,9 @@ mod tests {
         };
         let cmd = adapter().build_command(&config);
         let args = cmd_args(&cmd);
-        let pos = args.iter().position(|a| a == "--model")
+        let pos = args
+            .iter()
+            .position(|a| a == "--model")
             .expect("--model must be present when model is set");
         assert_eq!(args[pos + 1], "claude-3-5-sonnet-20241022");
     }
@@ -679,7 +819,10 @@ mod tests {
     #[test]
     fn build_command_includes_extra_flags() {
         let config = AdapterConfig {
-            extra_flags: vec!["--dangerously-skip-permissions".to_string(), "--headless".to_string()],
+            extra_flags: vec![
+                "--dangerously-skip-permissions".to_string(),
+                "--headless".to_string(),
+            ],
             ..default_config()
         };
         let cmd = adapter().build_command(&config);
@@ -708,7 +851,11 @@ mod tests {
         // the return type contract: if something is returned, it's an absolute path.
         let result = adapter().detect();
         if let Some(path) = result {
-            assert!(path.is_absolute(), "detect() must return an absolute path, got {:?}", path);
+            assert!(
+                path.is_absolute(),
+                "detect() must return an absolute path, got {:?}",
+                path
+            );
         }
         // None is also valid on machines without claude installed.
     }
@@ -726,7 +873,10 @@ mod tests {
         // home_dir fallback
         if let Some(home) = dirs::home_dir() {
             let home_fallback = home.join(".local/bin/claude");
-            assert!(home_fallback.is_absolute(), "home fallback must be absolute");
+            assert!(
+                home_fallback.is_absolute(),
+                "home fallback must be absolute"
+            );
         }
     }
 
@@ -758,7 +908,10 @@ mod tests {
     fn capabilities_session_resumable() {
         // Claude supports --resume; session_resumable must be true.
         let caps = adapter().capabilities();
-        assert!(caps.session_resumable, "Claude adapter must advertise session_resumable=true");
+        assert!(
+            caps.session_resumable,
+            "Claude adapter must advertise session_resumable=true"
+        );
     }
 
     // ── name ──────────────────────────────────────────────────────────────────

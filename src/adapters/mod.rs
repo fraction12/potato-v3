@@ -92,9 +92,9 @@ pub trait AgentAdapter: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::adapters::generic::GenericAdapter;
     use crate::adapters::claude::ClaudeAdapter;
     use crate::adapters::codex::CodexAdapter;
+    use crate::adapters::generic::GenericAdapter;
 
     #[test]
     fn generic_adapter_name() {
@@ -209,6 +209,8 @@ mod tests {
         let line = r#"{"type":"system","subtype":"init","session_id":"abc-123","tools":[]}"#;
         let events = a.parse_line(line);
         assert_eq!(events.len(), 1);
-        assert!(matches!(&events[0], AgentEvent::SessionBound { agent_session_id } if agent_session_id == "abc-123"));
+        assert!(
+            matches!(&events[0], AgentEvent::SessionBound { agent_session_id } if agent_session_id == "abc-123")
+        );
     }
 }

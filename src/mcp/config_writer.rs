@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
@@ -212,7 +212,8 @@ mod tests {
         fs::write(
             dir.join(".mcp.json"),
             serde_json::to_string_pretty(&existing).unwrap(),
-        ).unwrap();
+        )
+        .unwrap();
 
         write_mcp_config(&dir, &[], "").unwrap();
         let config = read_config(&dir);
@@ -237,7 +238,8 @@ mod tests {
         fs::write(
             dir.join(".mcp.json"),
             serde_json::to_string_pretty(&legacy).unwrap(),
-        ).unwrap();
+        )
+        .unwrap();
 
         write_mcp_config(&dir, &[], "").unwrap();
         let config = read_config(&dir);
@@ -258,7 +260,10 @@ mod tests {
         let config = read_config(&dir);
         let servers = config["mcpServers"].as_object().unwrap();
         // Exactly one potato entry.
-        assert_eq!(servers.keys().filter(|k| k.starts_with("potato")).count(), 1);
+        assert_eq!(
+            servers.keys().filter(|k| k.starts_with("potato")).count(),
+            1
+        );
         assert!(servers.contains_key("potato"));
         cleanup(&dir);
     }
@@ -287,7 +292,8 @@ mod tests {
         fs::write(
             dir.join(".mcp.json"),
             serde_json::to_string_pretty(&mixed).unwrap(),
-        ).unwrap();
+        )
+        .unwrap();
         remove_mcp_config(&dir).unwrap();
         let config = read_config(&dir);
         assert!(config["mcpServers"]["user-server"].is_object());
@@ -361,7 +367,8 @@ mod tests {
         fs::write(
             dir.join(".mcp.json"),
             serde_json::to_string_pretty(&config).unwrap(),
-        ).unwrap();
+        )
+        .unwrap();
         remove_mcp_config(&dir).unwrap();
         let result = read_config(&dir);
         assert_eq!(result["version"], 1);

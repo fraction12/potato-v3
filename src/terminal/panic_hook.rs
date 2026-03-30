@@ -42,9 +42,7 @@ pub fn install_panic_hook() {
             // stderr is already redirected to the log file (T-906),
             // so this write goes to disk, not the TUI surface.
             REDRAW_NEEDED.store(true, Ordering::SeqCst);
-            eprintln!(
-                "[potato] background thread panic (TUI redraw scheduled): {info}"
-            );
+            eprintln!("[potato] background thread panic (TUI redraw scheduled): {info}");
         }
     }));
 }
@@ -83,9 +81,6 @@ mod tests {
             take_redraw_flag(),
             "flag should be set after background thread write"
         );
-        assert!(
-            !take_redraw_flag(),
-            "flag should be cleared after take"
-        );
+        assert!(!take_redraw_flag(), "flag should be cleared after take");
     }
 }

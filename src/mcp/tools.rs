@@ -5,10 +5,12 @@
 
 use std::sync::{Arc, Mutex};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::mcp::protocol::{CallToolResult, ToolInfo};
-use crate::mcp::state::{ClaimResult, InterSessionState, MessagePriority, PaneRole, RoleClaimResult};
+use crate::mcp::state::{
+    ClaimResult, InterSessionState, MessagePriority, PaneRole, RoleClaimResult,
+};
 
 // ── Tool names ────────────────────────────────────────────────────────────────
 
@@ -245,7 +247,9 @@ fn handle_send_message(
         Some("urgent") => MessagePriority::Urgent,
         Some("normal") | None => MessagePriority::Normal,
         Some(other) => {
-            return CallToolResult::failure(format!("Invalid priority: {other}. Must be 'normal' or 'urgent'"));
+            return CallToolResult::failure(format!(
+                "Invalid priority: {other}. Must be 'normal' or 'urgent'"
+            ));
         }
     };
 
@@ -336,10 +340,7 @@ fn handle_get_partner_status(
     CallToolResult::success(serde_json::to_string_pretty(&result).unwrap_or_default())
 }
 
-fn handle_shared_context(
-    args: &Value,
-    state: &Arc<Mutex<InterSessionState>>,
-) -> CallToolResult {
+fn handle_shared_context(args: &Value, state: &Arc<Mutex<InterSessionState>>) -> CallToolResult {
     let op = match args.get("op").and_then(Value::as_str) {
         Some(o) => o,
         None => return CallToolResult::failure("Missing required field: op"),
@@ -367,7 +368,9 @@ fn handle_shared_context(
             };
             let value = match args.get("value") {
                 Some(v) => v.clone(),
-                None => return CallToolResult::failure("Missing required field: value (for op=set)"),
+                None => {
+                    return CallToolResult::failure("Missing required field: value (for op=set)");
+                }
             };
             let mut st = match state.lock() {
                 Ok(g) => g,
@@ -379,7 +382,9 @@ fn handle_shared_context(
         "delete" => {
             let key = match args.get("key").and_then(Value::as_str) {
                 Some(k) => k,
-                None => return CallToolResult::failure("Missing required field: key (for op=delete)"),
+                None => {
+                    return CallToolResult::failure("Missing required field: key (for op=delete)");
+                }
             };
             let mut st = match state.lock() {
                 Ok(g) => g,
@@ -477,15 +482,21 @@ fn handle_claim_role(
 
     let mut st = lock_state!(state);
 
-    let role = PaneRole { name: role_name.clone(), description };
+    let role = PaneRole {
+        name: role_name.clone(),
+        description,
+    };
     match st.claim_role(pane_id, role) {
         RoleClaimResult::Claimed => {
             let all_roles = collect_all_roles(&st, None);
-            CallToolResult::success(serde_json::to_string_pretty(&json!({
-                "claimed": true,
-                "role": role_name,
-                "all_roles": all_roles
-            })).unwrap_or_default())
+            CallToolResult::success(
+                serde_json::to_string_pretty(&json!({
+                    "claimed": true,
+                    "role": role_name,
+                    "all_roles": all_roles
+                }))
+                .unwrap_or_default(),
+            )
         }
         RoleClaimResult::AlreadyClaimed { held_by } => {
             let all_roles = collect_all_roles(&st, None);
@@ -500,10 +511,7 @@ fn handle_claim_role(
     }
 }
 
-fn handle_get_role(
-    pane_id: u64,
-    state: &Arc<Mutex<InterSessionState>>,
-) -> CallToolResult {
+fn handle_get_role(pane_id: u64, state: &Arc<Mutex<InterSessionState>>) -> CallToolResult {
     let st = lock_state!(state);
     let role = st.get_role(pane_id);
 
@@ -519,35 +527,34 @@ fn handle_get_role(
     CallToolResult::success(serde_json::to_string_pretty(&result).unwrap_or_default())
 }
 
-fn handle_list_tasks(
-    args: &Value,
-    state: &Arc<Mutex<InterSessionState>>,
-) -> CallToolResult {
+fn handle_list_tasks(args: &Value, state: &Arc<Mutex<InterSessionState>>) -> CallToolResult {
     let st = lock_state!(state);
     let status_filter = args.get("status").and_then(|v| v.as_str());
 
-    let tasks: Vec<&crate::mcp::state::OpenSpecTaskSnapshot> = st.openspec_tasks
+    let tasks: Vec<&crate::mcp::state::OpenSpecTaskSnapshot> = st
+        .openspec_tasks
         .iter()
-        .filter(|t| {
-            match status_filter {
-                Some(filter) => t.status == filter,
-                None => true,
-            }
+        .filter(|t| match status_filter {
+            Some(filter) => t.status == filter,
+            None => true,
         })
         .collect();
 
     // Annotate with claim info from the task board.
-    let annotated: Vec<Value> = tasks.iter().map(|t| {
-        let claimed_by = st.task_board.get(&t.id).map(|c| c.claimed_by);
-        json!({
-            "id": t.id,
-            "title": t.title,
-            "status": t.status,
-            "phase": t.phase,
-            "severity": t.severity,
-            "claimed_by_pane": claimed_by,
+    let annotated: Vec<Value> = tasks
+        .iter()
+        .map(|t| {
+            let claimed_by = st.task_board.get(&t.id).map(|c| c.claimed_by);
+            json!({
+                "id": t.id,
+                "title": t.title,
+                "status": t.status,
+                "phase": t.phase,
+                "severity": t.severity,
+                "claimed_by_pane": claimed_by,
+            })
         })
-    }).collect();
+        .collect();
 
     let result = json!({
         "total": annotated.len(),
@@ -578,8 +585,20 @@ mod tests {
         let state = make_state();
         {
             let mut st = state.lock().unwrap();
-            st.set_role(0, PaneRole { name: "architect".into(), description: "Designs systems".into() });
-            st.set_role(1, PaneRole { name: "implementer".into(), description: "Builds things".into() });
+            st.set_role(
+                0,
+                PaneRole {
+                    name: "architect".into(),
+                    description: "Designs systems".into(),
+                },
+            );
+            st.set_role(
+                1,
+                PaneRole {
+                    name: "implementer".into(),
+                    description: "Builds things".into(),
+                },
+            );
         }
         state
     }
@@ -618,7 +637,11 @@ mod tests {
     #[test]
     fn all_tools_have_non_empty_descriptions() {
         for tool in tool_definitions() {
-            assert!(!tool.description.is_empty(), "Tool {} has empty description", tool.name);
+            assert!(
+                !tool.description.is_empty(),
+                "Tool {} has empty description",
+                tool.name
+            );
         }
     }
 
@@ -626,8 +649,7 @@ mod tests {
     fn all_tools_have_object_input_schema() {
         for tool in tool_definitions() {
             assert_eq!(
-                tool.input_schema["type"],
-                "object",
+                tool.input_schema["type"], "object",
                 "Tool {} input_schema.type != 'object'",
                 tool.name
             );
@@ -683,7 +705,11 @@ mod tests {
         let state = make_state();
         let result = handle_tool_call(TOOL_SEND_MESSAGE, &json!({"to": "1"}), 0, &state);
         assert!(result.is_error);
-        assert!(result.content[0].text.contains("Missing required field: message"));
+        assert!(
+            result.content[0]
+                .text
+                .contains("Missing required field: message")
+        );
     }
 
     #[test]
@@ -716,7 +742,10 @@ mod tests {
     #[test]
     fn get_messages_returns_messages() {
         let state = make_state();
-        state.lock().unwrap().send_message(1, 0, "from pane 1", MessagePriority::Normal);
+        state
+            .lock()
+            .unwrap()
+            .send_message(1, 0, "from pane 1", MessagePriority::Normal);
         let result = handle_tool_call(TOOL_GET_MESSAGES, &json!({}), 0, &state);
         assert!(!result.is_error);
         assert!(result.content[0].text.contains("from pane 1"));
@@ -725,7 +754,10 @@ mod tests {
     #[test]
     fn get_messages_marks_read_by_default() {
         let state = make_state();
-        state.lock().unwrap().send_message(1, 0, "msg", MessagePriority::Normal);
+        state
+            .lock()
+            .unwrap()
+            .send_message(1, 0, "msg", MessagePriority::Normal);
         handle_tool_call(TOOL_GET_MESSAGES, &json!({}), 0, &state);
         // Second call should return empty.
         let result2 = handle_tool_call(TOOL_GET_MESSAGES, &json!({}), 0, &state);
@@ -735,7 +767,10 @@ mod tests {
     #[test]
     fn get_messages_does_not_mark_read_when_false() {
         let state = make_state();
-        state.lock().unwrap().send_message(1, 0, "msg", MessagePriority::Normal);
+        state
+            .lock()
+            .unwrap()
+            .send_message(1, 0, "msg", MessagePriority::Normal);
         handle_tool_call(TOOL_GET_MESSAGES, &json!({"mark_read": false}), 0, &state);
         // Should still be unread.
         let result2 = handle_tool_call(TOOL_GET_MESSAGES, &json!({"mark_read": false}), 0, &state);
@@ -774,8 +809,18 @@ mod tests {
     #[test]
     fn shared_context_set_and_get() {
         let state = make_state();
-        handle_tool_call(TOOL_SHARED_CONTEXT, &json!({"op": "set", "key": "k", "value": "v"}), 0, &state);
-        let result = handle_tool_call(TOOL_SHARED_CONTEXT, &json!({"op": "get", "key": "k"}), 0, &state);
+        handle_tool_call(
+            TOOL_SHARED_CONTEXT,
+            &json!({"op": "set", "key": "k", "value": "v"}),
+            0,
+            &state,
+        );
+        let result = handle_tool_call(
+            TOOL_SHARED_CONTEXT,
+            &json!({"op": "get", "key": "k"}),
+            0,
+            &state,
+        );
         assert!(!result.is_error);
         assert!(result.content[0].text.contains("v"));
     }
@@ -783,7 +828,12 @@ mod tests {
     #[test]
     fn shared_context_get_missing_key() {
         let state = make_state();
-        let result = handle_tool_call(TOOL_SHARED_CONTEXT, &json!({"op": "get", "key": "nope"}), 0, &state);
+        let result = handle_tool_call(
+            TOOL_SHARED_CONTEXT,
+            &json!({"op": "get", "key": "nope"}),
+            0,
+            &state,
+        );
         assert!(!result.is_error);
         assert!(result.content[0].text.contains("not found"));
     }
@@ -791,8 +841,18 @@ mod tests {
     #[test]
     fn shared_context_delete_existing() {
         let state = make_state();
-        handle_tool_call(TOOL_SHARED_CONTEXT, &json!({"op": "set", "key": "k", "value": 1}), 0, &state);
-        let result = handle_tool_call(TOOL_SHARED_CONTEXT, &json!({"op": "delete", "key": "k"}), 0, &state);
+        handle_tool_call(
+            TOOL_SHARED_CONTEXT,
+            &json!({"op": "set", "key": "k", "value": 1}),
+            0,
+            &state,
+        );
+        let result = handle_tool_call(
+            TOOL_SHARED_CONTEXT,
+            &json!({"op": "delete", "key": "k"}),
+            0,
+            &state,
+        );
         assert!(!result.is_error);
         assert!(result.content[0].text.contains("Deleted"));
     }
@@ -800,7 +860,12 @@ mod tests {
     #[test]
     fn shared_context_delete_missing() {
         let state = make_state();
-        let result = handle_tool_call(TOOL_SHARED_CONTEXT, &json!({"op": "delete", "key": "ghost"}), 0, &state);
+        let result = handle_tool_call(
+            TOOL_SHARED_CONTEXT,
+            &json!({"op": "delete", "key": "ghost"}),
+            0,
+            &state,
+        );
         assert!(!result.is_error);
         assert!(result.content[0].text.contains("not found"));
     }
@@ -808,8 +873,18 @@ mod tests {
     #[test]
     fn shared_context_list() {
         let state = make_state();
-        handle_tool_call(TOOL_SHARED_CONTEXT, &json!({"op": "set", "key": "b", "value": 1}), 0, &state);
-        handle_tool_call(TOOL_SHARED_CONTEXT, &json!({"op": "set", "key": "a", "value": 2}), 0, &state);
+        handle_tool_call(
+            TOOL_SHARED_CONTEXT,
+            &json!({"op": "set", "key": "b", "value": 1}),
+            0,
+            &state,
+        );
+        handle_tool_call(
+            TOOL_SHARED_CONTEXT,
+            &json!({"op": "set", "key": "a", "value": 2}),
+            0,
+            &state,
+        );
         let result = handle_tool_call(TOOL_SHARED_CONTEXT, &json!({"op": "list"}), 0, &state);
         assert!(!result.is_error);
         assert!(result.content[0].text.contains("a"));
@@ -829,7 +904,11 @@ mod tests {
         let state = make_state();
         let result = handle_tool_call(TOOL_SHARED_CONTEXT, &json!({}), 0, &state);
         assert!(result.is_error);
-        assert!(result.content[0].text.contains("Missing required field: op"));
+        assert!(
+            result.content[0]
+                .text
+                .contains("Missing required field: op")
+        );
     }
 
     #[test]
@@ -843,17 +922,35 @@ mod tests {
     #[test]
     fn shared_context_set_missing_key() {
         let state = make_state();
-        let result = handle_tool_call(TOOL_SHARED_CONTEXT, &json!({"op": "set", "value": 1}), 0, &state);
+        let result = handle_tool_call(
+            TOOL_SHARED_CONTEXT,
+            &json!({"op": "set", "value": 1}),
+            0,
+            &state,
+        );
         assert!(result.is_error);
-        assert!(result.content[0].text.contains("Missing required field: key"));
+        assert!(
+            result.content[0]
+                .text
+                .contains("Missing required field: key")
+        );
     }
 
     #[test]
     fn shared_context_set_missing_value() {
         let state = make_state();
-        let result = handle_tool_call(TOOL_SHARED_CONTEXT, &json!({"op": "set", "key": "k"}), 0, &state);
+        let result = handle_tool_call(
+            TOOL_SHARED_CONTEXT,
+            &json!({"op": "set", "key": "k"}),
+            0,
+            &state,
+        );
         assert!(result.is_error);
-        assert!(result.content[0].text.contains("Missing required field: value"));
+        assert!(
+            result.content[0]
+                .text
+                .contains("Missing required field: value")
+        );
     }
 
     // ── potato_claim_task ─────────────────────────────────────────────────────
@@ -883,7 +980,11 @@ mod tests {
         let state = make_state();
         let result = handle_tool_call(TOOL_CLAIM_TASK, &json!({}), 0, &state);
         assert!(result.is_error);
-        assert!(result.content[0].text.contains("Missing required field: task_id"));
+        assert!(
+            result.content[0]
+                .text
+                .contains("Missing required field: task_id")
+        );
     }
 
     // ── potato_release_task ───────────────────────────────────────────────────
@@ -911,7 +1012,11 @@ mod tests {
         let state = make_state();
         let result = handle_tool_call(TOOL_RELEASE_TASK, &json!({}), 0, &state);
         assert!(result.is_error);
-        assert!(result.content[0].text.contains("Missing required field: task_id"));
+        assert!(
+            result.content[0]
+                .text
+                .contains("Missing required field: task_id")
+        );
     }
 
     // ── potato_claim_role ──────────────────────────────────────────────────────
@@ -919,7 +1024,12 @@ mod tests {
     #[test]
     fn claim_role_success() {
         let state = make_state();
-        let result = handle_tool_call(TOOL_CLAIM_ROLE, &json!({"role": "architect", "description": "Designs"}), 0, &state);
+        let result = handle_tool_call(
+            TOOL_CLAIM_ROLE,
+            &json!({"role": "architect", "description": "Designs"}),
+            0,
+            &state,
+        );
         assert!(!result.is_error);
         let parsed: Value = serde_json::from_str(&result.content[0].text).unwrap();
         assert_eq!(parsed["claimed"], true);
@@ -950,7 +1060,12 @@ mod tests {
     fn claim_role_idempotent_same_pane() {
         let state = make_state();
         handle_tool_call(TOOL_CLAIM_ROLE, &json!({"role": "architect"}), 0, &state);
-        let result = handle_tool_call(TOOL_CLAIM_ROLE, &json!({"role": "architect", "description": "updated"}), 0, &state);
+        let result = handle_tool_call(
+            TOOL_CLAIM_ROLE,
+            &json!({"role": "architect", "description": "updated"}),
+            0,
+            &state,
+        );
         let parsed: Value = serde_json::from_str(&result.content[0].text).unwrap();
         assert_eq!(parsed["claimed"], true);
     }

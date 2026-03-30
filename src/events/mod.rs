@@ -134,21 +134,29 @@ mod tests {
         let bus = EventBus::new();
         let mut rx1 = bus.subscribe();
         let mut rx2 = bus.subscribe();
-        bus.publish(AgentEvent::Error { message: "oops".into() });
+        bus.publish(AgentEvent::Error {
+            message: "oops".into(),
+        });
         assert!(rx1.try_recv().is_ok());
         assert!(rx2.try_recv().is_ok());
     }
 
     #[test]
     fn usage_info_optional_cost() {
-        let info = UsageInfo { input_tokens: 10, output_tokens: 20, cost_usd: None };
+        let info = UsageInfo {
+            input_tokens: 10,
+            output_tokens: 20,
+            cost_usd: None,
+        };
         assert_eq!(info.input_tokens, 10);
         assert!(info.cost_usd.is_none());
     }
 
     #[test]
     fn agent_event_serialization_roundtrip() {
-        let event = AgentEvent::TextDelta { text: "hello".into() };
+        let event = AgentEvent::TextDelta {
+            text: "hello".into(),
+        };
         let json = serde_json::to_string(&event).unwrap();
         let decoded: AgentEvent = serde_json::from_str(&json).unwrap();
         if let AgentEvent::TextDelta { text } = decoded {
@@ -160,7 +168,9 @@ mod tests {
 
     #[test]
     fn session_bound_event() {
-        let event = AgentEvent::SessionBound { agent_session_id: "abc-123".into() };
+        let event = AgentEvent::SessionBound {
+            agent_session_id: "abc-123".into(),
+        };
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("abc-123"));
     }

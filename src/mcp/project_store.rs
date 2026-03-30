@@ -10,7 +10,7 @@ use chrono::{DateTime, Utc};
 use rusqlite::{Connection, params};
 use serde_json::Value;
 
-use super::state::{TaskClaim, MessagePriority, InterMessage};
+use super::state::{InterMessage, MessagePriority, TaskClaim};
 
 /// SQLite-backed project store at `.potato/state.db`.
 #[derive(Debug)]
@@ -31,7 +31,10 @@ impl ProjectStore {
         let conn = Connection::open(&db_path)
             .with_context(|| format!("failed to open {}", db_path.display()))?;
 
-        let store = Self { conn, path: db_path };
+        let store = Self {
+            conn,
+            path: db_path,
+        };
         store.configure()?;
         store.migrate()?;
         Ok(store)
@@ -39,24 +42,30 @@ impl ProjectStore {
 
     /// In-memory store for tests.
     pub fn in_memory() -> Result<Self> {
-        let conn = Connection::open_in_memory()
-            .context("failed to open in-memory project store")?;
-        let store = Self { conn, path: PathBuf::from(":memory:") };
+        let conn =
+            Connection::open_in_memory().context("failed to open in-memory project store")?;
+        let store = Self {
+            conn,
+            path: PathBuf::from(":memory:"),
+        };
         store.configure()?;
         store.migrate()?;
         Ok(store)
     }
 
     fn configure(&self) -> Result<()> {
-        self.conn.execute_batch(
-            "PRAGMA journal_mode=WAL;
+        self.conn
+            .execute_batch(
+                "PRAGMA journal_mode=WAL;
              PRAGMA foreign_keys=ON;",
-        ).context("failed to configure project store pragmas")
+            )
+            .context("failed to configure project store pragmas")
     }
 
     fn migrate(&self) -> Result<()> {
-        self.conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS shared_context (
+        self.conn
+            .execute_batch(
+                "CREATE TABLE IF NOT EXISTS shared_context (
                 key   TEXT PRIMARY KEY,
                 value TEXT NOT NULL,
                 updated_at TEXT NOT NULL
@@ -79,8 +88,9 @@ impl ProjectStore {
                 content    TEXT NOT NULL,
                 priority   TEXT NOT NULL DEFAULT 'normal',
                 created_at TEXT NOT NULL
-            );"
-        ).context("failed to run project store migrations")
+            );",
+            )
+            .context("failed to run project store migrations")
     }
 
     // ── Shared context ────────────────────────────────────────────────────────
@@ -100,18 +110,17 @@ impl ProjectStore {
 
     /// Delete a shared context key.
     pub fn delete_context(&self, key: &str) -> Result<bool> {
-        let rows = self.conn.execute(
-            "DELETE FROM shared_context WHERE key = ?1",
-            params![key],
-        )?;
+        let rows = self
+            .conn
+            .execute("DELETE FROM shared_context WHERE key = ?1", params![key])?;
         Ok(rows > 0)
     }
 
     /// Load all shared context entries.
     pub fn load_context(&self) -> Result<Vec<(String, Value)>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT key, value FROM shared_context ORDER BY key"
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT key, value FROM shared_context ORDER BY key")?;
         let rows = stmt.query_map([], |row| {
             let key: String = row.get(0)?;
             let json: String = row.get(1)?;
@@ -169,7 +178,7 @@ impl ProjectStore {
     pub fn load_tasks(&self) -> Result<Vec<TaskClaim>> {
         let mut stmt = self.conn.prepare(
             "SELECT task_id, description, claimed_by, claimed_at
-             FROM task_board WHERE status != 'completed' ORDER BY task_id"
+             FROM task_board WHERE status != 'completed' ORDER BY task_id",
         )?;
         let rows = stmt.query_map([], |row| {
             let task_id: String = row.get(0)?;
@@ -210,7 +219,13 @@ impl ProjectStore {
         self.conn.execute(
             "INSERT INTO message_log (from_pane, to_pane, content, priority, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![msg.from_pane as i64, to_pane as i64, msg.content, priority, now],
+            params![
+                msg.from_pane as i64,
+                to_pane as i64,
+                msg.content,
+                priority,
+                now
+            ],
         )?;
         Ok(())
     }
@@ -219,7 +234,7 @@ impl ProjectStore {
     pub fn recent_messages(&self, limit: usize) -> Result<Vec<(u64, u64, String, String)>> {
         let mut stmt = self.conn.prepare(
             "SELECT from_pane, to_pane, content, created_at
-             FROM message_log ORDER BY id DESC LIMIT ?1"
+             FROM message_log ORDER BY id DESC LIMIT ?1",
         )?;
         let rows = stmt.query_map(params![limit as i64], |row| {
             let from: i64 = row.get(0)?;

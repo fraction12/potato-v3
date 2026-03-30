@@ -47,8 +47,8 @@ pub async fn export_json(messages: &[StoredMessage], path: &str) -> Result<()> {
         })
         .collect();
 
-    let json = serde_json::to_string_pretty(&records)
-        .context("failed to serialize messages to JSON")?;
+    let json =
+        serde_json::to_string_pretty(&records).context("failed to serialize messages to JSON")?;
 
     write_file(path, &json).await
 }
@@ -178,10 +178,7 @@ mod tests {
         let path = dir.path().join("out.json");
         let path_str = path.to_str().unwrap();
 
-        let messages = vec![
-            msg("user", "Hello"),
-            msg("assistant", "Hi there"),
-        ];
+        let messages = vec![msg("user", "Hello"), msg("assistant", "Hi there")];
 
         export_json(&messages, path_str).await.unwrap();
 

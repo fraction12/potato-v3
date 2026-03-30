@@ -2,9 +2,7 @@
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::app::state::{
-    AppScreen, AppState, DashboardFocus, DashboardInput, DashboardMenuItem,
-};
+use crate::app::state::{AppScreen, AppState, DashboardFocus, DashboardInput, DashboardMenuItem};
 
 use super::KeyAction;
 
@@ -33,7 +31,9 @@ pub fn handle(state: &mut AppState, key: &KeyEvent) -> KeyAction {
             }
             (DashboardMenuItem::RoastPotato, DashboardFocus::Detail) => {
                 if dash.selected_detail < dash.recent_sessions.len() {
-                    let id = dash.recent_sessions[dash.selected_detail].session_id.clone();
+                    let id = dash.recent_sessions[dash.selected_detail]
+                        .session_id
+                        .clone();
                     return KeyAction::ResumeSession(id);
                 }
             }
@@ -145,10 +145,7 @@ pub fn handle(state: &mut AppState, key: &KeyEvent) -> KeyAction {
 }
 
 /// Handle keys during inline role input (name or prompt entry).
-fn handle_inline_input(
-    dash: &mut crate::app::state::DashboardState,
-    key: &KeyEvent,
-) -> KeyAction {
+fn handle_inline_input(dash: &mut crate::app::state::DashboardState, key: &KeyEvent) -> KeyAction {
     match &mut dash.input {
         DashboardInput::RoleName(buf) => match key.code {
             KeyCode::Enter => {
@@ -156,11 +153,16 @@ fn handle_inline_input(
                 if name.is_empty() {
                     dash.input = DashboardInput::None;
                 } else {
-                    dash.input = DashboardInput::RolePrompt { name, prompt: String::new() };
+                    dash.input = DashboardInput::RolePrompt {
+                        name,
+                        prompt: String::new(),
+                    };
                 }
             }
             KeyCode::Esc => dash.input = DashboardInput::None,
-            KeyCode::Backspace => { buf.pop(); }
+            KeyCode::Backspace => {
+                buf.pop();
+            }
             KeyCode::Char(c) => buf.push(c),
             _ => {}
         },
@@ -183,7 +185,9 @@ fn handle_inline_input(
                 dash.input = DashboardInput::None;
             }
             KeyCode::Esc => dash.input = DashboardInput::None,
-            KeyCode::Backspace => { prompt.pop(); }
+            KeyCode::Backspace => {
+                prompt.pop();
+            }
             KeyCode::Char(c) => prompt.push(c),
             _ => {}
         },

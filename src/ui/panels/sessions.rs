@@ -153,10 +153,7 @@ impl Panel for SessionsPanel {
                     Span::styled(marker.to_string(), marker_style),
                     Span::styled(s.title.clone(), title_style),
                     Span::raw(" "),
-                    Span::styled(
-                        format!("[{}] {} msg", s.date, s.message_count),
-                        meta_style,
-                    ),
+                    Span::styled(format!("[{}] {} msg", s.date, s.message_count), meta_style),
                 ]);
                 ListItem::new(line)
             })

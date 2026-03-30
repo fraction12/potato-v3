@@ -102,8 +102,8 @@ impl SessionStore {
 
     /// Open an in-memory database — useful for tests.
     pub fn in_memory() -> Result<Self> {
-        let conn = Connection::open_in_memory()
-            .context("failed to open in-memory session database")?;
+        let conn =
+            Connection::open_in_memory().context("failed to open in-memory session database")?;
         let store = Self { conn };
         store.configure()?;
         store.migrate()?;
@@ -112,11 +112,12 @@ impl SessionStore {
 
     /// Apply PRAGMAs (WAL mode, foreign keys).
     fn configure(&self) -> Result<()> {
-        self.conn.execute_batch(
-            "PRAGMA journal_mode=WAL;
+        self.conn
+            .execute_batch(
+                "PRAGMA journal_mode=WAL;
              PRAGMA foreign_keys=ON;",
-        )
-        .context("failed to configure database pragmas")
+            )
+            .context("failed to configure database pragmas")
     }
 
     /// Apply schema migrations — idempotent.
@@ -125,28 +126,39 @@ impl SessionStore {
     /// `project_dir` column) and drops it so the new schema can be created.
     fn migrate(&self) -> Result<()> {
         // Check if we have the old schema (sessions table exists but lacks project_dir).
-        let has_old_schema: bool = self.conn.query_row(
-            "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'project_dir'",
-            [],
-            |row| row.get::<_, i64>(0),
-        ).unwrap_or(0) == 0
-        && self.conn.query_row(
-            "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'title'",
-            [],
-            |row| row.get::<_, i64>(0),
-        ).unwrap_or(0) > 0;
+        let has_old_schema: bool = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'project_dir'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap_or(0)
+            == 0
+            && self
+                .conn
+                .query_row(
+                    "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'title'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap_or(0)
+                > 0;
 
         if has_old_schema {
             tracing::info!("Detected pre-cockpit schema; dropping old sessions/messages tables");
-            self.conn.execute_batch(
-                "DROP TABLE IF EXISTS messages;
-                 DROP TABLE IF EXISTS sessions;"
-            ).context("failed to drop old schema")?;
+            self.conn
+                .execute_batch(
+                    "DROP TABLE IF EXISTS messages;
+                 DROP TABLE IF EXISTS sessions;",
+                )
+                .context("failed to drop old schema")?;
         }
 
-        self.conn.execute_batch(
-            // ── Cockpit sessions table ────────────────────────────────────────
-            "CREATE TABLE IF NOT EXISTS sessions (
+        self.conn
+            .execute_batch(
+                // ── Cockpit sessions table ────────────────────────────────────────
+                "CREATE TABLE IF NOT EXISTS sessions (
                 id                    TEXT PRIMARY KEY,
                 project_dir           TEXT NOT NULL DEFAULT '',
                 agent                 TEXT NOT NULL DEFAULT 'claude',
@@ -184,8 +196,8 @@ impl SessionStore {
                 token_count INTEGER,
                 FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
             );",
-        )
-        .context("failed to run database migrations")
+            )
+            .context("failed to run database migrations")
     }
 
     // ── Session CRUD ──────────────────────────────────────────────────────────
@@ -250,16 +262,16 @@ impl SessionStore {
 
         let rows = stmt.query_map([], |row| {
             Ok(SessionInfo {
-                id:                  row.get(0)?,
-                project_dir:         row.get(1)?,
-                agent:               row.get(2)?,
-                model:               row.get(3)?,
-                title:               row.get(4)?,
-                total_input_tokens:  row.get::<_, i64>(5)? as u64,
+                id: row.get(0)?,
+                project_dir: row.get(1)?,
+                agent: row.get(2)?,
+                model: row.get(3)?,
+                title: row.get(4)?,
+                total_input_tokens: row.get::<_, i64>(5)? as u64,
                 total_output_tokens: row.get::<_, i64>(6)? as u64,
-                turn_count:          row.get::<_, i64>(7)? as u64,
-                created_at:          row.get(8)?,
-                updated_at:          row.get(9)?,
+                turn_count: row.get::<_, i64>(7)? as u64,
+                created_at: row.get(8)?,
+                updated_at: row.get(9)?,
             })
         })?;
 
@@ -282,20 +294,21 @@ impl SessionStore {
 
     /// Append a single event to the log for a session.
     pub fn append_event(&self, event: &SessionEvent) -> Result<()> {
-        self.conn.execute(
-            "INSERT INTO session_events
+        self.conn
+            .execute(
+                "INSERT INTO session_events
                 (session_id, event_type, summary, tokens_in, tokens_out, timestamp)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![
-                event.session_id,
-                event.event_type,
-                event.summary,
-                event.tokens_in,
-                event.tokens_out,
-                event.timestamp,
-            ],
-        )
-        .context("failed to insert session event")?;
+                params![
+                    event.session_id,
+                    event.event_type,
+                    event.summary,
+                    event.tokens_in,
+                    event.tokens_out,
+                    event.timestamp,
+                ],
+            )
+            .context("failed to insert session event")?;
         Ok(())
     }
 
@@ -357,12 +370,12 @@ impl SessionStore {
 
         let rows = stmt.query_map(params![session_id], |row| {
             Ok(StoredMessage {
-                id:         row.get(0)?,
+                id: row.get(0)?,
                 session_id: row.get(1)?,
-                role:       row.get(2)?,
-                content:    row.get(3)?,
+                role: row.get(2)?,
+                content: row.get(3)?,
                 created_at: row.get(4)?,
-                tokens:     row.get(5)?,
+                tokens: row.get(5)?,
             })
         })?;
 
@@ -410,10 +423,34 @@ mod tests {
 
         let now = unix_now();
         store
-            .upsert_session("uuid-1", "proj-a", "claude", Some("claude-3-5"), "Hello world", None, 100, 200, 3, now, now)
+            .upsert_session(
+                "uuid-1",
+                "proj-a",
+                "claude",
+                Some("claude-3-5"),
+                "Hello world",
+                None,
+                100,
+                200,
+                3,
+                now,
+                now,
+            )
             .expect("upsert 1");
         store
-            .upsert_session("uuid-2", "proj-b", "claude", None, "Another session", None, 0, 0, 0, now - 10, now - 5)
+            .upsert_session(
+                "uuid-2",
+                "proj-b",
+                "claude",
+                None,
+                "Another session",
+                None,
+                0,
+                0,
+                0,
+                now - 10,
+                now - 5,
+            )
             .expect("upsert 2");
 
         let sessions = store.list_sessions().expect("list");
@@ -431,11 +468,25 @@ mod tests {
         let store = fresh_store();
         let now = unix_now();
         store
-            .upsert_session("uuid-1", "proj", "claude", None, "", None, 50, 80, 1, now, now)
+            .upsert_session(
+                "uuid-1", "proj", "claude", None, "", None, 50, 80, 1, now, now,
+            )
             .expect("first upsert");
         // Second call with higher totals — should update.
         store
-            .upsert_session("uuid-1", "proj", "claude", Some("claude-3-5"), "First prompt", None, 150, 200, 4, now, now + 5)
+            .upsert_session(
+                "uuid-1",
+                "proj",
+                "claude",
+                Some("claude-3-5"),
+                "First prompt",
+                None,
+                150,
+                200,
+                4,
+                now,
+                now + 5,
+            )
             .expect("second upsert");
 
         let sessions = store.list_sessions().expect("list");
@@ -451,7 +502,9 @@ mod tests {
         let store = fresh_store();
         let now = unix_now();
         store
-            .upsert_session("uuid-1", "proj", "claude", None, "", None, 0, 0, 0, now, now)
+            .upsert_session(
+                "uuid-1", "proj", "claude", None, "", None, 0, 0, 0, now, now,
+            )
             .expect("upsert");
 
         assert_eq!(store.event_count("uuid-1").expect("count"), 0);
@@ -486,7 +539,19 @@ mod tests {
         let store = fresh_store();
         let now = unix_now();
         store
-            .upsert_session("uuid-del", "proj", "claude", None, "Delete me", None, 0, 0, 0, now, now)
+            .upsert_session(
+                "uuid-del",
+                "proj",
+                "claude",
+                None,
+                "Delete me",
+                None,
+                0,
+                0,
+                0,
+                now,
+                now,
+            )
             .expect("upsert");
         assert_eq!(store.list_sessions().expect("list").len(), 1);
 
@@ -508,8 +573,12 @@ mod tests {
     fn test_legacy_save_and_load_messages() {
         let store = fresh_store();
         let session_id = store.create_session("Test Session").expect("create");
-        store.save_message(&session_id, "user", "Hello!", Some(5)).expect("save user");
-        store.save_message(&session_id, "assistant", "Hi there.", Some(8)).expect("save assistant");
+        store
+            .save_message(&session_id, "user", "Hello!", Some(5))
+            .expect("save user");
+        store
+            .save_message(&session_id, "assistant", "Hi there.", Some(8))
+            .expect("save assistant");
         let messages = store.load_messages(&session_id).expect("load");
         assert_eq!(messages.len(), 2);
         assert_eq!(messages[0].role, "user");

@@ -14,6 +14,7 @@
 //!   - PageUp    — scroll up 10 lines
 //!   - PageDown  — scroll down 10 lines
 
+use chrono::{DateTime, Utc};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     Frame,
@@ -22,7 +23,6 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Widget},
 };
-use chrono::{DateTime, Utc};
 
 use crate::app::state::{AppState, ToolCallRecord};
 use crate::ui::theme::{AMBER, BG, CHARCOAL, CREAM, ROSE, SPROUT, STONE, TAN};
@@ -390,8 +390,8 @@ fn entry_lines(entry: &ToolOutputEntry, selected: bool) -> Vec<Line<'static>> {
     let mut lines = vec![header];
 
     // Input JSON (max 5 lines).
-    let input_str = serde_json::to_string_pretty(&entry.input)
-        .unwrap_or_else(|_| entry.input.to_string());
+    let input_str =
+        serde_json::to_string_pretty(&entry.input).unwrap_or_else(|_| entry.input.to_string());
     let input_lines: Vec<&str> = input_str.lines().collect();
     let truncated_input = input_lines.len() > 5;
     for line in input_lines.iter().take(5) {
@@ -441,7 +441,11 @@ fn status_icon_and_style(entry: &ToolOutputEntry) -> (&'static str, Style) {
 
 /// Derive a deterministic placeholder id from a tool name (legacy push_record path).
 fn uuid_from_name(name: &str) -> String {
-    format!("legacy-{}-{}", name, Utc::now().timestamp_nanos_opt().unwrap_or(0))
+    format!(
+        "legacy-{}-{}",
+        name,
+        Utc::now().timestamp_nanos_opt().unwrap_or(0)
+    )
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -496,7 +500,12 @@ mod tests {
         let mut panel = ToolOutputPanel::new();
         panel.add_entry(&make_record("t1", "read_file"));
 
-        panel.update_entry("t1", Some("file contents".to_string()), Some(42), Some(true));
+        panel.update_entry(
+            "t1",
+            Some("file contents".to_string()),
+            Some(42),
+            Some(true),
+        );
 
         let entry = &panel.entries()[0];
         assert_eq!(entry.output.as_deref(), Some("file contents"));
@@ -510,7 +519,12 @@ mod tests {
         panel.add_entry(&make_record("t1", "shell"));
 
         // Update a non-existent id — must not panic, must not change existing entry.
-        panel.update_entry("does-not-exist", Some("output".to_string()), Some(1), Some(true));
+        panel.update_entry(
+            "does-not-exist",
+            Some("output".to_string()),
+            Some(1),
+            Some(true),
+        );
 
         assert_eq!(panel.len(), 1);
         assert!(panel.entries()[0].output.is_none());
@@ -524,10 +538,16 @@ mod tests {
         assert!(!panel.entries()[0].collapsed, "starts expanded");
 
         panel.toggle_collapse();
-        assert!(panel.entries()[0].collapsed, "should be collapsed after toggle");
+        assert!(
+            panel.entries()[0].collapsed,
+            "should be collapsed after toggle"
+        );
 
         panel.toggle_collapse();
-        assert!(!panel.entries()[0].collapsed, "should be expanded after second toggle");
+        assert!(
+            !panel.entries()[0].collapsed,
+            "should be expanded after second toggle"
+        );
     }
 
     #[test]
@@ -691,13 +711,22 @@ mod tests {
         let mut panel = ToolOutputPanel::new();
         let mut state = AppState::default();
 
-        panel.handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE), &mut state);
+        panel.handle_key(
+            KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE),
+            &mut state,
+        );
         assert_eq!(panel.scroll_offset(), 10);
 
-        panel.handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE), &mut state);
+        panel.handle_key(
+            KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE),
+            &mut state,
+        );
         assert_eq!(panel.scroll_offset(), 20);
 
-        panel.handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE), &mut state);
+        panel.handle_key(
+            KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE),
+            &mut state,
+        );
         assert_eq!(panel.scroll_offset(), 10);
     }
 

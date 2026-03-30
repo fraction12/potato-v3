@@ -94,7 +94,13 @@ impl RealPty {
     }
 
     /// Like [`spawn`] but sets the child process's working directory to `cwd`.
-    pub fn spawn_in(binary: &str, args: &[&str], cols: u16, rows: u16, cwd: Option<&std::path::Path>) -> Result<Self> {
+    pub fn spawn_in(
+        binary: &str,
+        args: &[&str],
+        cols: u16,
+        rows: u16,
+        cwd: Option<&std::path::Path>,
+    ) -> Result<Self> {
         Self::spawn_with_env(binary, args, cols, rows, cwd, &[])
     }
 
@@ -116,7 +122,12 @@ impl RealPty {
 
         // Open the PTY pair at the requested size.
         let pair = pty_system
-            .openpty(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
+            .openpty(PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
             .context("failed to open PTY pair")?;
 
         // Build the child command.
@@ -210,7 +221,12 @@ impl RealPty {
     /// changes size.
     pub fn resize(&self, cols: u16, rows: u16) -> Result<()> {
         self.master
-            .resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
+            .resize(PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
             .context("failed to resize PTY")?;
         // Also resize the vt100 parser so it tracks the correct screen size.
         if let Ok(mut p) = self.screen.lock() {
@@ -249,7 +265,9 @@ impl RealPty {
     /// keyboard events to the running process.
     pub fn write_input(&mut self, bytes: &[u8]) -> Result<()> {
         use std::io::Write;
-        self.writer.write_all(bytes).context("failed to write PTY input")?;
+        self.writer
+            .write_all(bytes)
+            .context("failed to write PTY input")?;
         self.writer.flush().context("failed to flush PTY input")?;
         Ok(())
     }
@@ -314,34 +332,34 @@ pub fn key_event_to_bytes(event: crossterm::event::KeyEvent) -> Vec<u8> {
         }
 
         // ── Special keys ─────────────────────────────────────────────────
-        KeyCode::Enter     => b"\r".to_vec(),
+        KeyCode::Enter => b"\r".to_vec(),
         KeyCode::Backspace => b"\x7f".to_vec(),
-        KeyCode::Tab       => b"\t".to_vec(),
-        KeyCode::BackTab   => b"\x1b[Z".to_vec(),
-        KeyCode::Esc       => b"\x1b".to_vec(),
-        KeyCode::Delete    => b"\x1b[3~".to_vec(),
-        KeyCode::Home      => b"\x1b[H".to_vec(),
-        KeyCode::End       => b"\x1b[F".to_vec(),
-        KeyCode::PageUp    => b"\x1b[5~".to_vec(),
-        KeyCode::PageDown  => b"\x1b[6~".to_vec(),
-        KeyCode::Insert    => b"\x1b[2~".to_vec(),
+        KeyCode::Tab => b"\t".to_vec(),
+        KeyCode::BackTab => b"\x1b[Z".to_vec(),
+        KeyCode::Esc => b"\x1b".to_vec(),
+        KeyCode::Delete => b"\x1b[3~".to_vec(),
+        KeyCode::Home => b"\x1b[H".to_vec(),
+        KeyCode::End => b"\x1b[F".to_vec(),
+        KeyCode::PageUp => b"\x1b[5~".to_vec(),
+        KeyCode::PageDown => b"\x1b[6~".to_vec(),
+        KeyCode::Insert => b"\x1b[2~".to_vec(),
 
         // ── Arrow keys ────────────────────────────────────────────────────
-        KeyCode::Up    => b"\x1b[A".to_vec(),
-        KeyCode::Down  => b"\x1b[B".to_vec(),
+        KeyCode::Up => b"\x1b[A".to_vec(),
+        KeyCode::Down => b"\x1b[B".to_vec(),
         KeyCode::Right => b"\x1b[C".to_vec(),
-        KeyCode::Left  => b"\x1b[D".to_vec(),
+        KeyCode::Left => b"\x1b[D".to_vec(),
 
         // ── Function keys (F1–F12) ────────────────────────────────────────
-        KeyCode::F(1)  => b"\x1bOP".to_vec(),
-        KeyCode::F(2)  => b"\x1bOQ".to_vec(),
-        KeyCode::F(3)  => b"\x1bOR".to_vec(),
-        KeyCode::F(4)  => b"\x1bOS".to_vec(),
-        KeyCode::F(5)  => b"\x1b[15~".to_vec(),
-        KeyCode::F(6)  => b"\x1b[17~".to_vec(),
-        KeyCode::F(7)  => b"\x1b[18~".to_vec(),
-        KeyCode::F(8)  => b"\x1b[19~".to_vec(),
-        KeyCode::F(9)  => b"\x1b[20~".to_vec(),
+        KeyCode::F(1) => b"\x1bOP".to_vec(),
+        KeyCode::F(2) => b"\x1bOQ".to_vec(),
+        KeyCode::F(3) => b"\x1bOR".to_vec(),
+        KeyCode::F(4) => b"\x1bOS".to_vec(),
+        KeyCode::F(5) => b"\x1b[15~".to_vec(),
+        KeyCode::F(6) => b"\x1b[17~".to_vec(),
+        KeyCode::F(7) => b"\x1b[18~".to_vec(),
+        KeyCode::F(8) => b"\x1b[19~".to_vec(),
+        KeyCode::F(9) => b"\x1b[20~".to_vec(),
         KeyCode::F(10) => b"\x1b[21~".to_vec(),
         KeyCode::F(11) => b"\x1b[23~".to_vec(),
         KeyCode::F(12) => b"\x1b[24~".to_vec(),
@@ -452,16 +470,16 @@ mod tests {
 
     #[test]
     fn key_event_to_bytes_f5_f12() {
-        assert_eq!(key_event_to_bytes(key(KeyCode::F(5))),  b"\x1b[15~");
+        assert_eq!(key_event_to_bytes(key(KeyCode::F(5))), b"\x1b[15~");
         assert_eq!(key_event_to_bytes(key(KeyCode::F(10))), b"\x1b[21~");
         assert_eq!(key_event_to_bytes(key(KeyCode::F(12))), b"\x1b[24~");
     }
 
     #[test]
     fn key_event_to_bytes_home_end_page() {
-        assert_eq!(key_event_to_bytes(key(KeyCode::Home)),     b"\x1b[H");
-        assert_eq!(key_event_to_bytes(key(KeyCode::End)),      b"\x1b[F");
-        assert_eq!(key_event_to_bytes(key(KeyCode::PageUp)),   b"\x1b[5~");
+        assert_eq!(key_event_to_bytes(key(KeyCode::Home)), b"\x1b[H");
+        assert_eq!(key_event_to_bytes(key(KeyCode::End)), b"\x1b[F");
+        assert_eq!(key_event_to_bytes(key(KeyCode::PageUp)), b"\x1b[5~");
         assert_eq!(key_event_to_bytes(key(KeyCode::PageDown)), b"\x1b[6~");
     }
 
@@ -476,8 +494,8 @@ mod tests {
     #[test]
     #[ignore = "requires real TTY / OS process"]
     fn real_pty_spawn_echo() {
-        let pty = RealPty::spawn("sh", &["-c", "echo hello"], 80, 24)
-            .expect("RealPty::spawn failed");
+        let pty =
+            RealPty::spawn("sh", &["-c", "echo hello"], 80, 24).expect("RealPty::spawn failed");
 
         // Give the background reader thread time to process the output.
         std::thread::sleep(Duration::from_millis(200));

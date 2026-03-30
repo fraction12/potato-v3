@@ -110,7 +110,10 @@ fn handle_sidebar(state: &mut AppState, key: &KeyEvent) -> KeyAction {
         }
         KeyCode::Enter => {
             let selected = state.session().map(|s| s.selected_action).unwrap_or(0);
-            let has_approval = state.session().and_then(|s| s.approval_pending.as_ref()).is_some();
+            let has_approval = state
+                .session()
+                .and_then(|s| s.approval_pending.as_ref())
+                .is_some();
             let actions = quick_actions::actions_for_context(true, has_approval);
             if let Some(action) = actions.get(selected) {
                 return execute_quick_action(state, action.kind);
@@ -122,7 +125,10 @@ fn handle_sidebar(state: &mut AppState, key: &KeyEvent) -> KeyAction {
 }
 
 /// Map a QuickActionKind to the corresponding KeyAction.
-fn execute_quick_action(state: &mut AppState, kind: crate::ui::panels::quick_actions::QuickActionKind) -> KeyAction {
+fn execute_quick_action(
+    state: &mut AppState,
+    kind: crate::ui::panels::quick_actions::QuickActionKind,
+) -> KeyAction {
     use crate::ui::panels::quick_actions::QuickActionKind;
 
     match kind {
@@ -136,9 +142,7 @@ fn execute_quick_action(state: &mut AppState, kind: crate::ui::panels::quick_act
             }
             KeyAction::Handled
         }
-        QuickActionKind::NewSession | QuickActionKind::ExportSession => {
-            KeyAction::SpawnAgent
-        }
+        QuickActionKind::NewSession | QuickActionKind::ExportSession => KeyAction::SpawnAgent,
         QuickActionKind::RefreshGit => {
             state.git_snapshot = crate::git::GitSnapshot::capture();
             state.git_refresh_ticks = 0;

@@ -96,7 +96,9 @@ impl AgentAdapter for CodexAdapter {
         let value: serde_json::Value = match serde_json::from_str(trimmed) {
             Ok(v) => v,
             Err(_) => {
-                return vec![AgentEvent::Raw { payload: trimmed.to_string() }];
+                return vec![AgentEvent::Raw {
+                    payload: trimmed.to_string(),
+                }];
             }
         };
 
@@ -110,7 +112,9 @@ impl AgentAdapter for CodexAdapter {
                         agent_session_id: thread_id.to_string(),
                     }]
                 } else {
-                    vec![AgentEvent::Raw { payload: trimmed.to_string() }]
+                    vec![AgentEvent::Raw {
+                        payload: trimmed.to_string(),
+                    }]
                 }
             }
 
@@ -141,7 +145,9 @@ impl AgentAdapter for CodexAdapter {
                     }
                     _ => {
                         // Unknown item type — pass through as raw.
-                        vec![AgentEvent::Raw { payload: trimmed.to_string() }]
+                        vec![AgentEvent::Raw {
+                            payload: trimmed.to_string(),
+                        }]
                     }
                 }
             }
@@ -164,20 +170,26 @@ impl AgentAdapter for CodexAdapter {
                     Some("agent_message") => {
                         let text = item["text"].as_str().unwrap_or("").to_string();
                         if text.is_empty() {
-                            vec![AgentEvent::Raw { payload: trimmed.to_string() }]
+                            vec![AgentEvent::Raw {
+                                payload: trimmed.to_string(),
+                            }]
                         } else {
                             vec![AgentEvent::TextDone { full_text: text }]
                         }
                     }
                     _ => {
-                        vec![AgentEvent::Raw { payload: trimmed.to_string() }]
+                        vec![AgentEvent::Raw {
+                            payload: trimmed.to_string(),
+                        }]
                     }
                 }
             }
 
             // ── Unknown / passthrough ─────────────────────────────────────────
             _ => {
-                vec![AgentEvent::Raw { payload: trimmed.to_string() }]
+                vec![AgentEvent::Raw {
+                    payload: trimmed.to_string(),
+                }]
             }
         }
     }
@@ -274,7 +286,11 @@ mod tests {
     #[test]
     fn detect_returns_absolute_path_or_none() {
         if let Some(path) = adapter().detect() {
-            assert!(path.is_absolute(), "detect() must return an absolute path, got {:?}", path);
+            assert!(
+                path.is_absolute(),
+                "detect() must return an absolute path, got {:?}",
+                path
+            );
         }
         // None is valid on machines without codex installed.
     }
@@ -298,14 +314,21 @@ mod tests {
         // Unlike Claude, Codex does NOT need --print.
         let cmd = adapter().build_command(&default_config());
         let args = cmd_args(&cmd);
-        assert!(!args.contains(&"--print".to_string()), "--print must NOT be in codex args, got {:?}", args);
+        assert!(
+            !args.contains(&"--print".to_string()),
+            "--print must NOT be in codex args, got {:?}",
+            args
+        );
     }
 
     #[test]
     fn build_command_no_output_format_flag() {
         let cmd = adapter().build_command(&default_config());
         let args = cmd_args(&cmd);
-        assert!(!args.contains(&"--output-format".to_string()), "--output-format must NOT be in codex args");
+        assert!(
+            !args.contains(&"--output-format".to_string()),
+            "--output-format must NOT be in codex args"
+        );
     }
 
     #[test]
@@ -313,7 +336,11 @@ mod tests {
         let cmd = adapter().build_command(&default_config());
         let args = cmd_args(&cmd);
         // With default config (no resume, no model, no extra flags), args should be empty.
-        assert!(args.is_empty(), "default config should produce no args, got {:?}", args);
+        assert!(
+            args.is_empty(),
+            "default config should produce no args, got {:?}",
+            args
+        );
     }
 
     #[test]
@@ -337,7 +364,9 @@ mod tests {
         };
         let cmd = adapter().build_command(&config);
         let args = cmd_args(&cmd);
-        let pos = args.iter().position(|a| a == "-m")
+        let pos = args
+            .iter()
+            .position(|a| a == "-m")
             .expect("-m must be present when model is set");
         assert_eq!(args[pos + 1], "gpt-4o");
     }
@@ -345,7 +374,10 @@ mod tests {
     #[test]
     fn build_command_extra_flags() {
         let config = AdapterConfig {
-            extra_flags: vec!["--full-auto".to_string(), "--dangerously-bypass-approvals-and-sandbox".to_string()],
+            extra_flags: vec![
+                "--full-auto".to_string(),
+                "--dangerously-bypass-approvals-and-sandbox".to_string(),
+            ],
             ..default_config()
         };
         let cmd = adapter().build_command(&config);
@@ -377,7 +409,10 @@ mod tests {
         };
         let cmd = adapter().build_command(&config);
         let args = cmd_args(&cmd);
-        let resume_pos = args.iter().position(|a| a == "resume").expect("resume missing");
+        let resume_pos = args
+            .iter()
+            .position(|a| a == "resume")
+            .expect("resume missing");
         let model_pos = args.iter().position(|a| a == "-m").expect("-m missing");
         assert!(resume_pos < model_pos, "resume must come before -m in args");
     }
@@ -409,7 +444,8 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert!(
             matches!(&events[0], AgentEvent::SessionBound { agent_session_id } if agent_session_id == "abc-uuid-123"),
-            "expected SessionBound, got {:?}", events[0]
+            "expected SessionBound, got {:?}",
+            events[0]
         );
     }
 
@@ -437,7 +473,11 @@ mod tests {
         let line = r#"{"type":"turn.completed","usage":{"input_tokens":63773,"cached_input_tokens":44544,"output_tokens":650}}"#;
         let events = adapter().parse_line(line);
         assert_eq!(events.len(), 1);
-        assert!(matches!(&events[0], AgentEvent::TurnDone { .. }), "expected TurnDone, got {:?}", events[0]);
+        assert!(
+            matches!(&events[0], AgentEvent::TurnDone { .. }),
+            "expected TurnDone, got {:?}",
+            events[0]
+        );
     }
 
     #[test]
@@ -470,7 +510,8 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert!(
             matches!(&events[0], AgentEvent::ToolStart { id, name, .. } if id == "item_0" && name == "shell"),
-            "expected ToolStart(item_0, shell), got {:?}", events[0]
+            "expected ToolStart(item_0, shell), got {:?}",
+            events[0]
         );
     }
 
@@ -502,7 +543,8 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert!(
             matches!(&events[0], AgentEvent::ToolDone { id, success, .. } if id == "item_0" && *success),
-            "expected ToolDone(item_0, success=true), got {:?}", events[0]
+            "expected ToolDone(item_0, success=true), got {:?}",
+            events[0]
         );
     }
 
@@ -510,7 +552,13 @@ mod tests {
     fn parse_item_completed_command_output_preserved() {
         let line = r#"{"type":"item.completed","item":{"id":"item_2","type":"command_execution","command":"cat","aggregated_output":"hello world","exit_code":0,"status":"completed"}}"#;
         let events = adapter().parse_line(line);
-        if let AgentEvent::ToolDone { id, output, success, .. } = &events[0] {
+        if let AgentEvent::ToolDone {
+            id,
+            output,
+            success,
+            ..
+        } = &events[0]
+        {
             assert_eq!(id, "item_2");
             assert_eq!(output, "hello world");
             assert!(*success);
@@ -525,7 +573,8 @@ mod tests {
         let events = adapter().parse_line(line);
         assert!(
             matches!(&events[0], AgentEvent::ToolDone { success, .. } if !*success),
-            "exit_code 1 should produce success=false, got {:?}", events[0]
+            "exit_code 1 should produce success=false, got {:?}",
+            events[0]
         );
     }
 
@@ -538,13 +587,15 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert!(
             matches!(&events[0], AgentEvent::TextDone { full_text } if full_text == "I've finished the task."),
-            "expected TextDone, got {:?}", events[0]
+            "expected TextDone, got {:?}",
+            events[0]
         );
     }
 
     #[test]
     fn parse_item_completed_agent_message_empty_returns_raw() {
-        let line = r#"{"type":"item.completed","item":{"id":"item_6","type":"agent_message","text":""}}"#;
+        let line =
+            r#"{"type":"item.completed","item":{"id":"item_6","type":"agent_message","text":""}}"#;
         let events = adapter().parse_line(line);
         // Empty text → Raw fallback
         assert!(matches!(&events[0], AgentEvent::Raw { .. }));
@@ -552,7 +603,8 @@ mod tests {
 
     #[test]
     fn parse_item_completed_unknown_item_type_returns_raw() {
-        let line = r#"{"type":"item.completed","item":{"id":"item_7","type":"something_new","data":"x"}}"#;
+        let line =
+            r#"{"type":"item.completed","item":{"id":"item_7","type":"something_new","data":"x"}}"#;
         let events = adapter().parse_line(line);
         assert!(matches!(&events[0], AgentEvent::Raw { .. }));
     }

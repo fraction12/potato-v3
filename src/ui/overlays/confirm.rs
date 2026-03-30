@@ -9,8 +9,8 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Clear, Paragraph},
 };
 
-use crate::ui::theme::{AMBER, BG, CHARCOAL, CREAM, SOIL, STONE};
 use super::{Overlay, OverlayAction};
+use crate::ui::theme::{AMBER, BG, CHARCOAL, CREAM, SOIL, STONE};
 
 /// Compact yes/no confirmation dialog.
 #[derive(Debug, Default)]
@@ -87,17 +87,15 @@ impl Overlay for ConfirmDialog {
             Span::styled("[", Style::default().fg(STONE)),
             Span::styled("y", Style::default().fg(AMBER).add_modifier(Modifier::BOLD)),
             Span::styled("] confirm   [", Style::default().fg(STONE)),
-            Span::styled("n / Esc", Style::default().fg(AMBER).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "n / Esc",
+                Style::default().fg(AMBER).add_modifier(Modifier::BOLD),
+            ),
             Span::styled("] cancel", Style::default().fg(STONE)),
         ]);
 
         // Render centered inside inner area.
-        let content = vec![
-            Line::from(""),
-            message_line,
-            Line::from(""),
-            prompt_line,
-        ];
+        let content = vec![Line::from(""), message_line, Line::from(""), prompt_line];
 
         let para = Paragraph::new(content)
             .alignment(Alignment::Center)
@@ -109,9 +107,7 @@ impl Overlay for ConfirmDialog {
     fn handle_key(&mut self, key: KeyEvent) -> OverlayAction {
         match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') => OverlayAction::Confirm(true),
-            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-                OverlayAction::Confirm(false)
-            }
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => OverlayAction::Confirm(false),
             _ => OverlayAction::None,
         }
     }
@@ -143,25 +139,37 @@ mod tests {
     #[test]
     fn test_confirm_y_returns_true() {
         let mut d = ConfirmDialog::new("Delete?");
-        assert_eq!(d.handle_key(key(KeyCode::Char('y'))), OverlayAction::Confirm(true));
+        assert_eq!(
+            d.handle_key(key(KeyCode::Char('y'))),
+            OverlayAction::Confirm(true)
+        );
     }
 
     #[test]
     fn test_confirm_capital_y_returns_true() {
         let mut d = ConfirmDialog::new("Delete?");
-        assert_eq!(d.handle_key(key(KeyCode::Char('Y'))), OverlayAction::Confirm(true));
+        assert_eq!(
+            d.handle_key(key(KeyCode::Char('Y'))),
+            OverlayAction::Confirm(true)
+        );
     }
 
     #[test]
     fn test_confirm_n_returns_false() {
         let mut d = ConfirmDialog::new("Delete?");
-        assert_eq!(d.handle_key(key(KeyCode::Char('n'))), OverlayAction::Confirm(false));
+        assert_eq!(
+            d.handle_key(key(KeyCode::Char('n'))),
+            OverlayAction::Confirm(false)
+        );
     }
 
     #[test]
     fn test_confirm_esc_returns_false() {
         let mut d = ConfirmDialog::new("Delete?");
-        assert_eq!(d.handle_key(key(KeyCode::Esc)), OverlayAction::Confirm(false));
+        assert_eq!(
+            d.handle_key(key(KeyCode::Esc)),
+            OverlayAction::Confirm(false)
+        );
     }
 
     #[test]

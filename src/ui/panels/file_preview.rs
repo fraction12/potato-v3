@@ -9,9 +9,9 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Widget},
 };
 
+use super::{Panel, PanelAction, PanelId};
 use crate::app::state::AppState;
 use crate::ui::theme::{AMBER, BG, CHARCOAL, CREAM, SOIL, STONE};
-use super::{Panel, PanelAction, PanelId};
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -154,7 +154,11 @@ impl Panel for FilePreviewPanel {
             .borders(Borders::ALL)
             .border_style(border_style)
             .title(title)
-            .title_style(Style::default().fg(if focused { AMBER } else { CHARCOAL }).add_modifier(Modifier::BOLD))
+            .title_style(
+                Style::default()
+                    .fg(if focused { AMBER } else { CHARCOAL })
+                    .add_modifier(Modifier::BOLD),
+            )
             .style(Style::default().bg(BG));
 
         let inner = block.inner(area);
@@ -177,18 +181,18 @@ impl Panel for FilePreviewPanel {
         // Build visible lines.
         let mut rendered_lines: Vec<Line<'static>> = Vec::new();
 
-        for (i, line_content) in self.lines.iter().enumerate().skip(self.scroll).take(visible_height) {
+        for (i, line_content) in self
+            .lines
+            .iter()
+            .enumerate()
+            .skip(self.scroll)
+            .take(visible_height)
+        {
             let line_num = i + 1;
             let num_str = format!("{:>width$} ", line_num, width = gutter_width - 1);
 
-            let num_span = Span::styled(
-                num_str,
-                Style::default().fg(STONE),
-            );
-            let content_span = Span::styled(
-                line_content.clone(),
-                Style::default().fg(CREAM),
-            );
+            let num_span = Span::styled(num_str, Style::default().fg(STONE));
+            let content_span = Span::styled(line_content.clone(), Style::default().fg(CREAM));
 
             rendered_lines.push(Line::from(vec![num_span, content_span]));
         }
@@ -209,8 +213,7 @@ impl Panel for FilePreviewPanel {
             )));
         }
 
-        let para = Paragraph::new(rendered_lines)
-            .style(Style::default().bg(BG));
+        let para = Paragraph::new(rendered_lines).style(Style::default().bg(BG));
         frame.render_widget(para, inner);
     }
 

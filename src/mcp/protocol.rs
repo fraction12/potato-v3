@@ -321,7 +321,11 @@ mod tests {
 
     #[test]
     fn error_roundtrip() {
-        let err = JsonRpcError { code: INTERNAL_ERROR, message: "boom".into(), data: Some(json!({"detail": "stack"})) };
+        let err = JsonRpcError {
+            code: INTERNAL_ERROR,
+            message: "boom".into(),
+            data: Some(json!({"detail": "stack"})),
+        };
         let serialized = serde_json::to_string(&err).unwrap();
         let deserialized: JsonRpcError = serde_json::from_str(&serialized).unwrap();
         assert_eq!(err, deserialized);
@@ -334,7 +338,10 @@ mod tests {
         let params = InitializeParams {
             protocol_version: "2024-11-05".into(),
             capabilities: json!({}),
-            client_info: ClientInfo { name: "claude-code".into(), version: "1.0".into() },
+            client_info: ClientInfo {
+                name: "claude-code".into(),
+                version: "1.0".into(),
+            },
         };
         let serialized = serde_json::to_string(&params).unwrap();
         let deserialized: InitializeParams = serde_json::from_str(&serialized).unwrap();
@@ -346,7 +353,10 @@ mod tests {
         let params = InitializeParams {
             protocol_version: "2024-11-05".into(),
             capabilities: json!({}),
-            client_info: ClientInfo { name: "test".into(), version: "1".into() },
+            client_info: ClientInfo {
+                name: "test".into(),
+                version: "1".into(),
+            },
         };
         let json = serde_json::to_value(&params).unwrap();
         // camelCase via rename_all
@@ -361,9 +371,14 @@ mod tests {
         let result = InitializeResult {
             protocol_version: "2024-11-05".into(),
             capabilities: ServerCapabilities {
-                tools: ToolsCapability { list_changed: false },
+                tools: ToolsCapability {
+                    list_changed: false,
+                },
             },
-            server_info: ServerInfo { name: "potato".into(), version: "0.1.0".into() },
+            server_info: ServerInfo {
+                name: "potato".into(),
+                version: "0.1.0".into(),
+            },
         };
         let serialized = serde_json::to_string(&result).unwrap();
         let deserialized: InitializeResult = serde_json::from_str(&serialized).unwrap();
@@ -375,13 +390,11 @@ mod tests {
     #[test]
     fn list_tools_result_roundtrip() {
         let result = ListToolsResult {
-            tools: vec![
-                ToolInfo {
-                    name: "potato_get_role".into(),
-                    description: "Get this session's role".into(),
-                    input_schema: json!({"type": "object", "properties": {}}),
-                },
-            ],
+            tools: vec![ToolInfo {
+                name: "potato_get_role".into(),
+                description: "Get this session's role".into(),
+                input_schema: json!({"type": "object", "properties": {}}),
+            }],
         };
         let serialized = serde_json::to_string(&result).unwrap();
         let deserialized: ListToolsResult = serde_json::from_str(&serialized).unwrap();
@@ -438,7 +451,10 @@ mod tests {
     fn call_tool_result_field_name() {
         let r = CallToolResult::success("x");
         let json = serde_json::to_value(&r).unwrap();
-        assert!(json.get("isError").is_some(), "isError should use camelCase");
+        assert!(
+            json.get("isError").is_some(),
+            "isError should use camelCase"
+        );
     }
 
     // ── ToolInfo ──────────────────────────────────────────────────────────────
@@ -470,6 +486,9 @@ mod tests {
             input_schema: json!({}),
         };
         let json = serde_json::to_value(&tool).unwrap();
-        assert!(json.get("inputSchema").is_some(), "inputSchema should use camelCase");
+        assert!(
+            json.get("inputSchema").is_some(),
+            "inputSchema should use camelCase"
+        );
     }
 }

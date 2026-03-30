@@ -38,10 +38,7 @@ impl<'a> MessageHistory<'a> {
     pub fn load_session(&mut self, session_id: impl Into<String>) -> Result<()> {
         let sid = session_id.into();
         let stored = self.store.load_messages(&sid)?;
-        self.total_tokens = stored
-            .iter()
-            .filter_map(|m| m.tokens)
-            .sum();
+        self.total_tokens = stored.iter().filter_map(|m| m.tokens).sum();
         self.messages = stored;
         self.session_id = sid;
         Ok(())
@@ -51,7 +48,8 @@ impl<'a> MessageHistory<'a> {
     ///
     /// `tokens` is an optional approximate token count for the message.
     pub fn push(&mut self, role: &str, content: &str, tokens: Option<u32>) -> Result<()> {
-        self.store.save_message(&self.session_id, role, content, tokens)?;
+        self.store
+            .save_message(&self.session_id, role, content, tokens)?;
 
         // Reload the last message so we have the generated ID and timestamp.
         let all = self.store.load_messages(&self.session_id)?;
@@ -119,7 +117,9 @@ mod tests {
         let mut history = MessageHistory::new(&session_id, &store);
 
         history.push("user", "Hello!", None).expect("push user");
-        history.push("assistant", "Hi there.", None).expect("push assistant");
+        history
+            .push("assistant", "Hi there.", None)
+            .expect("push assistant");
 
         assert_eq!(history.len(), 2);
         assert_eq!(history.messages()[0].role, "user");

@@ -219,7 +219,9 @@ fn dispatch_request(
     // main event loop writes the message into the target pane's PTY.
     if is_send_message {
         if let Some(tx) = inject_tx {
-            if let Some(inject) = build_inject_request(bridge_req.pane_id, &bridge_req.request, state) {
+            if let Some(inject) =
+                build_inject_request(bridge_req.pane_id, &bridge_req.request, state)
+            {
                 if let Err(e) = tx.send(inject) {
                     tracing::warn!("Failed to send inject request: {e}");
                 }
@@ -275,7 +277,7 @@ fn build_inject_request(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use tokio::net::UnixStream;
 
@@ -347,7 +349,10 @@ mod tests {
         let result = dispatch_request(&req.to_string(), &state, &None);
         let v: Value = serde_json::from_str(&result).expect("valid JSON");
         let inner: Value = serde_json::from_str(v["response"].as_str().unwrap()).unwrap();
-        assert_eq!(inner["error"]["code"], crate::mcp::protocol::METHOD_NOT_FOUND);
+        assert_eq!(
+            inner["error"]["code"],
+            crate::mcp::protocol::METHOD_NOT_FOUND
+        );
     }
 
     // ── Integration tests: real UDS round-trip ────────────────────────────────
@@ -516,7 +521,9 @@ mod tests {
         // Should succeed even though the file exists.
         let (_bridge, path) = McpBridge::start_at(state, sock, None).unwrap();
         // Should be connectable.
-        UnixStream::connect(&path).await.expect("connect after stale removal");
+        UnixStream::connect(&path)
+            .await
+            .expect("connect after stale removal");
     }
 
     #[tokio::test]
@@ -561,6 +568,9 @@ mod tests {
         let inner1: Value = serde_json::from_str(v1["response"].as_str().unwrap()).unwrap();
         assert!(inner1["error"].is_null());
         let text = inner1["result"]["content"][0]["text"].as_str().unwrap();
-        assert!(text.contains("hello pane1"), "expected message, got: {text}");
+        assert!(
+            text.contains("hello pane1"),
+            "expected message, got: {text}"
+        );
     }
 }

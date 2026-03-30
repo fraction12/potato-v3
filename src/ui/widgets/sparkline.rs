@@ -2,13 +2,7 @@
 
 use std::collections::VecDeque;
 
-use ratatui::{
-    buffer::Buffer,
-    layout::Rect,
-    style::Style,
-    text::Span,
-    widgets::Widget,
-};
+use ratatui::{buffer::Buffer, layout::Rect, style::Style, text::Span, widgets::Widget};
 
 use crate::ui::theme::AMBER;
 
@@ -57,10 +51,7 @@ impl TokenSparkline {
         let max = *self.data.iter().max().unwrap_or(&1);
         let min = *self.data.iter().min().unwrap_or(&0);
 
-        self.data
-            .iter()
-            .map(|&v| bar_char(v, min, max))
-            .collect()
+        self.data.iter().map(|&v| bar_char(v, min, max)).collect()
     }
 }
 
@@ -189,7 +180,7 @@ mod tests {
         let chars: Vec<char> = s.render_str().chars().collect();
         // Each bar should be non-descending.
         for i in 1..chars.len() {
-            let prev_idx = BARS.iter().position(|&b| b == chars[i-1]).unwrap_or(0);
+            let prev_idx = BARS.iter().position(|&b| b == chars[i - 1]).unwrap_or(0);
             let curr_idx = BARS.iter().position(|&b| b == chars[i]).unwrap_or(0);
             assert!(curr_idx >= prev_idx, "bars should be non-descending");
         }

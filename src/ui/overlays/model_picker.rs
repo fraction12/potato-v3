@@ -9,8 +9,8 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Clear, Paragraph, Widget},
 };
 
-use crate::ui::theme::{AMBER, BG, CHARCOAL, CREAM, SOIL, STONE};
 use super::{Overlay, OverlayAction};
+use crate::ui::theme::{AMBER, BG, CHARCOAL, CREAM, SOIL, STONE};
 
 /// Modal listing available models; pressing Enter switches the active model.
 #[derive(Debug, Default)]
@@ -24,8 +24,15 @@ pub struct ModelPicker {
 impl ModelPicker {
     /// Create a new model picker with the given model list and current selection.
     pub fn new(models: Vec<String>, selected: usize) -> Self {
-        let clamped = if models.is_empty() { 0 } else { selected.min(models.len() - 1) };
-        Self { models, selected: clamped }
+        let clamped = if models.is_empty() {
+            0
+        } else {
+            selected.min(models.len() - 1)
+        };
+        Self {
+            models,
+            selected: clamped,
+        }
     }
 
     /// Move selection up (wraps).
@@ -99,7 +106,10 @@ impl Overlay for ModelPicker {
             };
 
             let name_style = if is_selected {
-                Style::default().fg(CREAM).bg(bg).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(CREAM)
+                    .bg(bg)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(STONE).bg(bg)
             };
@@ -155,10 +165,8 @@ mod tests {
 
     #[test]
     fn test_model_picker_navigation_wraps() {
-        let mut picker = ModelPicker::new(
-            vec!["llama3".into(), "gpt-4o".into(), "mistral".into()],
-            0,
-        );
+        let mut picker =
+            ModelPicker::new(vec!["llama3".into(), "gpt-4o".into(), "mistral".into()], 0);
         assert_eq!(picker.selected, 0);
 
         // Up from 0 should wrap to last.
@@ -172,10 +180,7 @@ mod tests {
 
     #[test]
     fn test_model_picker_enter_selects() {
-        let mut picker = ModelPicker::new(
-            vec!["llama3".into(), "gpt-4o".into()],
-            1,
-        );
+        let mut picker = ModelPicker::new(vec!["llama3".into(), "gpt-4o".into()], 1);
         let action = picker.handle_key(key(KeyCode::Enter));
         assert_eq!(action, OverlayAction::Select("gpt-4o".into()));
     }
@@ -202,10 +207,7 @@ mod tests {
 
     #[test]
     fn test_model_picker_down_key() {
-        let mut picker = ModelPicker::new(
-            vec!["a".into(), "b".into(), "c".into()],
-            0,
-        );
+        let mut picker = ModelPicker::new(vec!["a".into(), "b".into(), "c".into()], 0);
         let action = picker.handle_key(key(KeyCode::Down));
         assert_eq!(action, OverlayAction::None);
         assert_eq!(picker.selected, 1);

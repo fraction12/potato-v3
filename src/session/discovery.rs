@@ -31,7 +31,11 @@ pub fn discover_historical_sessions(home: &Path, store: &SessionStore) {
     let project_entries = match fs::read_dir(&projects_dir) {
         Ok(e) => e,
         Err(err) => {
-            tracing::warn!("discover_historical_sessions: cannot read {:?}: {}", projects_dir, err);
+            tracing::warn!(
+                "discover_historical_sessions: cannot read {:?}: {}",
+                projects_dir,
+                err
+            );
             return;
         }
     };
@@ -128,11 +132,7 @@ pub struct ParsedSession {
 /// handling and extract the fields needed for the sessions table.
 ///
 /// Also extracts the first user prompt text as the session title.
-pub fn parse_jsonl_file(
-    path: &Path,
-    session_id: &str,
-    project_dir: &str,
-) -> Result<ParsedSession> {
+pub fn parse_jsonl_file(path: &Path, session_id: &str, project_dir: &str) -> Result<ParsedSession> {
     let file = fs::File::open(path)?;
     let reader = BufReader::new(file);
 
@@ -186,16 +186,16 @@ pub fn parse_jsonl_file(
     let snap = tracker.snapshot();
 
     Ok(ParsedSession {
-        session_id:          session_id.to_string(),
-        project_dir:         project_dir.to_string(),
-        agent:               "claude".to_string(),
-        model:               snap.model,
-        title:               first_user_prompt.unwrap_or_default(),
-        total_input_tokens:  snap.usage.input_tokens,
+        session_id: session_id.to_string(),
+        project_dir: project_dir.to_string(),
+        agent: "claude".to_string(),
+        model: snap.model,
+        title: first_user_prompt.unwrap_or_default(),
+        total_input_tokens: snap.usage.input_tokens,
         total_output_tokens: snap.usage.output_tokens,
-        turn_count:          snap.turns,
-        created_at:          first_ts.unwrap_or(now),
-        updated_at:          last_ts.unwrap_or(now),
+        turn_count: snap.turns,
+        created_at: first_ts.unwrap_or(now),
+        updated_at: last_ts.unwrap_or(now),
     })
 }
 
@@ -237,8 +237,7 @@ mod tests {
     use std::io::Write;
 
     fn write_temp_jsonl(lines: &[&str]) -> PathBuf {
-        let tmp = std::env::temp_dir()
-            .join(format!("potato-disc-{}.jsonl", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("potato-disc-{}.jsonl", std::process::id()));
         let mut f = fs::File::create(&tmp).unwrap();
         for line in lines {
             writeln!(f, "{}", line).unwrap();

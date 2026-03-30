@@ -23,8 +23,12 @@ use anyhow::{Context, Result};
 pub fn load_config(path: Option<&str>) -> Result<Config> {
     // Always ensure the potato directory exists.
     let potato_dir = potato_dir()?;
-    std::fs::create_dir_all(&potato_dir)
-        .with_context(|| format!("failed to create config directory: {}", potato_dir.display()))?;
+    std::fs::create_dir_all(&potato_dir).with_context(|| {
+        format!(
+            "failed to create config directory: {}",
+            potato_dir.display()
+        )
+    })?;
 
     if let Some(custom) = path {
         // User explicitly supplied a path — it must exist and parse.
@@ -162,7 +166,10 @@ tick_rate_ms = 100
         let result = load_config(Some(cfg_path.to_str().unwrap()));
         assert!(result.is_err());
         let err_msg = format!("{:#}", result.unwrap_err());
-        assert!(err_msg.contains("parse"), "error should mention parsing: {err_msg}");
+        assert!(
+            err_msg.contains("parse"),
+            "error should mention parsing: {err_msg}"
+        );
     }
 
     #[test]

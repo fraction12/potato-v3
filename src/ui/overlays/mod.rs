@@ -106,9 +106,7 @@ impl OverlayStack {
     /// Esc always closes the top overlay.
     pub fn handle_key(&mut self, key: KeyEvent) -> OverlayAction {
         // Esc always closes top overlay.
-        if key.code == KeyCode::Esc
-            && key.modifiers == KeyModifiers::NONE
-        {
+        if key.code == KeyCode::Esc && key.modifiers == KeyModifiers::NONE {
             if !self.stack.is_empty() {
                 self.stack.pop();
                 return OverlayAction::Close;
@@ -151,11 +149,17 @@ mod tests {
 
     impl StubOverlay {
         fn new(title: &'static str) -> Self {
-            Self { title, closes_on_any_key: false }
+            Self {
+                title,
+                closes_on_any_key: false,
+            }
         }
 
         fn closing(title: &'static str) -> Self {
-            Self { title, closes_on_any_key: true }
+            Self {
+                title,
+                closes_on_any_key: true,
+            }
         }
     }
 

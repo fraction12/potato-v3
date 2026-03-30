@@ -90,7 +90,11 @@ impl From<&AgentProfile> for RawProfile {
             model: p.model.clone(),
             extra_args: p.extra_args.clone(),
             env: p.env.clone(),
-            working_dir: p.working_dir.as_deref().and_then(|p| p.to_str()).map(str::to_string),
+            working_dir: p
+                .working_dir
+                .as_deref()
+                .and_then(|p| p.to_str())
+                .map(str::to_string),
         }
     }
 }
@@ -140,7 +144,9 @@ impl ProfileLoader {
 ///
 /// Each file may contain a single `[profile]` table or be a direct table.
 fn load_dir(dir: &Path, profiles: &mut HashMap<String, AgentProfile>) {
-    let Ok(entries) = std::fs::read_dir(dir) else { return; };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
     for entry in entries.flatten() {
         let path = entry.path();
         if path.extension().and_then(|e| e.to_str()) == Some("toml") {
@@ -159,8 +165,12 @@ fn load_dir(dir: &Path, profiles: &mut HashMap<String, AgentProfile>) {
 /// ```
 /// or a project file with multiple `[[profiles]]` entries (array of tables).
 fn load_file(path: &Path, profiles: &mut HashMap<String, AgentProfile>) {
-    let Ok(content) = std::fs::read_to_string(path) else { return; };
-    let Ok(table) = toml::from_str::<toml::Value>(&content) else { return; };
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return;
+    };
+    let Ok(table) = toml::from_str::<toml::Value>(&content) else {
+        return;
+    };
 
     // Check for `[[profiles]]` array.
     if let Some(arr) = table.get("profiles").and_then(|v| v.as_array()) {
@@ -197,7 +207,11 @@ pub fn default_profiles_from_agents(
         .map(|a| AgentProfile {
             name: a.name.clone(),
             adapter: a.adapter.clone(),
-            binary: a.binary_path.as_deref().and_then(|p| p.to_str()).map(str::to_string),
+            binary: a
+                .binary_path
+                .as_deref()
+                .and_then(|p| p.to_str())
+                .map(str::to_string),
             model: None,
             extra_args: Vec::new(),
             env: HashMap::new(),
@@ -324,7 +338,10 @@ model = "claude-opus-4-5"
         f.write_all(toml_content.as_bytes()).unwrap();
 
         let mut profiles: HashMap<String, AgentProfile> = HashMap::new();
-        profiles.insert("Claude Code".into(), AgentProfile::new("Claude Code", "claude"));
+        profiles.insert(
+            "Claude Code".into(),
+            AgentProfile::new("Claude Code", "claude"),
+        );
         load_file(&profile_file, &mut profiles);
 
         let p = profiles.get("Claude Code").unwrap();
@@ -335,33 +352,46 @@ model = "claude-opus-4-5"
 
     #[test]
     fn loader_dir_loads_all_toml_files() {
-        let tmp_dir = std::env::temp_dir().join(format!("potato-profiles-dir-{}", std::process::id()));
+        let tmp_dir =
+            std::env::temp_dir().join(format!("potato-profiles-dir-{}", std::process::id()));
         std::fs::create_dir_all(&tmp_dir).unwrap();
 
         // Write two profile files.
         let f1 = tmp_dir.join("claude.toml");
         let f2 = tmp_dir.join("codex.toml");
-        std::fs::write(&f1, r#"name = "Claude Code"
+        std::fs::write(
+            &f1,
+            r#"name = "Claude Code"
 adapter = "claude"
 model = "claude-sonnet"
-"#).unwrap();
-        std::fs::write(&f2, r#"name = "Codex"
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            &f2,
+            r#"name = "Codex"
 adapter = "codex"
-"#).unwrap();
+"#,
+        )
+        .unwrap();
 
         let mut profiles: HashMap<String, AgentProfile> = HashMap::new();
         load_dir(&tmp_dir, &mut profiles);
 
         assert!(profiles.contains_key("Claude Code"));
         assert!(profiles.contains_key("Codex"));
-        assert_eq!(profiles["Claude Code"].model.as_deref(), Some("claude-sonnet"));
+        assert_eq!(
+            profiles["Claude Code"].model.as_deref(),
+            Some("claude-sonnet")
+        );
 
         let _ = std::fs::remove_dir_all(&tmp_dir);
     }
 
     #[test]
     fn loader_multi_profile_toml_array() {
-        let tmp_dir = std::env::temp_dir().join(format!("potato-profiles-arr-{}", std::process::id()));
+        let tmp_dir =
+            std::env::temp_dir().join(format!("potato-profiles-arr-{}", std::process::id()));
         std::fs::create_dir_all(&tmp_dir).unwrap();
         let file = tmp_dir.join("multi.toml");
         let content = r#"
@@ -412,14 +442,12 @@ model = "gpt-4o"
     #[test]
     fn default_profiles_from_agents_include_unavailable() {
         use crate::app::state::AgentInfo;
-        let agents = vec![
-            AgentInfo {
-                name: "Claude Code".into(),
-                adapter: "claude".into(),
-                binary_path: None,
-                available: false,
-            },
-        ];
+        let agents = vec![AgentInfo {
+            name: "Claude Code".into(),
+            adapter: "claude".into(),
+            binary_path: None,
+            available: false,
+        }];
         let profiles = default_profiles_from_agents(&agents, true);
         assert_eq!(profiles.len(), 1);
         assert_eq!(profiles[0].name, "Claude Code");

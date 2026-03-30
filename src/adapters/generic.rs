@@ -49,7 +49,9 @@ impl AgentAdapter for GenericAdapter {
     }
 
     fn parse_line(&self, line: &str) -> Vec<AgentEvent> {
-        vec![AgentEvent::Raw { payload: line.to_string() }]
+        vec![AgentEvent::Raw {
+            payload: line.to_string(),
+        }]
     }
 
     fn format_user_input(&self, text: &str) -> String {

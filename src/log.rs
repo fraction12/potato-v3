@@ -12,7 +12,7 @@ use std::fs::OpenOptions;
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 
-use tracing_subscriber::{fmt, EnvFilter, prelude::*};
+use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 /// Return the canonical log-file path (`~/.potato/potato.log`).
 #[must_use]
@@ -35,15 +35,9 @@ pub fn log_path() -> PathBuf {
 pub fn init_file_logging() -> anyhow::Result<()> {
     let path = log_path();
     std::fs::create_dir_all(path.parent().unwrap())?;
-    let file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)?;
+    let file = OpenOptions::new().create(true).append(true).open(&path)?;
     tracing_subscriber::registry()
-        .with(
-            EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| EnvFilter::new("debug")),
-        )
+        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("debug")))
         .with(
             fmt::layer()
                 .with_writer(move || file.try_clone().unwrap())
@@ -71,10 +65,7 @@ pub fn redirect_stderr(target_path: &Path) -> anyhow::Result<()> {
     // dup2 atomically replaces fd 2 with a copy of `fd`.
     let ret = unsafe { libc::dup2(fd, 2) };
     if ret == -1 {
-        anyhow::bail!(
-            "dup2 failed: {}",
-            std::io::Error::last_os_error()
-        );
+        anyhow::bail!("dup2 failed: {}", std::io::Error::last_os_error());
     }
     // `file` is intentionally leaked — fd must stay open for the process lifetime.
     std::mem::forget(file);

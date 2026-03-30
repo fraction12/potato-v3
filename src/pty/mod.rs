@@ -99,10 +99,7 @@ impl PtyProcess {
     /// - **Dropped receivers**: dropping [`PtyHandle::event_rx`] does not panic or
     ///   block any background task; subsequent broadcast sends silently succeed
     ///   (no subscribers) or are dropped if the channel has no remaining receivers.
-    pub async fn spawn(
-        adapter: Arc<dyn AgentAdapter>,
-        config: AdapterConfig,
-    ) -> Result<PtyHandle> {
+    pub async fn spawn(adapter: Arc<dyn AgentAdapter>, config: AdapterConfig) -> Result<PtyHandle> {
         let working_dir = config.working_dir.display().to_string();
         let adapter_name = adapter.name().to_string();
         let model = config.model.clone();
@@ -193,9 +190,7 @@ impl PtyProcess {
                         Ok(Some(line)) => {
                             debug!(stderr = %line, "agent stderr");
                             if !line.trim().is_empty() {
-                                let _ = event_tx_e.send(AgentEvent::Warning {
-                                    message: line,
-                                });
+                                let _ = event_tx_e.send(AgentEvent::Warning { message: line });
                             }
                         }
                         Ok(None) => break,
@@ -278,7 +273,12 @@ impl PtyProcess {
             });
         }
 
-        Ok(PtyHandle { stdin_tx, event_rx, exit_rx, kill_tx })
+        Ok(PtyHandle {
+            stdin_tx,
+            event_rx,
+            exit_rx,
+            kill_tx,
+        })
     }
 
     /// Spawn a single-turn Claude process.
@@ -320,11 +320,19 @@ impl PtyProcess {
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
 
-        let mut child: Child = cmd.spawn().context("failed to spawn agent process (spawn_turn)")?;
+        let mut child: Child = cmd
+            .spawn()
+            .context("failed to spawn agent process (spawn_turn)")?;
 
         // Take ownership of I/O handles.
-        let stdout = child.stdout.take().context("no stdout handle (spawn_turn)")?;
-        let stderr = child.stderr.take().context("no stderr handle (spawn_turn)")?;
+        let stdout = child
+            .stdout
+            .take()
+            .context("no stdout handle (spawn_turn)")?;
+        let stderr = child
+            .stderr
+            .take()
+            .context("no stderr handle (spawn_turn)")?;
         let mut stdin = child.stdin.take().context("no stdin handle (spawn_turn)")?;
 
         // Channels.
@@ -438,8 +446,8 @@ impl PtyProcess {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::adapters::{AdapterCapabilities, AdapterConfig};
     use crate::adapters::generic::GenericAdapter;
+    use crate::adapters::{AdapterCapabilities, AdapterConfig};
     use std::path::PathBuf;
     use std::time::Duration;
     use tokio::process::Command as TokioCommand;
@@ -462,7 +470,11 @@ mod tests {
 
     impl FakeAdapter {
         fn new(binary: impl Into<String>) -> Self {
-            Self { binary: binary.into(), args: vec![], multi_event: false }
+            Self {
+                binary: binary.into(),
+                args: vec![],
+                multi_event: false,
+            }
         }
 
         fn with_args(mut self, args: Vec<String>) -> Self {
@@ -477,9 +489,13 @@ mod tests {
     }
 
     impl crate::adapters::AgentAdapter for FakeAdapter {
-        fn name(&self) -> &str { &self.binary }
+        fn name(&self) -> &str {
+            &self.binary
+        }
 
-        fn detect(&self) -> Option<PathBuf> { None }
+        fn detect(&self) -> Option<PathBuf> {
+            None
+        }
 
         fn capabilities(&self) -> AdapterCapabilities {
             AdapterCapabilities {
@@ -509,16 +525,26 @@ mod tests {
             if self.multi_event {
                 // Return two distinct events so we can assert both arrive.
                 vec![
-                    AgentEvent::TextDelta { text: line.to_string() },
-                    AgentEvent::Warning { message: format!("dup:{line}") },
+                    AgentEvent::TextDelta {
+                        text: line.to_string(),
+                    },
+                    AgentEvent::Warning {
+                        message: format!("dup:{line}"),
+                    },
                 ]
             } else {
-                vec![AgentEvent::Raw { payload: line.to_string() }]
+                vec![AgentEvent::Raw {
+                    payload: line.to_string(),
+                }]
             }
         }
 
-        fn format_user_input(&self, text: &str) -> String { format!("{text}\n") }
-        fn format_approval(&self, _approved: bool) -> Option<String> { None }
+        fn format_user_input(&self, text: &str) -> String {
+            format!("{text}\n")
+        }
+        fn format_approval(&self, _approved: bool) -> Option<String> {
+            None
+        }
     }
 
     // ── Helper: drain events until AgentExited, with a timeout ───────────────
@@ -531,12 +557,16 @@ mod tests {
         let mut collected = vec![];
         loop {
             let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-            if remaining.is_zero() { break; }
+            if remaining.is_zero() {
+                break;
+            }
             match tokio::time::timeout(remaining.min(Duration::from_millis(100)), rx.recv()).await {
                 Ok(Ok(ev)) => {
                     let done = matches!(ev, AgentEvent::AgentExited { .. });
                     collected.push(ev);
-                    if done { break; }
+                    if done {
+                        break;
+                    }
                 }
                 _ => break,
             }
@@ -554,15 +584,25 @@ mod tests {
     #[tokio::test]
     async fn spawn_returns_working_handle() {
         let adapter = Arc::new(FakeAdapter::new("echo").with_args(vec!["ping".into()]));
-        let config = AdapterConfig { working_dir: std::env::temp_dir(), ..Default::default() };
+        let config = AdapterConfig {
+            working_dir: std::env::temp_dir(),
+            ..Default::default()
+        };
 
         let handle = PtyProcess::spawn(adapter, config).await.unwrap();
 
         // stdin_tx channel must be open.
-        assert!(!handle.stdin_tx.is_closed(), "stdin channel should be open after spawn");
+        assert!(
+            !handle.stdin_tx.is_closed(),
+            "stdin channel should be open after spawn"
+        );
 
         // exit_rx must initially be None (process not yet exited).
-        assert_eq!(*handle.exit_rx.borrow(), None, "exit_rx should be None immediately after spawn");
+        assert_eq!(
+            *handle.exit_rx.borrow(),
+            None,
+            "exit_rx should be None immediately after spawn"
+        );
 
         // event_rx should be receivable (capacity > 0).
         // We spawned with broadcast capacity 1024; len() returns messages queued.
@@ -588,15 +628,23 @@ mod tests {
     #[tokio::test]
     async fn stdout_lines_parsed_through_adapter_and_broadcast() {
         let adapter = Arc::new(FakeAdapter::new("echo").with_args(vec!["parsed-line".into()]));
-        let config = AdapterConfig { working_dir: std::env::temp_dir(), ..Default::default() };
+        let config = AdapterConfig {
+            working_dir: std::env::temp_dir(),
+            ..Default::default()
+        };
 
         let handle = PtyProcess::spawn(adapter, config).await.unwrap();
         let mut rx = handle.event_rx;
 
         let events = drain_until_exit(&mut rx, Duration::from_secs(3)).await;
 
-        let raw = events.iter().any(|e| matches!(e, AgentEvent::Raw { payload } if payload.contains("parsed-line")));
-        assert!(raw, "expected a Raw event containing 'parsed-line'; got: {events:?}");
+        let raw = events
+            .iter()
+            .any(|e| matches!(e, AgentEvent::Raw { payload } if payload.contains("parsed-line")));
+        assert!(
+            raw,
+            "expected a Raw event containing 'parsed-line'; got: {events:?}"
+        );
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -610,14 +658,25 @@ mod tests {
     async fn stdin_tx_writes_to_child_stdin() {
         // `cat` echoes stdin to stdout, exits on EOF.
         let adapter = Arc::new(FakeAdapter::new("cat"));
-        let config = AdapterConfig { working_dir: std::env::temp_dir(), ..Default::default() };
+        let config = AdapterConfig {
+            working_dir: std::env::temp_dir(),
+            ..Default::default()
+        };
 
         let handle = PtyProcess::spawn(adapter, config).await.unwrap();
         // Destructure so we can drop stdin_tx explicitly while keeping rx alive.
-        let PtyHandle { stdin_tx, event_rx: mut rx, exit_rx: _, kill_tx: _ } = handle;
+        let PtyHandle {
+            stdin_tx,
+            event_rx: mut rx,
+            exit_rx: _,
+            kill_tx: _,
+        } = handle;
 
         // Send a distinctive line via the channel.
-        stdin_tx.send("potato-stdin-write\n".to_string()).await.unwrap();
+        stdin_tx
+            .send("potato-stdin-write\n".to_string())
+            .await
+            .unwrap();
 
         // Drop stdin_tx — the writer task sees channel closed, drops child
         // stdin, and cat receives EOF and exits.
@@ -625,10 +684,13 @@ mod tests {
 
         let events = drain_until_exit(&mut rx, Duration::from_secs(5)).await;
 
-        let got_payload = events
-            .iter()
-            .any(|e| matches!(e, AgentEvent::Raw { payload } if payload.contains("potato-stdin-write")));
-        assert!(got_payload, "expected stdin write to appear as Raw event; events: {events:?}");
+        let got_payload = events.iter().any(
+            |e| matches!(e, AgentEvent::Raw { payload } if payload.contains("potato-stdin-write")),
+        );
+        assert!(
+            got_payload,
+            "expected stdin write to appear as Raw event; events: {events:?}"
+        );
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -648,7 +710,10 @@ mod tests {
             // Write 300 lines to stderr, then exit cleanly.
             "for i in $(seq 1 300); do echo \"stderr-line-$i\" >&2; done; exit 0".into(),
         ]));
-        let config = AdapterConfig { working_dir: std::env::temp_dir(), ..Default::default() };
+        let config = AdapterConfig {
+            working_dir: std::env::temp_dir(),
+            ..Default::default()
+        };
 
         let handle = PtyProcess::spawn(adapter, config).await.unwrap();
         let mut rx = handle.event_rx;
@@ -657,16 +722,31 @@ mod tests {
         let events = drain_until_exit(&mut rx, Duration::from_secs(10)).await;
 
         // AgentExited must be present.
-        let exited = events.iter().any(|e| matches!(e, AgentEvent::AgentExited { .. }));
-        assert!(exited, "AgentExited not received — possible deadlock; events len={}", events.len());
+        let exited = events
+            .iter()
+            .any(|e| matches!(e, AgentEvent::AgentExited { .. }));
+        assert!(
+            exited,
+            "AgentExited not received — possible deadlock; events len={}",
+            events.len()
+        );
 
         // exit_rx watch must have been updated.
         let code = *exit_rx.borrow();
-        assert!(code.is_some(), "exit_rx was never updated after process exit");
+        assert!(
+            code.is_some(),
+            "exit_rx was never updated after process exit"
+        );
 
         // At least some Warning events (from stderr drain).
-        let warnings = events.iter().filter(|e| matches!(e, AgentEvent::Warning { .. })).count();
-        assert!(warnings > 0, "expected Warning events from stderr; got none");
+        let warnings = events
+            .iter()
+            .filter(|e| matches!(e, AgentEvent::Warning { .. }))
+            .count();
+        assert!(
+            warnings > 0,
+            "expected Warning events from stderr; got none"
+        );
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -678,8 +758,12 @@ mod tests {
     ///   - exit_rx watch is updated to Some(42)
     #[tokio::test]
     async fn process_exit_updates_exit_rx_and_emits_agent_exited() {
-        let adapter = Arc::new(FakeAdapter::new("sh").with_args(vec!["-c".into(), "exit 42".into()]));
-        let config = AdapterConfig { working_dir: std::env::temp_dir(), ..Default::default() };
+        let adapter =
+            Arc::new(FakeAdapter::new("sh").with_args(vec!["-c".into(), "exit 42".into()]));
+        let config = AdapterConfig {
+            working_dir: std::env::temp_dir(),
+            ..Default::default()
+        };
 
         let handle = PtyProcess::spawn(adapter, config).await.unwrap();
         let mut rx = handle.event_rx;
@@ -697,7 +781,11 @@ mod tests {
         // Drain remaining events to find AgentExited.
         let events = drain_until_exit(&mut rx, Duration::from_secs(2)).await;
         let agent_exited = events.iter().find_map(|e| {
-            if let AgentEvent::AgentExited { exit_code } = e { Some(*exit_code) } else { None }
+            if let AgentEvent::AgentExited { exit_code } = e {
+                Some(*exit_code)
+            } else {
+                None
+            }
         });
 
         assert!(
@@ -724,7 +812,10 @@ mod tests {
                 .with_args(vec!["multi".into()])
                 .multi_event(),
         );
-        let config = AdapterConfig { working_dir: std::env::temp_dir(), ..Default::default() };
+        let config = AdapterConfig {
+            working_dir: std::env::temp_dir(),
+            ..Default::default()
+        };
 
         let handle = PtyProcess::spawn(adapter, config).await.unwrap();
         let mut rx = handle.event_rx;
@@ -737,11 +828,19 @@ mod tests {
             .count();
         let warning_count = events
             .iter()
-            .filter(|e| matches!(e, AgentEvent::Warning { message } if message.contains("dup:multi")))
+            .filter(
+                |e| matches!(e, AgentEvent::Warning { message } if message.contains("dup:multi")),
+            )
             .count();
 
-        assert!(text_delta_count >= 1, "expected at least one TextDelta for 'multi'; got {events:?}");
-        assert!(warning_count >= 1, "expected at least one Warning for 'dup:multi'; got {events:?}");
+        assert!(
+            text_delta_count >= 1,
+            "expected at least one TextDelta for 'multi'; got {events:?}"
+        );
+        assert!(
+            warning_count >= 1,
+            "expected at least one Warning for 'dup:multi'; got {events:?}"
+        );
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -756,7 +855,10 @@ mod tests {
     async fn dropped_event_receiver_does_not_panic() {
         // Use `echo` so the process exits quickly.
         let adapter = Arc::new(FakeAdapter::new("echo").with_args(vec!["drop-test".into()]));
-        let config = AdapterConfig { working_dir: std::env::temp_dir(), ..Default::default() };
+        let config = AdapterConfig {
+            working_dir: std::env::temp_dir(),
+            ..Default::default()
+        };
 
         let handle = PtyProcess::spawn(adapter, config).await.unwrap();
         let mut exit_rx = handle.exit_rx;
@@ -772,7 +874,10 @@ mod tests {
             .expect("exit_rx sender gone");
 
         // If we reach here without a panic: test passes.
-        assert!(exit_rx.borrow().is_some(), "exit_rx should be Some after process exits");
+        assert!(
+            exit_rx.borrow().is_some(),
+            "exit_rx should be Some after process exits"
+        );
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -785,7 +890,10 @@ mod tests {
     #[tokio::test]
     async fn dropped_stdin_tx_does_not_panic_writer_task() {
         let adapter = Arc::new(FakeAdapter::new("cat"));
-        let config = AdapterConfig { working_dir: std::env::temp_dir(), ..Default::default() };
+        let config = AdapterConfig {
+            working_dir: std::env::temp_dir(),
+            ..Default::default()
+        };
 
         let handle = PtyProcess::spawn(adapter, config).await.unwrap();
         let mut exit_rx = handle.exit_rx;
@@ -801,7 +909,10 @@ mod tests {
             .expect("timed out — writer task likely blocked or stdin not closed")
             .expect("exit_rx sender gone");
 
-        assert!(exit_rx.borrow().is_some(), "process should have exited after stdin EOF");
+        assert!(
+            exit_rx.borrow().is_some(),
+            "process should have exited after stdin EOF"
+        );
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -820,16 +931,16 @@ mod tests {
     /// already handles this.  We assert the lag error kind is correct.
     #[tokio::test]
     async fn broadcast_lag_returns_lagged_error_not_panic() {
-
         // Emit 1100 lines from stdout → 1100 Raw events + 1 AgentStarted +
         // 1 AgentExited = 1102 total, which overflows the 1024-capacity channel.
-        let adapter = Arc::new(
-            FakeAdapter::new("sh").with_args(vec![
-                "-c".into(),
-                "for i in $(seq 1 1100); do echo \"line$i\"; done".into(),
-            ]),
-        );
-        let config = AdapterConfig { working_dir: std::env::temp_dir(), ..Default::default() };
+        let adapter = Arc::new(FakeAdapter::new("sh").with_args(vec![
+            "-c".into(),
+            "for i in $(seq 1 1100); do echo \"line$i\"; done".into(),
+        ]));
+        let config = AdapterConfig {
+            working_dir: std::env::temp_dir(),
+            ..Default::default()
+        };
 
         let handle = PtyProcess::spawn(adapter, config).await.unwrap();
         let mut rx = handle.event_rx;
@@ -882,11 +993,19 @@ mod tests {
     #[tokio::test]
     async fn kill_terminates_child_process() {
         let adapter = Arc::new(FakeAdapter::new("sleep").with_args(vec!["60".into()]));
-        let config = AdapterConfig { working_dir: std::env::temp_dir(), ..Default::default() };
+        let config = AdapterConfig {
+            working_dir: std::env::temp_dir(),
+            ..Default::default()
+        };
 
         let handle = PtyProcess::spawn(adapter, config).await.unwrap();
         // Destructure so we can call kill_tx.send() without a partial-move issue.
-        let PtyHandle { stdin_tx: _, mut event_rx, mut exit_rx, kill_tx } = handle;
+        let PtyHandle {
+            stdin_tx: _,
+            mut event_rx,
+            mut exit_rx,
+            kill_tx,
+        } = handle;
 
         // Drain AgentStarted so it doesn't interfere.
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -901,12 +1020,20 @@ mod tests {
             .expect("exit_rx sender dropped unexpectedly");
 
         let code = *exit_rx.borrow();
-        assert!(code.is_some(), "exit_rx should be Some(_) after kill(); got None");
+        assert!(
+            code.is_some(),
+            "exit_rx should be Some(_) after kill(); got None"
+        );
 
         // Collect remaining events; AgentExited must appear.
         let events = drain_until_exit(&mut event_rx, Duration::from_secs(3)).await;
-        let exited = events.iter().any(|e| matches!(e, AgentEvent::AgentExited { .. }));
-        assert!(exited, "AgentExited event must be received after kill(); events: {events:?}");
+        let exited = events
+            .iter()
+            .any(|e| matches!(e, AgentEvent::AgentExited { .. }));
+        assert!(
+            exited,
+            "AgentExited event must be received after kill(); events: {events:?}"
+        );
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -917,10 +1044,18 @@ mod tests {
     #[tokio::test]
     async fn kill_is_idempotent() {
         let adapter = Arc::new(FakeAdapter::new("sleep").with_args(vec!["60".into()]));
-        let config = AdapterConfig { working_dir: std::env::temp_dir(), ..Default::default() };
+        let config = AdapterConfig {
+            working_dir: std::env::temp_dir(),
+            ..Default::default()
+        };
 
         let handle = PtyProcess::spawn(adapter, config).await.unwrap();
-        let PtyHandle { stdin_tx: _, event_rx: _, mut exit_rx, kill_tx } = handle;
+        let PtyHandle {
+            stdin_tx: _,
+            event_rx: _,
+            mut exit_rx,
+            kill_tx,
+        } = handle;
 
         // First kill.
         let _ = kill_tx.send(true);
@@ -946,8 +1081,12 @@ mod tests {
     #[tokio::test]
     async fn stdin_write_error_emits_agent_error_event() {
         // `true` exits immediately with code 0.
-        let adapter = Arc::new(FakeAdapter::new("sh").with_args(vec!["-c".into(), "exit 0".into()]));
-        let config = AdapterConfig { working_dir: std::env::temp_dir(), ..Default::default() };
+        let adapter =
+            Arc::new(FakeAdapter::new("sh").with_args(vec!["-c".into(), "exit 0".into()]));
+        let config = AdapterConfig {
+            working_dir: std::env::temp_dir(),
+            ..Default::default()
+        };
 
         let handle = PtyProcess::spawn(adapter, config).await.unwrap();
         let stdin_tx = handle.stdin_tx.clone();
@@ -980,7 +1119,9 @@ mod tests {
         let mut got_error = false;
         loop {
             let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-            if remaining.is_zero() { break; }
+            if remaining.is_zero() {
+                break;
+            }
             match tokio::time::timeout(Duration::from_millis(200), rx.recv()).await {
                 Ok(Ok(AgentEvent::Error { message })) => {
                     if message.contains("stdin write failed") {
@@ -1020,10 +1161,14 @@ mod tests {
         let mut got_raw = false;
 
         loop {
-            if tokio::time::Instant::now() >= deadline { break; }
+            if tokio::time::Instant::now() >= deadline {
+                break;
+            }
             match tokio::time::timeout(Duration::from_millis(200), rx.recv()).await {
                 Ok(Ok(AgentEvent::Raw { payload })) => {
-                    if payload.contains("hello from potato") { got_raw = true; }
+                    if payload.contains("hello from potato") {
+                        got_raw = true;
+                    }
                 }
                 Ok(Ok(AgentEvent::AgentExited { .. })) => break,
                 Ok(Ok(_)) => {}
@@ -1063,7 +1208,12 @@ mod tests {
         let (_exit_tx, exit_rx) = watch::channel::<Option<i32>>(None);
         let (kill_tx, _kill_rx) = watch::channel::<bool>(false);
         drop(event_tx);
-        let _handle = PtyHandle { stdin_tx, event_rx, exit_rx, kill_tx };
+        let _handle = PtyHandle {
+            stdin_tx,
+            event_rx,
+            exit_rx,
+            kill_tx,
+        };
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1075,21 +1225,24 @@ mod tests {
     #[tokio::test]
     async fn spawn_turn_cat_echoes_prompt_and_exits() {
         let adapter = Arc::new(FakeAdapter::new("cat"));
-        let config = AdapterConfig { working_dir: std::env::temp_dir(), ..Default::default() };
+        let config = AdapterConfig {
+            working_dir: std::env::temp_dir(),
+            ..Default::default()
+        };
 
-        let handle = PtyProcess::spawn_turn(
-            adapter,
-            config,
-            "hello from spawn_turn".to_string(),
-            None,
-        ).await.unwrap();
+        let handle =
+            PtyProcess::spawn_turn(adapter, config, "hello from spawn_turn".to_string(), None)
+                .await
+                .unwrap();
 
         let mut rx = handle.event_rx;
         let events = drain_until_exit(&mut rx, Duration::from_secs(5)).await;
 
         // AgentStarted should be first.
         assert!(
-            events.iter().any(|e| matches!(e, AgentEvent::AgentStarted { .. })),
+            events
+                .iter()
+                .any(|e| matches!(e, AgentEvent::AgentStarted { .. })),
             "expected AgentStarted; events: {events:?}",
         );
 
@@ -1101,7 +1254,9 @@ mod tests {
 
         // AgentExited must arrive (process exits after stdin EOF).
         assert!(
-            events.iter().any(|e| matches!(e, AgentEvent::AgentExited { .. })),
+            events
+                .iter()
+                .any(|e| matches!(e, AgentEvent::AgentExited { .. })),
             "expected AgentExited; events: {events:?}",
         );
     }
@@ -1109,10 +1264,16 @@ mod tests {
     /// spawn_turn: exit_rx is updated after process exits.
     #[tokio::test]
     async fn spawn_turn_exit_rx_updated_on_exit() {
-        let adapter = Arc::new(FakeAdapter::new("sh").with_args(vec!["-c".into(), "exit 0".into()]));
-        let config = AdapterConfig { working_dir: std::env::temp_dir(), ..Default::default() };
+        let adapter =
+            Arc::new(FakeAdapter::new("sh").with_args(vec!["-c".into(), "exit 0".into()]));
+        let config = AdapterConfig {
+            working_dir: std::env::temp_dir(),
+            ..Default::default()
+        };
 
-        let handle = PtyProcess::spawn_turn(adapter, config, "prompt".to_string(), None).await.unwrap();
+        let handle = PtyProcess::spawn_turn(adapter, config, "prompt".to_string(), None)
+            .await
+            .unwrap();
         let mut exit_rx = handle.exit_rx;
 
         tokio::time::timeout(Duration::from_secs(5), exit_rx.changed())
@@ -1120,7 +1281,10 @@ mod tests {
             .expect("timed out waiting for exit_rx")
             .expect("exit_rx sender dropped");
 
-        assert!(exit_rx.borrow().is_some(), "exit_rx should be Some after process exits");
+        assert!(
+            exit_rx.borrow().is_some(),
+            "exit_rx should be Some after process exits"
+        );
     }
 
     /// spawn_turn: no stdin_tx field on TurnHandle (structural test).
@@ -1139,14 +1303,15 @@ mod tests {
         // sh -c "cat" will echo whatever is on stdin. We use this to confirm the
         // prompt bytes were actually delivered before stdin was closed.
         let adapter = Arc::new(FakeAdapter::new("sh").with_args(vec!["-c".into(), "cat".into()]));
-        let config = AdapterConfig { working_dir: std::env::temp_dir(), ..Default::default() };
+        let config = AdapterConfig {
+            working_dir: std::env::temp_dir(),
+            ..Default::default()
+        };
 
-        let handle = PtyProcess::spawn_turn(
-            adapter,
-            config,
-            "unique-prompt-marker".to_string(),
-            None,
-        ).await.unwrap();
+        let handle =
+            PtyProcess::spawn_turn(adapter, config, "unique-prompt-marker".to_string(), None)
+                .await
+                .unwrap();
 
         let mut rx = handle.event_rx;
         let events = drain_until_exit(&mut rx, Duration::from_secs(5)).await;

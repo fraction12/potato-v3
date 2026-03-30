@@ -9,10 +9,10 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Widget},
 };
 
+use super::{Panel, PanelAction, PanelId};
 use crate::app::state::AppState;
 use crate::ui::theme::{AMBER, BG, CHARCOAL, CREAM, SPROUT, TAN};
 use crate::ui::widgets::sparkline::TokenSparkline;
-use super::{Panel, PanelAction, PanelId};
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -205,10 +205,7 @@ impl Panel for TokenDashPanel {
         }
 
         // Trim to the available height.
-        let visible: Vec<Line<'_>> = lines
-            .into_iter()
-            .take(inner.height as usize)
-            .collect();
+        let visible: Vec<Line<'_>> = lines.into_iter().take(inner.height as usize).collect();
 
         let para = Paragraph::new(visible).style(Style::default().bg(BG));
         para.render(inner, frame.buffer_mut());
@@ -307,9 +304,17 @@ mod tests {
         panel.record_turn("gpt-4o", 200, 75);
 
         assert_eq!(panel.model_breakdown.len(), 2);
-        let llama = panel.model_breakdown.iter().find(|m| m.model == "llama3").unwrap();
+        let llama = panel
+            .model_breakdown
+            .iter()
+            .find(|m| m.model == "llama3")
+            .unwrap();
         assert_eq!(llama.total(), 150);
-        let gpt = panel.model_breakdown.iter().find(|m| m.model == "gpt-4o").unwrap();
+        let gpt = panel
+            .model_breakdown
+            .iter()
+            .find(|m| m.model == "gpt-4o")
+            .unwrap();
         assert_eq!(gpt.total(), 275);
     }
 

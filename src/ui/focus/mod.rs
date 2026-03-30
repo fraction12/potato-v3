@@ -180,10 +180,7 @@ mod tests {
 
     #[test]
     fn set_custom_panel_in_ring() {
-        let mut ring = FocusRing::new(vec![
-            PanelId::Chat,
-            PanelId::Custom("sidebar".to_string()),
-        ]);
+        let mut ring = FocusRing::new(vec![PanelId::Chat, PanelId::Custom("sidebar".to_string())]);
         let ok = ring.set(&PanelId::Custom("sidebar".to_string()));
         assert!(ok);
         assert_eq!(ring.focused(), &PanelId::Custom("sidebar".to_string()));
