@@ -1117,38 +1117,39 @@ fn sync_mcp_roles_to_panes(state: &mut AppState) {
     }
 }
 
-/// Sync OpenSpec: poll watcher for file changes and refresh snapshot in InterSessionState.
+/// Periodic OpenSpec refresh (~30s / 120 ticks). Recaptures the CLI snapshot
+/// and syncs to MCP state.
 fn sync_openspec(state: &mut AppState) {
-    // 1. Poll watcher for file-change notifications (non-blocking).
-    let mut changed = false;
-    if let Some(ref mut openspec) = state.openspec {
-        while openspec.rx.try_recv().is_ok() {
-            changed = true;
-        }
+    state.openspec_refresh_ticks += 1;
+    if state.openspec_refresh_ticks >= 120 {
+        state.openspec_refresh_ticks = 0;
+        state.openspec_snapshot = openspec::snapshot::OpenSpecSnapshot::capture();
+        sync_openspec_to_mcp(state);
     }
+}
 
-    // 2. Refresh the OpenSpec snapshot in InterSessionState on change.
-    if changed {
-        if let (Some(openspec), Some(iss)) = (&state.openspec, &state.inter_session_state) {
-            let tasks = openspec.open_tasks();
-            let snapshots: Vec<mcp::state::OpenSpecTaskSnapshot> = tasks
-                .iter()
-                .map(|t| mcp::state::OpenSpecTaskSnapshot {
-                    id: t.id.clone(),
-                    title: t.title.clone(),
-                    status: t.status.to_string(),
-                    phase: t.phase.clone(),
-                    severity: t.severity.clone(),
-                })
-                .collect();
-            if let Ok(mut st) = iss.lock() {
-                st.openspec_tasks = snapshots;
-            }
-            tracing::debug!(
-                "OpenSpec task snapshot refreshed ({} open tasks)",
-                tasks.len()
-            );
+/// Push the current OpenSpec snapshot into InterSessionState for MCP tool access.
+fn sync_openspec_to_mcp(state: &AppState) {
+    if let Some(ref iss) = state.inter_session_state {
+        let snapshots: Vec<mcp::state::OpenSpecTaskSnapshot> = state
+            .openspec_snapshot
+            .changes
+            .iter()
+            .map(|c| mcp::state::OpenSpecTaskSnapshot {
+                id: c.name.clone(),
+                title: format!("{}/{} tasks", c.completed_tasks, c.total_tasks),
+                status: c.status.clone(),
+                phase: Some(c.name.clone()),
+                severity: None,
+            })
+            .collect();
+        if let Ok(mut st) = iss.lock() {
+            st.openspec_tasks = snapshots;
         }
+        tracing::debug!(
+            "OpenSpec MCP snapshot synced ({} changes)",
+            state.openspec_snapshot.changes.len()
+        );
     }
 }
 
@@ -1425,20 +1426,16 @@ async fn main() -> Result<()> {
     let (_mcp_bridge, mcp_socket_path) =
         mcp::bridge::McpBridge::start(Arc::clone(&inter_state), inject_tx)?;
 
-    // Initialize OpenSpec watcher if `openspec/changes/` exists.
-    let openspec_watcher = std::env::current_dir().ok().and_then(|cwd| {
+    // Capture initial OpenSpec snapshot via CLI.
+    let openspec_snapshot = openspec::snapshot::OpenSpecSnapshot::capture();
+    if openspec_snapshot.cli_available {
         tracing::info!(
-            "Looking for OpenSpec at {}/openspec/changes/",
-            cwd.display()
+            "OpenSpec CLI snapshot: {} changes",
+            openspec_snapshot.changes.len()
         );
-        let w = openspec::OpenSpecWatcher::new(&cwd);
-        if w.is_some() {
-            tracing::info!("OpenSpec watcher active");
-        } else {
-            tracing::warn!("No OpenSpec changes found in {}", cwd.display());
-        }
-        w
-    });
+    } else {
+        tracing::info!("OpenSpec CLI not available — snapshot empty");
+    }
 
     // Load persisted role definitions from `.potato/roles.toml`.
     let project_roles = std::env::current_dir()
@@ -1463,27 +1460,13 @@ async fn main() -> Result<()> {
         mcp_socket_path: Some(mcp_socket_path),
         inter_session_state: Some(inter_state),
         inject_rx: Some(inject_rx),
-        openspec: openspec_watcher,
+        openspec_snapshot,
+        openspec_refresh_ticks: 0,
         ..AppState::default()
     };
 
     // Seed OpenSpec snapshot into InterSessionState so agents can read it immediately.
-    if let (Some(openspec), Some(iss)) = (&state.openspec, &state.inter_session_state) {
-        let tasks = openspec.open_tasks();
-        let snapshots: Vec<mcp::state::OpenSpecTaskSnapshot> = tasks
-            .iter()
-            .map(|t| mcp::state::OpenSpecTaskSnapshot {
-                id: t.id.clone(),
-                title: t.title.clone(),
-                status: t.status.to_string(),
-                phase: t.phase.clone(),
-                severity: t.severity.clone(),
-            })
-            .collect();
-        if let Ok(mut st) = iss.lock() {
-            st.openspec_tasks = snapshots;
-        }
-    }
+    sync_openspec_to_mcp(&state);
 
     // Enter TUI.
     let _guard = TerminalGuard::enter()?;

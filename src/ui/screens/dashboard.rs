@@ -705,7 +705,7 @@ fn render_detail_integrations(frame: &mut Frame, area: Rect, state: &AppState) {
         "  OPENSPEC",
         Style::default().fg(BRASS).add_modifier(Modifier::BOLD),
     )));
-    let (os_status_label, os_status_color) = if state.openspec.is_some() {
+    let (os_status_label, os_status_color) = if state.openspec_snapshot.cli_available {
         ("active", SPROUT)
     } else {
         ("not found", MUTED)
@@ -714,11 +714,11 @@ fn render_detail_integrations(frame: &mut Frame, area: Rect, state: &AppState) {
         Span::styled("    Status:     ", Style::default().fg(TAN)),
         Span::styled(os_status_label, Style::default().fg(os_status_color)),
     ]));
-    if let Some(ref watcher) = state.openspec {
-        let open_count = watcher.open_tasks().len();
+    if state.openspec_snapshot.cli_available {
+        let change_count = state.openspec_snapshot.changes.len();
         lines.push(Line::from(vec![
-            Span::styled("    Open tasks: ", Style::default().fg(TAN)),
-            Span::styled(format!("{}", open_count), Style::default().fg(CREAM)),
+            Span::styled("    Changes:    ", Style::default().fg(TAN)),
+            Span::styled(format!("{change_count}"), Style::default().fg(CREAM)),
         ]));
     }
 

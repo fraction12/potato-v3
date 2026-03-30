@@ -50,6 +50,26 @@ pub fn handle(state: &mut AppState, key: &KeyEvent) -> KeyAction {
     if key.code == KeyCode::F(5) && current_focus != CockpitFocus::Terminal {
         state.git_snapshot = crate::git::GitSnapshot::refresh();
         state.git_refresh_ticks = 0;
+        state.openspec_snapshot = crate::openspec::snapshot::OpenSpecSnapshot::capture();
+        state.openspec_refresh_ticks = 0;
+        // Sync to MCP so agents see fresh data immediately.
+        if let Some(ref iss) = state.inter_session_state {
+            let snapshots: Vec<crate::mcp::state::OpenSpecTaskSnapshot> = state
+                .openspec_snapshot
+                .changes
+                .iter()
+                .map(|c| crate::mcp::state::OpenSpecTaskSnapshot {
+                    id: c.name.clone(),
+                    title: format!("{}/{} tasks", c.completed_tasks, c.total_tasks),
+                    status: c.status.clone(),
+                    phase: Some(c.name.clone()),
+                    severity: None,
+                })
+                .collect();
+            if let Ok(mut st) = iss.lock() {
+                st.openspec_tasks = snapshots;
+            }
+        }
         if let AppScreen::Session(ref mut session) = state.screen {
             session.git_scroll = 0;
         }

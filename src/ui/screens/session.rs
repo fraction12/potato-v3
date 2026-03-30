@@ -697,12 +697,9 @@ fn render_right_rail(frame: &mut Frame, area: Rect, state: &AppState, focus: Coc
         ),
     };
 
-    // ── Gather OpenSpec tasks ─────────────────────────────────────────────────
-    let openspec_tasks = state
-        .openspec
-        .as_ref()
-        .map(|os| os.open_tasks())
-        .unwrap_or_default();
+    // ── Gather OpenSpec changes ────────────────────────────────────────────────
+    let openspec_changes = &state.openspec_snapshot.changes;
+    let openspec_cli_available = state.openspec_snapshot.cli_available;
 
     // Read metrics from the active pane's log tracker.
     let sidebar = state
@@ -713,12 +710,12 @@ fn render_right_rail(frame: &mut Frame, area: Rect, state: &AppState, focus: Coc
         .unwrap_or_default();
 
     // ── Adaptive layout ───────────────────────────────────────────────────────
-    // Claude (compact 5 lines) | Team | Tasks | Context
-    let has_tasks = !openspec_tasks.is_empty() || !task_claims.is_empty();
+    // Claude (compact 5 lines) | Team | OpenSpec | Context
+    let has_tasks = !openspec_changes.is_empty() || !task_claims.is_empty();
     let has_context = !ctx_keys.is_empty();
 
     let task_height = if has_tasks {
-        (openspec_tasks.len().max(task_claims.len()) as u16).clamp(3, 8) + 2
+        (openspec_changes.len().max(task_claims.len()) as u16).clamp(3, 8) + 2
     } else {
         4
     };
@@ -822,45 +819,49 @@ fn render_right_rail(frame: &mut Frame, area: Rect, state: &AppState, focus: Coc
         team_area,
     );
 
-    // ── Tasks ─────────────────────────────────────────────────────────────────
-    // Merge OpenSpec tasks with MCP task claims.
+    // ── OpenSpec ───────────────────────────────────────────────────────────────
+    // Show per-change summary lines with task progress.
     let max_tasks = tasks_area.height.saturating_sub(2) as usize;
-    let has_openspec = state.openspec.is_some();
-    let tasks_text: Vec<Line> = if openspec_tasks.is_empty() && task_claims.is_empty() {
-        if has_openspec {
+    let tasks_text: Vec<Line> = if openspec_changes.is_empty() && task_claims.is_empty() {
+        if openspec_cli_available {
             vec![
                 Line::from(Span::raw("")),
-                Line::from(Span::styled(" all tasks done", Style::default().fg(STONE))),
+                Line::from(Span::styled(" no changes", Style::default().fg(STONE))),
             ]
         } else {
             vec![
                 Line::from(Span::raw("")),
-                Line::from(Span::styled(" no openspec/", Style::default().fg(STONE))),
-                Line::from(Span::styled(" changes found", Style::default().fg(STONE))),
+                Line::from(Span::styled(
+                    " openspec not found",
+                    Style::default().fg(STONE),
+                )),
             ]
         }
     } else {
         let mut lines: Vec<Line> = Vec::new();
 
-        // Show OpenSpec tasks exactly as they appear — no extra decoration.
-        for task in openspec_tasks.iter().take(max_tasks) {
-            let (icon, status_style) = match task.status {
-                crate::openspec::TaskStatus::Claimed => (" ●", Style::default().fg(AMBER)),
-                crate::openspec::TaskStatus::InProgress => (" ◐", Style::default().fg(AMBER)),
-                crate::openspec::TaskStatus::Blocked => (" ✗", Style::default().fg(ROSE)),
-                _ => (" ○", Style::default().fg(STONE)),
-            };
-            let max_title = inner_w.saturating_sub(icon.len() + task.id.len() + 2);
-            let title = truncate_str(&task.title, max_title);
+        // Show OpenSpec changes with task progress.
+        for change in openspec_changes.iter().take(max_tasks) {
+            let progress = format!("{}/{}", change.completed_tasks, change.total_tasks);
+            let (icon, status_style) =
+                if change.completed_tasks == change.total_tasks && change.total_tasks > 0 {
+                    (" ✓", Style::default().fg(SPROUT))
+                } else if change.status == "in-progress" {
+                    (" ◐", Style::default().fg(AMBER))
+                } else {
+                    (" ○", Style::default().fg(STONE))
+                };
+            let max_name = inner_w.saturating_sub(icon.len() + progress.len() + 3);
+            let name = truncate_str(&change.name, max_name);
             lines.push(Line::from(vec![
                 Span::styled(icon.to_string(), status_style),
-                Span::styled(format!(" {}", task.id), label),
-                Span::styled(format!(" {title}"), value),
+                Span::styled(format!(" {name}"), value),
+                Span::styled(format!(" {progress}"), label),
             ]));
         }
 
         if lines.is_empty() {
-            // Fall back to showing raw MCP task claims if no OpenSpec.
+            // Fall back to showing raw MCP task claims if no OpenSpec changes.
             for (id, desc, _pane_id) in task_claims.iter().take(max_tasks) {
                 let max_desc = inner_w.saturating_sub(id.len() + 4);
                 let desc_short = truncate_str(desc, max_desc);
@@ -877,7 +878,7 @@ fn render_right_rail(frame: &mut Frame, area: Rect, state: &AppState, focus: Coc
 
     frame.render_widget(
         Paragraph::new(tasks_text)
-            .block(sidebar_block(" Tasks ", title_color, border_fg))
+            .block(sidebar_block(" OpenSpec ", title_color, border_fg))
             .style(Style::default().bg(BG)),
         tasks_area,
     );
