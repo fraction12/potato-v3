@@ -374,7 +374,7 @@ pub struct SessionState {
     pub user_scrolled: bool,
     pub input_cursor: usize,
     pub tick_count: u64,
-    /// The Claude-native session id received from the last [`AgentEvent::SessionBound`] event.
+    /// The Claude-native session id received from the last `AgentEvent::SessionBound` event.
     ///
     /// Pass this as `--resume <id>` when spawning the next turn so Claude can
     /// continue the conversation thread. `None` until the first turn completes.

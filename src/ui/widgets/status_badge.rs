@@ -61,7 +61,7 @@ impl StatusBadge {
     }
 }
 
-/// Build a [`StatusBadge`] from an [`AgentState`] label string.
+/// Build a [`StatusBadge`] from an `AgentState` label string.
 impl StatusBadge {
     /// Construct a badge that reflects a given agent state label.
     pub fn from_agent_state(label: &str) -> Self {

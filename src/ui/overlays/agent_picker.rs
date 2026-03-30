@@ -3,7 +3,7 @@
 //! Triggered by `/agent` command or Ctrl+A (configurable keybind).
 //!
 //! Layout:
-//! ```
+//! ```text
 //! ┌──────────── Agent Picker ────────────┐
 //! │  Name          Binary          Caps  │
 //! │ ► Claude Code  /usr/bin/claude  S A  │

@@ -77,8 +77,8 @@ struct ToolSlot {
 
 /// Incremental JSONL tracker for a Codex session log.
 ///
-/// Call [`poll`] periodically to read new lines and update internal state.
-/// Call [`snapshot`] to obtain the latest [`CodexSidebarData`] for display.
+/// Call `poll` periodically to read new lines and update internal state.
+/// Call `snapshot` to obtain the latest [`CodexSidebarData`] for display.
 #[derive(Debug, Default)]
 pub struct CodexSessionLogTracker {
     path: PathBuf,

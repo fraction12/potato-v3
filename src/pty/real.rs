@@ -93,7 +93,7 @@ impl RealPty {
         Self::spawn_in(binary, args, cols, rows, None)
     }
 
-    /// Like [`spawn`] but sets the child process's working directory to `cwd`.
+    /// Like `spawn` but sets the child process's working directory to `cwd`.
     pub fn spawn_in(
         binary: &str,
         args: &[&str],
@@ -104,7 +104,7 @@ impl RealPty {
         Self::spawn_with_env(binary, args, cols, rows, cwd, &[])
     }
 
-    /// Like [`spawn_in`] but also sets additional environment variables for
+    /// Like `spawn_in` but also sets additional environment variables for
     /// the child process.
     ///
     /// Each element of `env` is an `(key, value)` pair.  These are applied
@@ -282,7 +282,7 @@ impl RealPty {
 
 // ── key_event_to_bytes ────────────────────────────────────────────────────────
 
-/// Convert a crossterm [`KeyEvent`] to the raw terminal byte sequence that
+/// Convert a crossterm `KeyEvent` to the raw terminal byte sequence that
 /// should be written to the PTY's stdin.
 ///
 /// This is a free function so it can be unit-tested without constructing a

@@ -1,7 +1,7 @@
 //! Session screen — cockpit layout wrapping a live agent PTY session.
 //!
 //! Layout (3-column):
-//! ```
+//! ```text
 //! ┌─────────────────┬──────────────────────────────────┬─────────────────┐
 //! │  Sessions       │                                  │  Claude metrics │
 //! │  (left rail)    │   Claude PTY terminal viewport   │  / tools        │
