@@ -630,8 +630,7 @@ fn spawn_claude_pane(
 
     let launch_cwd = std::env::current_dir().ok();
 
-    let (session_id, mut session_args_owned): (String, Vec<String>) = if let Some(rid) = resume_id
-    {
+    let (session_id, mut session_args_owned): (String, Vec<String>) = if let Some(rid) = resume_id {
         (
             rid.to_string(),
             vec![

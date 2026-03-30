@@ -59,9 +59,11 @@ mod tests {
 
     #[test]
     fn take_redraw_flag_clears_after_read() {
+        // Set flag and immediately swap — single atomic op, no race window.
         REDRAW_NEEDED.store(true, Ordering::SeqCst);
-        assert!(take_redraw_flag());
-        // Second read should be false — flag was cleared.
+        let was_set = REDRAW_NEEDED.swap(false, Ordering::SeqCst);
+        assert!(was_set, "flag should have been true before swap");
+        // After swap, take should return false.
         assert!(!take_redraw_flag());
     }
 

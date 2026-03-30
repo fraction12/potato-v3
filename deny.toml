@@ -21,6 +21,13 @@ confidence-threshold = 0.8
 multiple-versions = "warn"
 wildcards = "allow"
 
+[advisories]
+ignore = [
+    # yaml-rust unmaintained — transitive via syntect. No alternative until
+    # syntect drops yaml-rust or switches to yaml-rust2.
+    "RUSTSEC-2024-0320",
+]
+
 [sources]
 unknown-registry = "deny"
 unknown-git = "warn"
