@@ -44,7 +44,7 @@ pub fn render_dashboard(frame: &mut Frame, area: Rect, state: &AppState) {
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3), // title bar
+            Constraint::Length(4), // title bar (name + subtitle)
             Constraint::Min(0),    // main content
             Constraint::Length(1), // footer
         ])
@@ -78,7 +78,7 @@ fn render_title(frame: &mut Frame, area: Rect) {
     frame.render_widget(title, inner);
 
     // Subtitle below title.
-    if inner.height > 2 {
+    if inner.height >= 2 {
         let subtitle_area = Rect {
             x: inner.x,
             y: inner.y + 1,
