@@ -9,6 +9,7 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 
 use crate::config::Config;
+use crate::config::profiles::AgentProfile;
 use crate::metrics::SessionMetrics;
 use crate::session::store::{SessionInfo, SessionStore};
 use crate::ui::focus::FocusRing;
@@ -189,6 +190,7 @@ pub struct PathSnapshots {
     pub potato_exists: bool,
     pub openspec_exists: bool,
     pub mcp_json_exists: bool,
+    pub agents_toml_exists: bool,
 }
 
 // ── Cockpit focus ─────────────────────────────────────────────────────────────
@@ -567,6 +569,10 @@ pub struct AppState {
 
     /// OpenSpec watcher — tracks `openspec/changes/*/tasks.md` for live task data.
     pub openspec: Option<crate::openspec::OpenSpecWatcher>,
+
+    /// Merged agent profiles (defaults < global < project `.potato/agents.toml`).
+    /// Stored at top level so profiles survive dashboard → session transitions.
+    pub agent_profiles: Vec<AgentProfile>,
 }
 
 impl Default for AppState {
@@ -596,6 +602,7 @@ impl Default for AppState {
             inter_session_state: None,
             inject_rx: None,
             openspec: None,
+            agent_profiles: Vec::new(),
         }
     }
 }

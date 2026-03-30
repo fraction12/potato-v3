@@ -3,7 +3,7 @@
 //! Profiles are loaded from (in priority order, lowest to highest):
 //! 1. Auto-generated defaults from detected agents.
 //! 2. Global profiles in `~/.config/potato/profiles/` (one `.toml` per profile).
-//! 3. Project-local profile in `.potato/profile.toml`.
+//! 3. Project-local agents in `.potato/agents.toml` (`[[agents]]` array).
 //!
 //! Project profiles with the same `name` override global profiles, which in
 //! turn override auto-generated defaults.
@@ -125,9 +125,9 @@ impl ProfileLoader {
             }
         }
 
-        // 3. Project-local profile from .potato/profile.toml
+        // 3. Project-local agents from .potato/agents.toml
         if let Ok(cwd) = std::env::current_dir() {
-            let project_file = cwd.join(".potato").join("profile.toml");
+            let project_file = cwd.join(".potato").join("agents.toml");
             if project_file.is_file() {
                 load_file(&project_file, &mut profiles);
             }
@@ -163,7 +163,8 @@ fn load_dir(dir: &Path, profiles: &mut HashMap<String, AgentProfile>) {
 /// adapter = "claude"
 /// model = "claude-opus-4-5"
 /// ```
-/// or a project file with multiple `[[profiles]]` entries (array of tables).
+/// or a project file with multiple `[[agents]]` entries (array of tables).
+/// The legacy `[[profiles]]` key is also accepted for backwards compatibility.
 fn load_file(path: &Path, profiles: &mut HashMap<String, AgentProfile>) {
     let Ok(content) = std::fs::read_to_string(path) else {
         return;
@@ -172,8 +173,12 @@ fn load_file(path: &Path, profiles: &mut HashMap<String, AgentProfile>) {
         return;
     };
 
-    // Check for `[[profiles]]` array.
-    if let Some(arr) = table.get("profiles").and_then(|v| v.as_array()) {
+    // Check for `[[agents]]` array (preferred) or legacy `[[profiles]]`.
+    let arr = table
+        .get("agents")
+        .and_then(|v| v.as_array())
+        .or_else(|| table.get("profiles").and_then(|v| v.as_array()));
+    if let Some(arr) = arr {
         for entry in arr {
             if let Ok(raw) = entry.clone().try_into::<RawProfile>() {
                 let profile: AgentProfile = raw.into();
@@ -411,6 +416,38 @@ model = "gpt-4o"
         assert!(profiles.contains_key("Claude Code"));
         assert!(profiles.contains_key("Codex"));
         assert_eq!(profiles["Codex"].model.as_deref(), Some("gpt-4o"));
+
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+    }
+
+    #[test]
+    fn loader_agents_toml_array() {
+        let tmp_dir =
+            std::env::temp_dir().join(format!("potato-agents-arr-{}", std::process::id()));
+        std::fs::create_dir_all(&tmp_dir).unwrap();
+        let file = tmp_dir.join("agents.toml");
+        let content = r#"
+[[agents]]
+name = "architect"
+adapter = "claude"
+model = "sonnet"
+extra_args = ["--permission-mode", "bypassPermissions"]
+
+[[agents]]
+name = "implementer"
+adapter = "claude"
+"#;
+        std::fs::write(&file, content).unwrap();
+
+        let mut profiles: HashMap<String, AgentProfile> = HashMap::new();
+        load_file(&file, &mut profiles);
+        assert!(profiles.contains_key("architect"));
+        assert!(profiles.contains_key("implementer"));
+        assert_eq!(profiles["architect"].model.as_deref(), Some("sonnet"));
+        assert_eq!(
+            profiles["architect"].extra_args,
+            vec!["--permission-mode", "bypassPermissions"]
+        );
 
         let _ = std::fs::remove_dir_all(&tmp_dir);
     }

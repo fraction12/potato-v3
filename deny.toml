@@ -21,6 +21,15 @@ confidence-threshold = 0.8
 multiple-versions = "warn"
 wildcards = "allow"
 
+[advisories]
+ignore = [
+    # All transitive — no direct fix available until upstream deps update.
+    "RUSTSEC-2024-0320", # yaml-rust unmaintained (syntect)
+    "RUSTSEC-2024-0384", # instant unmaintained (transitive)
+    "RUSTSEC-2025-0141", # bincode unmaintained (syntect)
+    "RUSTSEC-2026-0009", # time stack exhaustion (plist→syntect, ratatui-widgets)
+]
+
 [sources]
 unknown-registry = "deny"
 unknown-git = "warn"

@@ -919,6 +919,13 @@ pub(crate) fn build_settings_lines(state: &AppState) -> Vec<Line<'static>> {
         "not found"
     };
     lines.push(kv(".mcp.json", mcp_json_status));
+
+    let agents_toml_status = if dash.path_snapshots.agents_toml_exists {
+        format!("found ({} profiles)", state.agent_profiles.len())
+    } else {
+        "not found".to_string()
+    };
+    lines.push(kv("agents.toml", &agents_toml_status));
     lines.push(separator());
     lines.push(section_div());
     lines.push(separator());
@@ -1162,6 +1169,7 @@ mod tests {
                 potato_exists: true,
                 openspec_exists: true,
                 mcp_json_exists: false,
+                agents_toml_exists: false,
             };
         }
         state

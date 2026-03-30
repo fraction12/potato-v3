@@ -51,32 +51,26 @@ pub fn install_panic_hook() {
 mod tests {
     use super::*;
 
+    // All flag tests are combined into one test to avoid races on the shared
+    // global `REDRAW_NEEDED` static when tests run in parallel. A parallel
+    // test's panic hook could mutate the flag between our store and assert.
     #[test]
-    fn take_redraw_flag_returns_false_when_not_set() {
+    fn redraw_flag_store_take_and_background_thread() {
+        // 1. Flag starts / resets to false.
         REDRAW_NEEDED.store(false, Ordering::SeqCst);
-        assert!(!take_redraw_flag());
-    }
+        assert!(!take_redraw_flag(), "should be false when not set");
 
-    #[test]
-    fn take_redraw_flag_clears_after_read() {
+        // 2. Set → take returns true, then clears.
         REDRAW_NEEDED.store(true, Ordering::SeqCst);
-        assert!(take_redraw_flag());
-        // Second read should be false — flag was cleared.
-        assert!(!take_redraw_flag());
-    }
+        assert!(take_redraw_flag(), "should be true after store(true)");
+        assert!(!take_redraw_flag(), "should be cleared after first take");
 
-    #[test]
-    fn simulated_background_panic_sets_and_clears_flag() {
-        // Simulate what the panic hook does on a background thread:
-        // set the flag, then verify the event loop can take and clear it.
+        // 3. Background thread sets the flag, main thread takes it.
         REDRAW_NEEDED.store(false, Ordering::SeqCst);
-
-        // Simulate: background thread sets the flag.
         let handle = std::thread::spawn(|| {
             REDRAW_NEEDED.store(true, Ordering::SeqCst);
         });
         handle.join().unwrap();
-
         assert!(
             take_redraw_flag(),
             "flag should be set after background thread write"

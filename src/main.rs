@@ -326,8 +326,9 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                             };
                         let role_count = roles.len().max(1);
 
+                        let default_profile = state.agent_profiles.first().cloned();
                         for _ in 0..role_count.min(2) {
-                            match spawn_claude_pane(state, None) {
+                            match spawn_claude_pane(state, None, default_profile.as_ref()) {
                                 Ok(id) => tracing::info!("Dashboard spawned pane: {}", id),
                                 Err(e) => {
                                     tracing::error!("Dashboard spawn failed: {e}");
@@ -489,7 +490,7 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
         // ── Resume a historical session (deferred from key handler) ───────
         if let Some(resume_id) = pending_session_resume.take() {
             let prev_selected = state.session().map(|s| s.selected_session).unwrap_or(0);
-            match spawn_claude_pane(state, Some(&resume_id)) {
+            match spawn_claude_pane(state, Some(&resume_id), None) {
                 Ok(_) => {
                     // Restore rail selection.
                     if let Some(ref mut session) = state.session_mut() {
@@ -503,13 +504,20 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
 
         // ── Spawn a new agent session (deferred from Agents Enter) ──────────
         if pending_new_session {
-            let agent_rows = crate::ui::overlays::agent_picker::build_agent_rows();
+            let agent_rows = if state.agent_profiles.is_empty() {
+                crate::ui::overlays::agent_picker::build_agent_rows()
+            } else {
+                crate::ui::overlays::agent_picker::build_agent_rows_from_profiles(
+                    &state.agent_profiles,
+                )
+            };
             let selected_idx = state.session().map(|s| s.selected_agent).unwrap_or(0);
+            let selected_profile = state.agent_profiles.get(selected_idx).cloned();
             let adapter_name = agent_rows
                 .get(selected_idx)
                 .map(|r| r.adapter_name.as_str())
                 .unwrap_or("claude");
-            match spawn_agent_pane(state, adapter_name, None) {
+            match spawn_agent_pane(state, adapter_name, None, selected_profile.as_ref()) {
                 Ok(id) => tracing::info!("New {} pane spawned: {}", adapter_name, id),
                 Err(e) => state.set_error(e, 100),
             }
@@ -597,8 +605,17 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
 /// Otherwise creates a new session with `--session-id <uuid>`.
 ///
 /// Returns the session id on success.
-fn spawn_claude_pane(state: &mut AppState, resume_id: Option<&str>) -> Result<String, String> {
-    let binary = which::which("claude").map_err(|_| "Claude binary not found".to_string())?;
+fn spawn_claude_pane(
+    state: &mut AppState,
+    resume_id: Option<&str>,
+    profile: Option<&crate::config::profiles::AgentProfile>,
+) -> Result<String, String> {
+    // Resolve binary: profile.binary → adapter detection → which fallback.
+    let binary = if let Some(bin) = profile.and_then(|p| p.binary.as_ref()) {
+        std::path::PathBuf::from(bin)
+    } else {
+        which::which("claude").map_err(|_| "Claude binary not found".to_string())?
+    };
 
     if !state.panes.can_open() {
         return Err("Maximum panes already open".to_string());
@@ -613,7 +630,7 @@ fn spawn_claude_pane(state: &mut AppState, resume_id: Option<&str>) -> Result<St
 
     let launch_cwd = std::env::current_dir().ok();
 
-    let (session_id, session_args_owned): (String, Vec<String>) = if let Some(rid) = resume_id {
+    let (session_id, mut session_args_owned): (String, Vec<String>) = if let Some(rid) = resume_id {
         (
             rid.to_string(),
             vec![
@@ -632,6 +649,20 @@ fn spawn_claude_pane(state: &mut AppState, resume_id: Option<&str>) -> Result<St
         (id, args)
     };
 
+    // Apply profile extra_args and model.
+    if let Some(prof) = profile {
+        if let Some(ref model) = prof.model {
+            session_args_owned.push("--model".into());
+            session_args_owned.push(model.clone());
+        }
+        for arg in &prof.extra_args {
+            // Skip if already present (e.g. --dangerously-skip-permissions).
+            if !session_args_owned.contains(arg) {
+                session_args_owned.push(arg.clone());
+            }
+        }
+    }
+
     let session_args_refs: Vec<&str> = session_args_owned.iter().map(|s| s.as_str()).collect();
 
     // ── MCP env vars ──────────────────────────────────────────────────────────
@@ -645,6 +676,13 @@ fn spawn_claude_pane(state: &mut AppState, resume_id: Option<&str>) -> Result<St
         let pane_id: u64 = state.panes.next_id();
         pane_env.push(("POTATO_PANE_ID".into(), pane_id.to_string()));
         pane_env.push(("POTATO_SOCKET".into(), sock.to_string_lossy().into_owned()));
+    }
+
+    // Apply profile env vars.
+    if let Some(prof) = profile {
+        for (k, v) in &prof.env {
+            pane_env.push((k.clone(), v.clone()));
+        }
     }
 
     let real_pty = if pane_env.is_empty() {
@@ -805,9 +843,10 @@ fn spawn_agent_pane(
     state: &mut AppState,
     adapter: &str,
     resume_id: Option<&str>,
+    profile: Option<&crate::config::profiles::AgentProfile>,
 ) -> Result<String, String> {
     match adapter {
-        "claude" => spawn_claude_pane(state, resume_id),
+        "claude" => spawn_claude_pane(state, resume_id, profile),
         "codex" => {
             use crate::adapters::AgentAdapter;
             use crate::adapters::codex::CodexAdapter;
@@ -1328,8 +1367,13 @@ async fn main() -> Result<()> {
         discover_historical_sessions(&home, &store);
     }
 
-    // Build initial state with detected agents.
+    // Build initial state with detected agents, then merge with profile system.
     let agents = detect_agents();
+    let agent_profiles = {
+        use crate::config::profiles::{ProfileLoader, default_profiles_from_agents};
+        let defaults = default_profiles_from_agents(&agents, false);
+        ProfileLoader::load(defaults)
+    };
     // The --model flag is stored in AppState directly (Claude picks its own model;
     // this is only used for display purposes in the status bar).
     let model = cli.model.unwrap_or_else(|| cfg.default_agent.clone());
@@ -1344,6 +1388,7 @@ async fn main() -> Result<()> {
             potato_exists: std::path::Path::new(".potato").exists(),
             openspec_exists: std::path::Path::new("openspec/changes").exists(),
             mcp_json_exists: std::path::Path::new(".mcp.json").exists(),
+            agents_toml_exists: std::path::Path::new(".potato/agents.toml").exists(),
         }
     };
 
@@ -1409,6 +1454,7 @@ async fn main() -> Result<()> {
             path_snapshots,
             ..DashboardState::default()
         }),
+        agent_profiles,
         store: Some(store),
         rail_sessions: initial_sessions,
         git_snapshot,
