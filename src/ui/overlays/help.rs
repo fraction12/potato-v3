@@ -81,6 +81,7 @@ pub struct HelpOverlay {
 }
 
 impl HelpOverlay {
+    /// Create a new help overlay scrolled to the top.
     pub fn new() -> Self {
         Self::default()
     }

@@ -47,6 +47,7 @@ pub struct SessionsPanel {
 }
 
 impl SessionsPanel {
+    /// Create an empty, visible sessions panel with no sessions loaded.
     pub fn new() -> Self {
         Self {
             sessions: Vec::new(),

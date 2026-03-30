@@ -132,6 +132,7 @@ pub struct OpenSpecTaskSnapshot {
 }
 
 impl InterSessionState {
+    /// Create an empty inter-session state with no backing store.
     pub fn new() -> Self {
         Self::default()
     }

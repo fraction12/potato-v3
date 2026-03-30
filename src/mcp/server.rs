@@ -32,6 +32,7 @@ pub struct McpServer {
 }
 
 impl McpServer {
+    /// Create a new MCP server instance for `pane_id`, backed by shared `state`.
     pub fn new(pane_id: u64, state: Arc<Mutex<InterSessionState>>) -> Self {
         Self { pane_id, state }
     }

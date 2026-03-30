@@ -43,6 +43,7 @@ pub struct FilePreviewPanel {
 }
 
 impl FilePreviewPanel {
+    /// Create an empty, visible file preview panel with no file loaded.
     pub fn new() -> Self {
         Self {
             visible: true,

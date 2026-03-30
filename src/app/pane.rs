@@ -39,6 +39,7 @@ pub struct Pane {
 }
 
 impl Pane {
+    /// Create a new pane with the given `id`, `session_id`, and `agent_name`.
     pub fn new(id: u64, session_id: impl Into<String>, agent_name: impl Into<String>) -> Self {
         Self {
             id,
@@ -71,6 +72,7 @@ pub struct PaneManager {
 }
 
 impl PaneManager {
+    /// Create an empty pane manager with no open panes.
     pub fn new() -> Self {
         Self::default()
     }
