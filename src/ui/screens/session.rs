@@ -131,15 +131,6 @@ pub fn render_session(frame: &mut Frame, area: Rect, state: &mut AppState) {
     render_right_rail(frame, right_area, state, focus);
     render_status_bar(frame, status_area, session, &state.model, focus, state.panes.len());
 
-    // ── Autocomplete popup (above input bar, when in command mode) ────────────
-    if focus == CockpitFocus::Input && session.input_buffer.starts_with('/') {
-        let prefix = &session.input_buffer[1..];
-        let matches = crate::commands::registry::completions(prefix);
-        if !matches.is_empty() {
-            render_command_autocomplete(frame, input_area, area, &matches, session.command_selected);
-        }
-    }
-
     // ── Overlay (rendered on top of everything) ───────────────────────────────
     if let Some(ref overlay) = session.overlay {
         match overlay {
@@ -609,76 +600,6 @@ fn render_input_bar(frame: &mut Frame, area: Rect, session: &SessionState, focus
     }
 }
 
-// ── Command autocomplete popup ────────────────────────────────────────────────
-
-/// Maximum number of commands shown in the autocomplete popup at once.
-const AUTOCOMPLETE_MAX_ROWS: usize = 6;
-
-/// Render the slash-command autocomplete popup above the input bar.
-///
-/// `input_area` is the input bar rect (used for positioning).
-/// `screen_area` is the full terminal area (used for bounds clamping).
-/// `matches` is the filtered list of commands; `selected` is the highlighted index.
-fn render_command_autocomplete(
-    frame: &mut Frame,
-    input_area: Rect,
-    screen_area: Rect,
-    matches: &[&crate::commands::registry::SlashCommand],
-    selected: usize,
-) {
-    if matches.is_empty() {
-        return;
-    }
-
-    let row_count = matches.len().min(AUTOCOMPLETE_MAX_ROWS) as u16;
-    let popup_height = row_count + 2; // 2 for borders
-    let popup_width = 54_u16.min(screen_area.width);
-
-    // Position directly above the input bar, left-aligned with input.
-    let popup_y = input_area.y.saturating_sub(popup_height);
-    let popup_x = input_area.x;
-
-    let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height)
-        .intersection(screen_area);
-
-    // Clear background behind the popup.
-    frame.render_widget(Clear, popup_area);
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(AMBER))
-        .style(Style::default().bg(CHARCOAL));
-
-    let inner = block.inner(popup_area);
-    frame.render_widget(block, popup_area);
-
-    for (i, cmd) in matches.iter().enumerate().take(AUTOCOMPLETE_MAX_ROWS) {
-        if i as u16 >= inner.height {
-            break;
-        }
-        let row_area = Rect::new(inner.x, inner.y + i as u16, inner.width, 1);
-        let is_selected = i == selected;
-
-        let bg = if is_selected { AMBER } else { CHARCOAL };
-        let fg = if is_selected { BG } else { STONE };
-        let desc_fg = if is_selected { BG } else { Color::Rgb(90, 90, 90) };
-
-        let name_text = format!("/{:<12}", cmd.name);
-        let desc_text = format!(" {}", cmd.description);
-
-        let spans = vec![
-            Span::styled(
-                name_text,
-                Style::default().fg(fg).bg(bg).add_modifier(if is_selected { Modifier::BOLD } else { Modifier::empty() }),
-            ),
-            Span::styled(desc_text, Style::default().fg(desc_fg).bg(bg)),
-        ];
-
-        Paragraph::new(Line::from(spans)).render(row_area, frame.buffer_mut());
-    }
-}
-
 // ── Sessions overlay stub ─────────────────────────────────────────────────────
 
 /// Placeholder sessions overlay (full picker is a future phase).
@@ -869,8 +790,8 @@ fn render_right_rail(frame: &mut Frame, area: Rect, state: &AppState, focus: Coc
         } else {
             vec![
                 Line::from(Span::raw("")),
-                Line::from(Span::styled(" no .openspec/", Style::default().fg(STONE))),
-                Line::from(Span::styled(" backlog found", Style::default().fg(STONE))),
+                Line::from(Span::styled(" no openspec/", Style::default().fg(STONE))),
+                Line::from(Span::styled(" changes found", Style::default().fg(STONE))),
             ]
         }
     } else {
@@ -1044,9 +965,9 @@ fn render_status_bar(
     );
 
     let keys_text = if pane_count > 1 {
-        " Tab:cycle focus  F6:term  Ctrl+W:close pane  Ctrl+\\:quit "
+        " Tab:cycle  F1:help  F2:agent  F3:sessions  F5:refresh  F6:term  Ctrl+W:close pane  Ctrl+\\:quit "
     } else {
-        " Tab:cycle  F6:term  Ctrl+W:close  /help  Ctrl+\\:quit "
+        " Tab:cycle  F1:help  F2:agent  F3:sessions  F5:refresh  F6:term  Ctrl+\\:quit "
     };
     let keys_span = Span::styled(
         keys_text,

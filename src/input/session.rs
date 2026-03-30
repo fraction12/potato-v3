@@ -30,6 +30,22 @@ pub fn handle(state: &mut AppState, key: &KeyEvent) -> KeyAction {
         return KeyAction::Handled;
     }
 
+    // ── F2 — open agent picker overlay ───────────────────────────────
+    if key.code == KeyCode::F(2) && current_focus != CockpitFocus::Terminal {
+        if let AppScreen::Session(ref mut session) = state.screen {
+            session.overlay = Some(Overlay::AgentPicker);
+        }
+        return KeyAction::Handled;
+    }
+
+    // ── F3 — open session picker overlay ─────────────────────────────
+    if key.code == KeyCode::F(3) && current_focus != CockpitFocus::Terminal {
+        if let AppScreen::Session(ref mut session) = state.screen {
+            session.overlay = Some(Overlay::Sessions);
+        }
+        return KeyAction::Handled;
+    }
+
     // ── F5 — refresh git, OpenSpec tasks, agent status ───────────────
     if key.code == KeyCode::F(5) && current_focus != CockpitFocus::Terminal {
         state.git_snapshot = crate::git::GitSnapshot::capture();

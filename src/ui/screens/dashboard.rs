@@ -58,6 +58,15 @@ pub fn render_dashboard(frame: &mut Frame, area: Rect, state: &AppState) {
 // ── Title ─────────────────────────────────────────────────────────────────────
 
 fn render_title(frame: &mut Frame, area: Rect) {
+    // Outer block with bottom border.
+    let block = Block::default()
+        .borders(Borders::BOTTOM)
+        .border_style(Style::default().fg(STONE))
+        .style(Style::default().bg(BG));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    // Centered title.
     let title = Paragraph::new("🥔  Potato")
         .alignment(Alignment::Center)
         .style(
@@ -65,13 +74,16 @@ fn render_title(frame: &mut Frame, area: Rect) {
                 .fg(BRASS)
                 .bg(BG)
                 .add_modifier(Modifier::BOLD),
-        )
-        .block(
-            Block::default()
-                .borders(Borders::BOTTOM)
-                .border_style(Style::default().fg(STONE)),
         );
-    frame.render_widget(title, area);
+    frame.render_widget(title, inner);
+
+    // Right-aligned version label.
+    if inner.width > 10 {
+        let ver = Paragraph::new("v0.1.0")
+            .alignment(Alignment::Right)
+            .style(Style::default().fg(STONE).bg(BG));
+        frame.render_widget(ver, inner);
+    }
 }
 
 // ── Content (two-column: menu + detail) ───────────────────────────────────────
@@ -109,27 +121,53 @@ fn render_menu(
         .border_style(border_style)
         .style(Style::default().bg(BG));
 
-    let items: Vec<ListItem> = DashboardMenuItem::ALL
-        .iter()
-        .enumerate()
-        .map(|(i, item)| {
-            let is_selected = i == dash.selected_menu;
-            let bg = if is_selected { CHARCOAL } else { BG };
-            let fg = if is_selected { CREAM } else { TAN };
-            let style = if is_selected {
-                Style::default().fg(fg).bg(bg).add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(fg).bg(bg)
-            };
-            ListItem::new(Line::from(Span::styled(
-                format!("  {}", item.label()),
-                style,
-            )))
-        })
-        .collect();
+    // Menu item icon prefixes.
+    let menu_icons = ["▶", "👤", "⚡", "⚙"];
 
+    let mut raw_items: Vec<ListItem> = Vec::new();
+    for (i, item) in DashboardMenuItem::ALL.iter().enumerate() {
+        // Divider after the first item (Roast Potato is the primary action).
+        if i == 1 {
+            raw_items.push(ListItem::new(Line::from(Span::styled(
+                "  ─────────────────────",
+                Style::default().fg(STONE).bg(BG),
+            ))));
+        }
+
+        let is_selected = i == dash.selected_menu;
+        let bg = if is_selected { CHARCOAL } else { BG };
+        let fg = if is_selected { CREAM } else { TAN };
+        let icon = menu_icons.get(i).copied().unwrap_or("");
+        let style = if is_selected {
+            Style::default().fg(fg).bg(bg).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(fg).bg(bg)
+        };
+        raw_items.push(ListItem::new(Line::from(Span::styled(
+            format!("  {} {}", icon, item.label()),
+            style,
+        ))));
+        // 1-line padding between items (except after the last).
+        if i < DashboardMenuItem::ALL.len() - 1 {
+            raw_items.push(ListItem::new(Line::from(Span::styled(
+                "",
+                Style::default().bg(BG),
+            ))));
+        }
+    }
+    let items = raw_items;
+
+    // Map logical selected_menu index to visual list index.
+    // Layout: item0, blank, divider, item1, blank, item2, blank, item3
+    // indices:   0     1      2       3      4       5      6      7
+    let visual_index = if dash.selected_menu == 0 {
+        0
+    } else {
+        // +2 for the divider row (before item 1), +1 per blank between items
+        2 + (dash.selected_menu - 1) * 2 + 1
+    };
     let mut list_state = ListState::default();
-    list_state.select(Some(dash.selected_menu));
+    list_state.select(Some(visual_index));
 
     let list = List::new(items)
         .block(block)
@@ -180,11 +218,18 @@ fn render_detail_roast(frame: &mut Frame, area: Rect, state: &AppState) {
     // Build the content lines.
     let mut lines: Vec<Line> = Vec::new();
 
+    // Helper: draw a subtle section underline.
+    let section_under = |width: u16| -> Line<'static> {
+        let dashes = "─".repeat((width as usize).saturating_sub(2).min(40));
+        Line::from(Span::styled(format!("  {}", dashes), Style::default().fg(STONE)))
+    };
+
     // Agents summary.
     lines.push(Line::from(Span::styled(
         "  AGENTS",
         Style::default().fg(BRASS).add_modifier(Modifier::BOLD),
     )));
+    lines.push(section_under(inner.width));
     for agent in &dash.available_agents {
         let (indicator, fg) = if agent.available {
             ("●", SPROUT)
@@ -209,6 +254,7 @@ fn render_detail_roast(frame: &mut Frame, area: Rect, state: &AppState) {
         "  ROLES",
         Style::default().fg(BRASS).add_modifier(Modifier::BOLD),
     )));
+    lines.push(section_under(inner.width));
     if dash.roles.is_empty() {
         lines.push(Line::from(Span::styled(
             "    No roles defined. Agents will self-organize.",
@@ -233,6 +279,7 @@ fn render_detail_roast(frame: &mut Frame, area: Rect, state: &AppState) {
         "  MCP",
         Style::default().fg(BRASS).add_modifier(Modifier::BOLD),
     )));
+    lines.push(section_under(inner.width));
     let mcp_status = if state.mcp_socket_path.is_some() {
         ("active", SPROUT)
     } else {
@@ -245,8 +292,8 @@ fn render_detail_roast(frame: &mut Frame, area: Rect, state: &AppState) {
 
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        "  Press Enter to launch.",
-        Style::default().fg(BRASS),
+        "  [ Enter to Launch ]",
+        Style::default().fg(AMBER).add_modifier(Modifier::BOLD),
     )));
 
     lines.push(Line::from(""));
@@ -256,6 +303,12 @@ fn render_detail_roast(frame: &mut Frame, area: Rect, state: &AppState) {
     lines.push(Line::from(Span::styled(
         "  RECENT SESSIONS",
         Style::default().fg(BRASS).add_modifier(Modifier::BOLD),
+    )));
+    lines.push(section_under(inner.width));
+    // Column headers.
+    lines.push(Line::from(Span::styled(
+        "  Agent           Date        Cost",
+        Style::default().fg(STONE),
     )));
 
     if dash.recent_sessions.is_empty() {
@@ -452,12 +505,30 @@ fn render_detail_roles(frame: &mut Frame, area: Rect, state: &AppState) {
     match &dash.input {
         DashboardInput::RoleName(buf) => {
             lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled(
-                "  New role name:",
-                Style::default().fg(AMBER),
-            )));
-            let display = if buf.is_empty() { "..." } else { buf.as_str() };
-            lines.extend(wrap_input(display, "  > ", inner.width, input_style));
+            // Bordered input box for role name.
+            let box_width = (inner.width as usize).saturating_sub(6).min(48);
+            let title_str = "─ Role Name ";
+            let fill_count = box_width.saturating_sub(title_str.len() + 2);
+            let top = format!("  ┌{}{}┐", title_str, "─".repeat(fill_count));
+            let content = if buf.is_empty() { "Type here...".to_string() } else { buf.clone() };
+            let padded = format!("{:<width$}", content, width = box_width);
+            let mid = format!("  │ {} │", &padded[..box_width.min(padded.len())]);
+            let bot = format!("  └{}┘", "─".repeat(box_width + 2));
+            let content_style = if buf.is_empty() {
+                Style::default().fg(MUTED)
+            } else {
+                Style::default().fg(CREAM).add_modifier(Modifier::UNDERLINED)
+            };
+            lines.push(Line::from(Span::styled(top, Style::default().fg(AMBER))));
+            lines.push(Line::from(vec![
+                Span::styled("  │ ", Style::default().fg(AMBER)),
+                Span::styled(content, content_style),
+                Span::styled(
+                    format!("{} │", " ".repeat(box_width.saturating_sub(if buf.is_empty() { 12 } else { buf.len().min(box_width) }))),
+                    Style::default().fg(AMBER),
+                ),
+            ]));
+            lines.push(Line::from(Span::styled(bot, Style::default().fg(AMBER))));
             lines.push(Line::from(Span::styled(
                 "  Enter to confirm, Esc to cancel",
                 Style::default().fg(MUTED),
@@ -469,12 +540,29 @@ fn render_detail_roles(frame: &mut Frame, area: Rect, state: &AppState) {
                 Span::styled("  Role: ", Style::default().fg(TAN)),
                 Span::styled(name.to_string(), Style::default().fg(CREAM).add_modifier(Modifier::BOLD)),
             ]));
-            lines.push(Line::from(Span::styled(
-                "  Prompt (instructions for this agent):",
-                Style::default().fg(AMBER),
-            )));
-            let display = if prompt.is_empty() { "..." } else { prompt.as_str() };
-            lines.extend(wrap_input(display, "  > ", inner.width, input_style));
+            // Bordered input box for role prompt.
+            let box_width = (inner.width as usize).saturating_sub(6).min(48);
+            let title_str = "─ Instructions ";
+            let fill_count = box_width.saturating_sub(title_str.len() + 2);
+            let top = format!("  ┌{}{}┐", title_str, "─".repeat(fill_count));
+            let content = if prompt.is_empty() { "Type here...".to_string() } else { prompt.clone() };
+            let content_len = if prompt.is_empty() { 12 } else { prompt.len().min(box_width) };
+            let bot = format!("  └{}┘", "─".repeat(box_width + 2));
+            let content_style = if prompt.is_empty() {
+                Style::default().fg(MUTED)
+            } else {
+                Style::default().fg(CREAM).add_modifier(Modifier::UNDERLINED)
+            };
+            lines.push(Line::from(Span::styled(top, Style::default().fg(AMBER))));
+            lines.push(Line::from(vec![
+                Span::styled("  │ ", Style::default().fg(AMBER)),
+                Span::styled(content, content_style),
+                Span::styled(
+                    format!("{} │", " ".repeat(box_width.saturating_sub(content_len))),
+                    Style::default().fg(AMBER),
+                ),
+            ]));
+            lines.push(Line::from(Span::styled(bot, Style::default().fg(AMBER))));
             lines.push(Line::from(Span::styled(
                 "  Enter to save, Esc to cancel",
                 Style::default().fg(MUTED),
@@ -518,6 +606,75 @@ fn render_detail_integrations(frame: &mut Frame, area: Rect, state: &AppState) {
     frame.render_widget(block, area);
 
     let mut lines: Vec<Line> = Vec::new();
+
+    // GIT section.
+    lines.push(Line::from(Span::styled(
+        "  GIT",
+        Style::default().fg(BRASS).add_modifier(Modifier::BOLD),
+    )));
+    let git = &state.git_snapshot;
+    let (git_status_label, git_status_color) = if git.is_repo {
+        ("tracking", SPROUT)
+    } else {
+        ("not a repo", MUTED)
+    };
+    lines.push(Line::from(vec![
+        Span::styled("    Status:  ", Style::default().fg(TAN)),
+        Span::styled(git_status_label, Style::default().fg(git_status_color)),
+    ]));
+    if git.is_repo {
+        let branch_display = if git.current_branch.is_empty() {
+            "unknown".to_string()
+        } else {
+            git.current_branch.clone()
+        };
+        lines.push(Line::from(vec![
+            Span::styled("    Branch:  ", Style::default().fg(TAN)),
+            Span::styled(branch_display, Style::default().fg(CREAM)),
+        ]));
+        let (dirty_label, dirty_color) = if git.dirty_count == 0 {
+            ("clean".to_string(), SPROUT)
+        } else {
+            (format!("{} files", git.dirty_count), AMBER)
+        };
+        lines.push(Line::from(vec![
+            Span::styled("    Dirty:   ", Style::default().fg(TAN)),
+            Span::styled(dirty_label, Style::default().fg(dirty_color)),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("    Commits: ", Style::default().fg(TAN)),
+            Span::styled(
+                format!("{} recent", git.recent_commits.len()),
+                Style::default().fg(CREAM),
+            ),
+        ]));
+    }
+
+    lines.push(Line::from(""));
+
+    // OPENSPEC section.
+    lines.push(Line::from(Span::styled(
+        "  OPENSPEC",
+        Style::default().fg(BRASS).add_modifier(Modifier::BOLD),
+    )));
+    let (os_status_label, os_status_color) = if state.openspec.is_some() {
+        ("active", SPROUT)
+    } else {
+        ("not found", MUTED)
+    };
+    lines.push(Line::from(vec![
+        Span::styled("    Status:     ", Style::default().fg(TAN)),
+        Span::styled(os_status_label, Style::default().fg(os_status_color)),
+    ]));
+    if let Some(ref watcher) = state.openspec {
+        let open_count = watcher.open_tasks().len();
+        lines.push(Line::from(vec![
+            Span::styled("    Open tasks: ", Style::default().fg(TAN)),
+            Span::styled(format!("{}", open_count), Style::default().fg(CREAM)),
+        ]));
+    }
+
+    lines.push(Line::from(""));
 
     // MCP Server.
     lines.push(Line::from(Span::styled(
@@ -615,6 +772,13 @@ pub(crate) fn build_settings_lines(state: &AppState) -> Vec<Line<'static>> {
         ])
     };
     let separator = || -> Line<'static> { Line::from("") };
+    // Thin divider between settings sections.
+    let section_div = || -> Line<'static> {
+        Line::from(Span::styled(
+            format!("  {}", "─".repeat(36)),
+            Style::default().fg(STONE),
+        ))
+    };
 
     let mut lines: Vec<Line<'static>> = Vec::new();
 
@@ -624,6 +788,8 @@ pub(crate) fn build_settings_lines(state: &AppState) -> Vec<Line<'static>> {
     lines.push(kv("Theme", &cfg.theme));
     lines.push(kv("Tick Rate", &format!("{}ms", cfg.tick_rate_ms)));
     lines.push(kv("Model", &state.model));
+    lines.push(separator());
+    lines.push(section_div());
     lines.push(separator());
 
     // ── AGENTS ───────────────────────────────────────────────────────────────
@@ -657,18 +823,21 @@ pub(crate) fn build_settings_lines(state: &AppState) -> Vec<Line<'static>> {
         }
     }
     lines.push(separator());
+    lines.push(section_div());
+    lines.push(separator());
 
     // ── KEYBINDS ─────────────────────────────────────────────────────────────
     lines.push(header("KEYBINDS"));
     let kb = &cfg.keybinds;
     lines.push(kv("Quit", &kb.quit));
     lines.push(kv("Submit", &kb.submit));
-    lines.push(kv("Slash Menu", &kb.slash_menu));
     lines.push(kv("Model Picker", &kb.model_picker));
     lines.push(kv("Help", &kb.help));
     lines.push(kv("Approve", &kb.approve));
     lines.push(kv("Deny", &kb.deny));
     lines.push(kv("New Session", &kb.new_session));
+    lines.push(separator());
+    lines.push(section_div());
     lines.push(separator());
 
     // ── PATHS ────────────────────────────────────────────────────────────────
@@ -686,10 +855,12 @@ pub(crate) fn build_settings_lines(state: &AppState) -> Vec<Line<'static>> {
     lines.push(kv(".potato/", potato_status));
 
     let openspec_status = if dash.path_snapshots.openspec_exists { "found" } else { "not found" };
-    lines.push(kv(".openspec/", openspec_status));
+    lines.push(kv("openspec/", openspec_status));
 
     let mcp_json_status = if dash.path_snapshots.mcp_json_exists { "found" } else { "not found" };
     lines.push(kv(".mcp.json", mcp_json_status));
+    lines.push(separator());
+    lines.push(section_div());
     lines.push(separator());
 
     // ── MCP / COORDINATION ───────────────────────────────────────────────────
@@ -731,6 +902,8 @@ pub(crate) fn build_settings_lines(state: &AppState) -> Vec<Line<'static>> {
     } else {
         lines.push(kv("Active Roles", &live_roles.join(", ")));
     }
+    lines.push(separator());
+    lines.push(section_div());
     lines.push(separator());
 
     // ── PERMISSIONS ──────────────────────────────────────────────────────────

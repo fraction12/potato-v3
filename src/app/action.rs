@@ -19,8 +19,6 @@ pub enum Action {
     FocusPreviousPanel,
     /// Toggle visibility of a panel by id.
     TogglePanel(PanelId),
-    /// Open the slash command overlay.
-    OpenSlashMenu,
     /// Open the model picker overlay.
     OpenModelPicker,
     /// Open the help overlay.

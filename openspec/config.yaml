@@ -1,0 +1,6 @@
+schema: spec-driven
+context: |
+  Potato V3 — Rust TUI terminal cockpit for coding agents.
+  Stack: ratatui + tokio + crossterm + portable-pty + vt100, SQLite (rusqlite, WAL).
+  Not an agent — it's iTerm2 for the agent era.
+  Spawns real agents (Claude Code, Codex, any CLI) in PTY and wraps with metrics/observability.

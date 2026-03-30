@@ -160,7 +160,7 @@ pub fn tool_definitions() -> Vec<ToolInfo> {
         },
         ToolInfo {
             name: TOOL_LIST_TASKS.into(),
-            description: "List all open/actionable tasks from the project's OpenSpec backlog (.openspec/backlog.yaml). \
+            description: "List all open/actionable tasks from the project's OpenSpec changes (openspec/changes/*/tasks.md). \
                 Use this to see what tickets are available to work on. Claim a task by ID with potato_claim_task.".into(),
             input_schema: json!({
                 "type": "object",

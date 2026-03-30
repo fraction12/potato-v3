@@ -4,7 +4,6 @@ pub mod agent_picker;
 pub mod confirm;
 pub mod help;
 pub mod model_picker;
-pub mod slash_menu;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{Frame, layout::Rect};

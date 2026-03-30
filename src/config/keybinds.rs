@@ -10,8 +10,6 @@ pub struct KeybindConfig {
     pub quit: String,
     /// Key to submit the current input.
     pub submit: String,
-    /// Key to open the slash-command menu.
-    pub slash_menu: String,
     /// Key to open the model picker.
     pub model_picker: String,
     /// Key to open the help overlay.
@@ -33,7 +31,6 @@ impl Default for KeybindConfig {
         Self {
             quit: "ctrl+\\".to_string(),
             submit: "enter".to_string(),
-            slash_menu: "/".to_string(),
             model_picker: "ctrl+m".to_string(),
             help: "f1".to_string(),
             approve: "y".to_string(),

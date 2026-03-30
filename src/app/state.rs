@@ -378,10 +378,6 @@ pub struct SessionState {
     /// events are dispatched to it instead of the cockpit widgets.
     pub overlay: Option<Overlay>,
 
-    /// Index of the currently highlighted item in the slash-command autocomplete
-    /// popup. Reset to 0 whenever the input buffer changes or is cleared.
-    pub command_selected: usize,
-
     /// State for the agent picker overlay.
     pub agent_picker: AgentPickerState,
 
@@ -412,7 +408,6 @@ impl SessionState {
             git_scroll: 0,
             terminal_scroll: 0,
             overlay: None,
-            command_selected: 0,
             agent_picker: AgentPickerState::default(),
             selected_action: 0,
         }
@@ -530,7 +525,7 @@ pub struct AppState {
     /// drains this each tick and writes into the target pane's PTY.
     pub inject_rx: Option<tokio::sync::mpsc::UnboundedReceiver<crate::mcp::injection::InjectRequest>>,
 
-    /// OpenSpec watcher — tracks `.openspec/backlog.yaml` for live task data.
+    /// OpenSpec watcher — tracks `openspec/changes/*/tasks.md` for live task data.
     pub openspec: Option<crate::openspec::OpenSpecWatcher>,
 }
 
@@ -687,12 +682,6 @@ mod tests {
     fn session_state_overlay_defaults_to_none() {
         let s = SessionState::new("id", "agent");
         assert!(s.overlay.is_none());
-    }
-
-    #[test]
-    fn session_state_command_selected_defaults_to_zero() {
-        let s = SessionState::new("id", "agent");
-        assert_eq!(s.command_selected, 0);
     }
 
     #[test]

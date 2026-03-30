@@ -1,18 +1,28 @@
-//! File watcher for `.openspec/backlog.yaml`.
+//! File watcher for `openspec/changes/` directory.
 //!
-//! Emits reload events via a tokio channel when the backlog changes on disk.
+//! Emits reload events via a channel when any `tasks.md` changes on disk.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{Context, Result};
 use notify::{Event, EventKind, PollWatcher, RecursiveMode, Watcher};
 use tokio::sync::mpsc;
 
 use super::parser::OpenSpecBacklog;
 
 /// Manages the backlog state and watches for file changes.
+pub struct OpenSpecWatcher {
+    /// Current parsed backlog (behind Arc+Mutex for cross-thread access).
+    pub backlog: Arc<std::sync::Mutex<Option<OpenSpecBacklog>>>,
+    /// Channel receiver — yields `()` on every file change.
+    pub rx: mpsc::UnboundedReceiver<()>,
+    /// Hold the watcher alive.
+    _watcher: Option<PollWatcher>,
+    /// Path to the `openspec/changes/` directory.
+    path: PathBuf,
+}
+
 impl std::fmt::Debug for OpenSpecWatcher {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("OpenSpecWatcher")
@@ -21,33 +31,25 @@ impl std::fmt::Debug for OpenSpecWatcher {
     }
 }
 
-pub struct OpenSpecWatcher {
-    /// Current parsed backlog (behind Arc+Mutex for cross-thread access).
-    pub backlog: Arc<std::sync::Mutex<Option<OpenSpecBacklog>>>,
-    /// Channel receiver — yields `()` on every file change.
-    pub rx: mpsc::UnboundedReceiver<()>,
-    /// Hold the watcher alive.
-    _watcher: Option<PollWatcher>,
-    /// Path to the backlog file.
-    path: PathBuf,
-}
-
 impl OpenSpecWatcher {
     /// Create a watcher for the given project root.
-    /// Looks for `<root>/.openspec/backlog.yaml`.
+    /// Looks for `<root>/openspec/changes/`.
     /// Returns `None` if not found (project doesn't use OpenSpec).
     pub fn new(project_root: &Path) -> Option<Self> {
-        let path = project_root.join(".openspec").join("backlog.yaml");
-        if !path.exists() {
-            tracing::info!("No .openspec/backlog.yaml in {} — project has no OpenSpec backlog", project_root.display());
+        let changes_dir = project_root.join("openspec").join("changes");
+        if !changes_dir.exists() {
+            tracing::info!(
+                "No openspec/changes/ in {} — project has no OpenSpec changes",
+                project_root.display()
+            );
             return None;
         }
-        tracing::info!("Found OpenSpec backlog at {}", path.display());
+        tracing::info!("Found OpenSpec changes at {}", changes_dir.display());
 
         let (tx, rx) = mpsc::unbounded_channel();
 
         // Initial parse.
-        let backlog = match OpenSpecBacklog::from_file(&path) {
+        let backlog = match OpenSpecBacklog::from_changes_dir(&changes_dir) {
             Ok(b) => {
                 tracing::info!(
                     "Loaded OpenSpec backlog: {} tasks ({} open)",
@@ -57,67 +59,58 @@ impl OpenSpecWatcher {
                 Some(b)
             }
             Err(e) => {
-                tracing::warn!("Failed to parse OpenSpec backlog: {e}");
+                tracing::warn!("Failed to parse OpenSpec changes: {e}");
                 None
             }
         };
 
         let backlog = Arc::new(std::sync::Mutex::new(backlog));
 
-        // Set up file watcher.
-        let watch_path = path.clone();
         let backlog_ref = Arc::clone(&backlog);
         let tx_clone = tx.clone();
+        let changes_dir_clone = changes_dir.clone();
 
-        let watcher = Self::start_watcher(watch_path, backlog_ref, tx_clone);
+        let watcher = Self::start_watcher(changes_dir_clone, backlog_ref, tx_clone);
 
         Some(Self {
             backlog,
             rx,
             _watcher: watcher,
-            path,
+            path: changes_dir,
         })
     }
 
     fn start_watcher(
-        path: PathBuf,
+        changes_dir: PathBuf,
         backlog: Arc<std::sync::Mutex<Option<OpenSpecBacklog>>>,
         tx: mpsc::UnboundedSender<()>,
     ) -> Option<PollWatcher> {
-        let watch_dir = path.parent()?.to_path_buf();
+        let config = notify::Config::default().with_poll_interval(Duration::from_secs(2));
 
-        // T-905: Use PollWatcher instead of kqueue (RecommendedWatcher).
-        // kqueue panics when watched paths are rapidly created/deleted
-        // during heavy agent file ops. Polling every 2 seconds is fine
-        // for a YAML that changes every few minutes.
-        let config = notify::Config::default()
-            .with_poll_interval(Duration::from_secs(2));
-
+        let watch_dir = changes_dir.clone();
         let mut watcher = PollWatcher::new(
             move |res: Result<Event, notify::Error>| {
                 let Ok(event) = res else { return };
 
-                // Only react to modifications/creates of the backlog file.
-                let dominated = matches!(
-                    event.kind,
-                    EventKind::Modify(_) | EventKind::Create(_)
-                );
-                if !dominated {
+                // Only react to modifications/creates.
+                let is_write = matches!(event.kind, EventKind::Modify(_) | EventKind::Create(_));
+                if !is_write {
                     return;
                 }
 
-                let affects_backlog = event.paths.iter().any(|p| {
-                    p.file_name()
-                        .is_some_and(|n| n == "backlog.yaml")
-                });
-                if !affects_backlog {
+                // Only react when a tasks.md file is affected.
+                let affects_tasks = event
+                    .paths
+                    .iter()
+                    .any(|p| p.file_name().is_some_and(|n| n == "tasks.md"));
+                if !affects_tasks {
                     return;
                 }
 
                 // Debounce: small sleep then reload.
                 std::thread::sleep(Duration::from_millis(100));
 
-                match OpenSpecBacklog::from_file(&path) {
+                match OpenSpecBacklog::from_changes_dir(&watch_dir) {
                     Ok(b) => {
                         tracing::info!(
                             "OpenSpec backlog reloaded: {} tasks ({} open)",
@@ -130,7 +123,7 @@ impl OpenSpecWatcher {
                         let _ = tx.send(());
                     }
                     Err(e) => {
-                        tracing::warn!("Failed to reload OpenSpec backlog: {e}");
+                        tracing::warn!("Failed to reload OpenSpec changes: {e}");
                     }
                 }
             },
@@ -138,28 +131,18 @@ impl OpenSpecWatcher {
         )
         .ok()?;
 
-        if let Err(e) = watcher.watch(&watch_dir, RecursiveMode::NonRecursive) {
-            tracing::warn!("Failed to watch .openspec/: {e}");
+        if let Err(e) = watcher.watch(&changes_dir, RecursiveMode::Recursive) {
+            tracing::warn!("Failed to watch openspec/changes/: {e}");
             return None;
         }
 
-        tracing::info!("Watching .openspec/ for backlog changes (poll, 2s interval)");
+        tracing::info!("Watching openspec/changes/ for task changes (poll, 2s interval)");
         Some(watcher)
     }
 
-    /// Get the backlog file path.
+    /// Get the `openspec/changes/` directory path.
     pub fn path(&self) -> &Path {
         &self.path
-    }
-
-    /// Update a task status on disk (triggers watcher reload).
-    pub fn update_task_status(
-        &self,
-        task_id: &str,
-        status: super::parser::TaskStatus,
-    ) -> Result<()> {
-        OpenSpecBacklog::update_status(&self.path, task_id, status)
-            .with_context(|| format!("failed to update {task_id} in OpenSpec backlog"))
     }
 
     /// Snapshot the current open tasks (for UI rendering).
@@ -168,21 +151,10 @@ impl OpenSpecWatcher {
             .lock()
             .ok()
             .and_then(|guard| {
-                guard.as_ref().map(|b| {
-                    b.open_tasks().into_iter().cloned().collect()
-                })
+                guard
+                    .as_ref()
+                    .map(|b| b.open_tasks().into_iter().cloned().collect())
             })
             .unwrap_or_default()
     }
-
-    /// Find a task by ID in current backlog.
-    pub fn find_task(&self, id: &str) -> Option<super::parser::OpenSpecTask> {
-        self.backlog
-            .lock()
-            .ok()
-            .and_then(|guard| {
-                guard.as_ref().and_then(|b| b.find(id).cloned())
-            })
-    }
-
 }

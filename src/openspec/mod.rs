@@ -1,5 +1,5 @@
-//! OpenSpec integration — reads `.openspec/backlog.yaml` and syncs
-//! tickets with the MCP task board.
+//! OpenSpec integration — reads `openspec/changes/*/tasks.md` and provides
+//! live task data to the UI and MCP layer.
 
 mod parser;
 mod watcher;

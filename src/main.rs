@@ -10,7 +10,6 @@ mod adapters;
 mod app;
 mod claude_log;
 mod codex_log;
-mod commands;
 mod config;
 mod events;
 mod git;
@@ -1044,47 +1043,18 @@ fn sync_mcp_roles_to_panes(state: &mut AppState) {
     }
 }
 
-/// Sync OpenSpec: drain task events → write back to YAML, poll watcher for file changes.
+/// Sync OpenSpec: poll watcher for file changes and refresh snapshot in InterSessionState.
 fn sync_openspec(state: &mut AppState) {
-    // 1. Drain task events from InterSessionState and write back to OpenSpec.
-    if let (Some(iss), Some(openspec)) = (&state.inter_session_state, &state.openspec) {
-        let events = match iss.lock() {
-            Ok(mut st) => st.drain_task_events(),
-            Err(_) => Vec::new(),
-        };
-
-        for event in events {
-            match event {
-                mcp::state::TaskEvent::Claimed { ref task_id, .. } => {
-                    if let Err(e) = openspec.update_task_status(
-                        task_id,
-                        openspec::TaskStatus::Claimed,
-                    ) {
-                        tracing::warn!("Failed to write claim for {task_id} to OpenSpec: {e}");
-                    }
-                }
-                mcp::state::TaskEvent::Released { ref task_id } => {
-                    if let Err(e) = openspec.update_task_status(
-                        task_id,
-                        openspec::TaskStatus::Open,
-                    ) {
-                        tracing::warn!("Failed to write release for {task_id} to OpenSpec: {e}");
-                    }
-                }
-            }
-        }
-    }
-
-    // 2. Poll watcher for file-change notifications (non-blocking).
-    let mut backlog_changed = false;
+    // 1. Poll watcher for file-change notifications (non-blocking).
+    let mut changed = false;
     if let Some(ref mut openspec) = state.openspec {
         while openspec.rx.try_recv().is_ok() {
-            backlog_changed = true;
+            changed = true;
         }
     }
 
-    // 3. Refresh the OpenSpec snapshot in InterSessionState (on change or first tick).
-    if backlog_changed {
+    // 2. Refresh the OpenSpec snapshot in InterSessionState on change.
+    if changed {
         if let (Some(openspec), Some(iss)) = (&state.openspec, &state.inter_session_state) {
             let tasks = openspec.open_tasks();
             let snapshots: Vec<mcp::state::OpenSpecTaskSnapshot> = tasks.iter().map(|t| {
@@ -1312,7 +1282,7 @@ async fn main() -> Result<()> {
                 .map(|p| p.display().to_string())
                 .unwrap_or_else(|_| "unknown".to_string()),
             potato_exists: std::path::Path::new(".potato").exists(),
-            openspec_exists: std::path::Path::new(".openspec").exists(),
+            openspec_exists: std::path::Path::new("openspec/changes").exists(),
             mcp_json_exists: std::path::Path::new(".mcp.json").exists(),
         }
     };
@@ -1350,16 +1320,16 @@ async fn main() -> Result<()> {
     let (inject_tx, inject_rx) = tokio::sync::mpsc::unbounded_channel();
     let (_mcp_bridge, mcp_socket_path) = mcp::bridge::McpBridge::start(Arc::clone(&inter_state), inject_tx)?;
 
-    // Initialize OpenSpec watcher if `.openspec/backlog.yaml` exists.
+    // Initialize OpenSpec watcher if `openspec/changes/` exists.
     let openspec_watcher = std::env::current_dir()
         .ok()
         .and_then(|cwd| {
-            tracing::info!("Looking for OpenSpec at {}/.openspec/backlog.yaml", cwd.display());
+            tracing::info!("Looking for OpenSpec at {}/openspec/changes/", cwd.display());
             let w = openspec::OpenSpecWatcher::new(&cwd);
             if w.is_some() {
                 tracing::info!("OpenSpec watcher active");
             } else {
-                tracing::warn!("No OpenSpec backlog found in {}", cwd.display());
+                tracing::warn!("No OpenSpec changes found in {}", cwd.display());
             }
             w
         });

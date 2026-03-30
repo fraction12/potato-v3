@@ -1,0 +1,40 @@
+# Tasks — bugfix-sweep
+
+- [ ] T-850: [CRITICAL] Fix carry bytes double-counted in log offset — claude_log.rs/codex_log.rs offset advanced by full buf len including carry, causing bytes parsed twice
+- [ ] T-851: [CRITICAL] Fix spawn_turn stdin write errors silently swallowed — caller hangs indefinitely; mirror spawn pattern and broadcast AgentEvent::Error
+- [ ] T-852: [CRITICAL] Fix ApprovalDecision ignores approved field — denied approvals treated same as approvals; branch on approved flag
+- [ ] T-853: [CRITICAL] Fix unbounded MCP inbox growth — get_messages marks read but never removes; enforce cap or drain read messages
+- [ ] T-854: [CRITICAL] Fix JSON injection in bridge parse-error response — raw format!() with serde error message breaks JSON string; use proper serialization
+- [ ] T-855: [CRITICAL] Fix file.try_clone().unwrap() in logging writer — allocates fd on every write, panics on fd exhaustion; use Mutex<File> with MakeWriter
+- [ ] T-856: [HIGH] Fix MessageHistory::push reloads entire table — O(N) SELECT after INSERT; use last_insert_rowid() instead
+- [ ] T-857: [HIGH] Fix new_id() generates non-unique IDs — nanosecond timestamp not collision-free on macOS; use UUID v4
+- [ ] T-858: [HIGH] Fix no log rotation detection — tracker permanently stuck after file shrink/truncation; compare file length to offset, reset if shrunk
+- [ ] T-859: [HIGH] Fix raw message content in Markdown export without escaping — backticks/headings/HTML corrupt exported document
+- [ ] T-860: [HIGH] Fix TOCTOU in handle_send_message — double mutex acquisition; resolve and send in single lock acquisition
+- [ ] T-861: [HIGH] Fix messages delivered to unregistered pane IDs — no existence check creates phantom inboxes via entry().or_default()
+- [ ] T-862: [HIGH] Fix inject_into_pane index vs ID confusion — API mixes pane_index: usize and pane_id: u64 with no type-level distinction
+- [ ] T-863: [HIGH] Fix double raw-mode setup/teardown — both TerminalGuard and ratatui::init set raw mode causing screen flicker
+- [ ] T-864: [HIGH] Fix _dirty_rx immediately dropped — dirty notifications inoperative, all dirty_tx.send() calls fail silently
+- [ ] T-865: [HIGH] Fix PENDING_ENTERS uses unstable pane index — pane indices shift on close; store pane_id and look up index dynamically
+- [ ] T-866: [HIGH] Fix byte-indexed string slicing panics on multi-byte UTF-8 — 4 locations across agent_picker/dashboard/session; use consistent safe truncate_str
+- [ ] T-867: [HIGH] Fix detect() called twice per agent in build_agent_rows — TOCTOU + wasted work; call once and reuse result
+- [ ] T-868: [MEDIUM] Fix PTY stderr reader ignores kill signal — leaks background task after pane close
+- [ ] T-869: [MEDIUM] Fix KeybindConfig stores raw strings with no validation — typos silently produce non-functional bindings
+- [ ] T-870: [MEDIUM] Fix wrong JSON-RPC error code for parse errors — uses -32602 (INVALID_PARAMS) instead of -32700 (PARSE_ERROR)
+- [ ] T-871: [MEDIUM] Fix injection fires on MCP tool call failure — missing success check before injecting response
+- [ ] T-872: [MEDIUM] Fix RPC request JSON parsed 3× separately — parse once and pass result through
+- [ ] T-873: [MEDIUM] Fix resolve_partner non-deterministic with >2 panes — HashMap iteration order not guaranteed
+- [ ] T-874: [MEDIUM] Fix TextDone can overwrite wrong turn's content — event may arrive after new turn starts
+- [ ] T-875: [MEDIUM] Fix UUID session row orphaned — original row unreferenced when SessionBound replaces session_id
+- [ ] T-876: [MEDIUM] Fix MAX_AGENTS = 2 blocks third agent — comment says 3 but constant only allows indices 0-1, blocking OpenCode
+- [ ] T-877: [MEDIUM] Fix input cursor byte-index breaks with multi-byte chars — cursor position by byte offset not character offset
+- [ ] T-878: [MEDIUM] Fix in_code_block state persists across transcript entries — unclosed fence bleeds styling into subsequent messages
+- [ ] T-879: [MEDIUM] Fix hardcoded visible_height in HelpOverlay and FilePreviewPanel — wrong scroll behavior on non-standard terminal sizes
+- [ ] T-880: [LOW] Deduplicate truncate_str implementations — 3 copies in claude_log/codex_log/session/discovery with inconsistent semantics
+- [ ] T-881: [LOW] Fix compact_json byte/char truncation confusion — mixes byte and character semantics in claude_log.rs
+- [ ] T-882: [LOW] Fix get_partner_status silently omits roleless panes — panes without claimed roles excluded from response
+- [ ] T-883: [LOW] Fix initialized notification returns spurious success response — MCP initialized is a notification, no response expected
+- [ ] T-884: [LOW] Fix tool_result.content only handles string form — MCP spec allows array of content blocks; only string shorthand handled
+- [ ] T-885: [LOW] Remove unused pane_index_after_open computation — computed but never read in main.rs
+- [ ] T-886: [LOW] Fix duplicate keybind entries in help overlay — same keybinds listed more than once
+- [x] T-887: [LOW] Fix TokenSparkline::push uses O(n) Vec::remove(0) — should use VecDeque for O(1) pop_front

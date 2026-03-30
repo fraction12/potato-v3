@@ -40,13 +40,14 @@ static GLOBAL_ENTRIES: &[KeyEntry] = &[
     KeyEntry::new("Tab",         "Next focus panel / cycle panes"),
     KeyEntry::new("Shift+Tab",   "Previous focus panel"),
     KeyEntry::new("F1",          "Toggle help"),
+    KeyEntry::new("F2",          "Agent picker"),
+    KeyEntry::new("F3",          "Session picker"),
     KeyEntry::new("F5",          "Refresh git / tasks"),
     KeyEntry::new("F6",          "Focus terminal"),
 ];
 
 static INPUT_ENTRIES: &[KeyEntry] = &[
-    KeyEntry::new("Enter",  "Send to Claude / Execute command"),
-    KeyEntry::new("/",      "Start command mode"),
+    KeyEntry::new("Enter",  "Broadcast to all agents"),
     KeyEntry::new("Esc",    "Clear input"),
 ];
 
@@ -63,21 +64,11 @@ static NAVIGATION_ENTRIES: &[KeyEntry] = &[
     KeyEntry::new("Shift+Tab",  "Previous focus panel"),
 ];
 
-static COMMAND_ENTRIES: &[KeyEntry] = &[
-    KeyEntry::new("/new",          "New Claude session"),
-    KeyEntry::new("/sessions",     "Session picker"),
-    KeyEntry::new("/export",       "Export session"),
-    KeyEntry::new("/help",         "Show this help"),
-    KeyEntry::new("/role <name>",  "Set pane role"),
-    KeyEntry::new("/agent",        "Agent info"),
-];
-
 static SECTIONS: &[Section] = &[
     Section { title: "Global",     entries: GLOBAL_ENTRIES },
     Section { title: "Input",      entries: INPUT_ENTRIES },
     Section { title: "Terminal",   entries: TERMINAL_ENTRIES },
     Section { title: "Navigation", entries: NAVIGATION_ENTRIES },
-    Section { title: "Commands",   entries: COMMAND_ENTRIES },
 ];
 
 // ── HelpOverlay ───────────────────────────────────────────────────────────────
@@ -286,13 +277,6 @@ mod tests {
     }
 
     #[test]
-    fn test_help_sections_include_commands() {
-        // Verify the Commands section is present in SECTIONS.
-        let has_commands = SECTIONS.iter().any(|s| s.title == "Commands");
-        assert!(has_commands, "SECTIONS should include a 'Commands' section");
-    }
-
-    #[test]
     fn test_help_sections_include_input_and_terminal() {
         let has_input = SECTIONS.iter().any(|s| s.title == "Input");
         let has_terminal = SECTIONS.iter().any(|s| s.title == "Terminal");
@@ -301,10 +285,10 @@ mod tests {
     }
 
     #[test]
-    fn test_help_commands_section_has_role_entry() {
-        // /role <name> should appear in the Commands section entries.
-        let commands_section = SECTIONS.iter().find(|s| s.title == "Commands").unwrap();
-        let has_role = commands_section.entries.iter().any(|e| e.keybind.contains("/role"));
-        assert!(has_role, "Commands section should have a /role entry");
+    fn test_help_global_entries_include_f2_f3() {
+        let has_f2 = GLOBAL_ENTRIES.iter().any(|e| e.keybind == "F2");
+        let has_f3 = GLOBAL_ENTRIES.iter().any(|e| e.keybind == "F3");
+        assert!(has_f2, "GLOBAL_ENTRIES should include F2");
+        assert!(has_f3, "GLOBAL_ENTRIES should include F3");
     }
 }
