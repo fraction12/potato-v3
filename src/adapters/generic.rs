@@ -60,3 +60,102 @@ impl AgentAdapter for GenericAdapter {
         None
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::adapters::AgentAdapter;
+
+    #[test]
+    fn name_returns_constructor_value() {
+        let a = GenericAdapter::new("my-agent");
+        assert_eq!(a.name(), "my-agent");
+    }
+
+    #[test]
+    fn name_accepts_string_type() {
+        let a = GenericAdapter::new(String::from("owned-name"));
+        assert_eq!(a.name(), "owned-name");
+    }
+
+    #[test]
+    fn capabilities_all_false() {
+        let a = GenericAdapter::new("test");
+        let caps = a.capabilities();
+        assert!(!caps.structured_output);
+        assert!(!caps.session_resumable);
+        assert!(!caps.approval_intercept);
+        assert!(!caps.tool_events);
+    }
+
+    #[test]
+    fn detect_returns_none_for_nonexistent_binary() {
+        let a = GenericAdapter::new("__potato_nonexistent_binary_xyz__");
+        assert!(a.detect().is_none());
+    }
+
+    #[test]
+    fn detect_returns_some_for_known_binary() {
+        // `sh` should exist on every Unix system.
+        let a = GenericAdapter::new("sh");
+        assert!(a.detect().is_some());
+    }
+
+    #[test]
+    fn parse_line_returns_single_raw_event() {
+        let a = GenericAdapter::new("test");
+        let events = a.parse_line("hello world");
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            AgentEvent::Raw { payload } => assert_eq!(payload, "hello world"),
+            other => panic!("expected Raw event, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_line_preserves_empty_string() {
+        let a = GenericAdapter::new("test");
+        let events = a.parse_line("");
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            AgentEvent::Raw { payload } => assert_eq!(payload, ""),
+            other => panic!("expected Raw event, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn format_user_input_appends_newline() {
+        let a = GenericAdapter::new("test");
+        assert_eq!(a.format_user_input("hello"), "hello\n");
+    }
+
+    #[test]
+    fn format_user_input_empty_string() {
+        let a = GenericAdapter::new("test");
+        assert_eq!(a.format_user_input(""), "\n");
+    }
+
+    #[test]
+    fn format_approval_always_none() {
+        let a = GenericAdapter::new("test");
+        assert!(a.format_approval(true).is_none());
+        assert!(a.format_approval(false).is_none());
+    }
+
+    #[test]
+    fn build_command_uses_agent_name_and_working_dir() {
+        let a = GenericAdapter::new("echo");
+        let config = AdapterConfig {
+            working_dir: std::path::PathBuf::from("/tmp"),
+            model: None,
+            resume_session_id: None,
+            extra_flags: vec!["--flag".into(), "value".into()],
+        };
+        let cmd = a.build_command(&config);
+        let as_std = cmd.as_std();
+        assert_eq!(as_std.get_program(), "echo");
+        let args: Vec<_> = as_std.get_args().collect();
+        assert_eq!(args, &["--flag", "value"]);
+        assert_eq!(as_std.get_current_dir(), Some(std::path::Path::new("/tmp")));
+    }
+}
