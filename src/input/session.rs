@@ -48,7 +48,7 @@ pub fn handle(state: &mut AppState, key: &KeyEvent) -> KeyAction {
 
     // ── F5 — refresh git, OpenSpec tasks, agent status ───────────────
     if key.code == KeyCode::F(5) && current_focus != CockpitFocus::Terminal {
-        state.git_snapshot = crate::git::GitSnapshot::capture();
+        state.git_snapshot = crate::git::GitSnapshot::refresh();
         state.git_refresh_ticks = 0;
         if let AppScreen::Session(ref mut session) = state.screen {
             session.git_scroll = 0;

@@ -82,14 +82,18 @@ impl GitSnapshot {
         snap.current_branch =
             git_output(&["rev-parse", "--abbrev-ref", "HEAD"]).unwrap_or_default();
 
-        // Branches.
-        if let Some(raw) = git_output(&["branch", "--format=%(refname:short) %(HEAD)"]) {
+        // Branches — include upstream tracking status to filter out stale [gone] branches.
+        if let Some(raw) = git_output(&[
+            "branch",
+            "--format=%(refname:short) %(HEAD) %(upstream:track,nobracket)",
+        ]) {
             snap.branches = raw
                 .lines()
                 .filter(|l| !l.is_empty())
+                .filter(|l| !l.contains("gone"))
                 .map(|line| {
-                    let is_current = line.ends_with('*');
-                    let name = line.trim_end_matches(" *").trim_end().to_string();
+                    let is_current = line.contains('*');
+                    let name = line.split_whitespace().next().unwrap_or("").to_string();
                     BranchInfo { name, is_current }
                 })
                 .collect();
@@ -160,6 +164,44 @@ impl GitSnapshot {
         }
 
         snap
+    }
+
+    /// Prune stale remote-tracking refs and gone local branches, then capture
+    /// a fresh snapshot. Use this for user-triggered refresh (F5).
+    pub fn refresh() -> Self {
+        // 1. Remove stale remote-tracking refs.
+        let _ = Command::new("git").args(["fetch", "--prune"]).output();
+
+        // 2. Delete local branches whose upstream is gone (safe: -d only
+        //    deletes fully-merged branches, and we skip the current branch).
+        prune_gone_local_branches();
+
+        // 3. Capture fresh state.
+        Self::capture()
+    }
+}
+
+/// Delete local branches whose upstream remote branch has been deleted.
+///
+/// Uses `git branch -d` (not `-D`) so only fully-merged branches are removed.
+/// Never touches the currently checked-out branch.
+fn prune_gone_local_branches() {
+    let Some(raw) = git_output(&["branch", "-vv"]) else {
+        return;
+    };
+    for line in raw.lines() {
+        if !line.contains(": gone]") {
+            continue;
+        }
+        // Skip the current branch (marked with *).
+        let trimmed = line.trim();
+        if trimmed.starts_with('*') {
+            continue;
+        }
+        let name = trimmed.split_whitespace().next().unwrap_or("");
+        if !name.is_empty() {
+            let _ = Command::new("git").args(["branch", "-d", name]).output();
+        }
     }
 }
 
