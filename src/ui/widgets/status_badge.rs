@@ -76,3 +76,138 @@ impl StatusBadge {
         StatusBadge::new(label.to_string(), variant)
     }
 }
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::style::Modifier;
+
+    fn theme() -> Theme {
+        Theme::default()
+    }
+
+    #[test]
+    fn new_sets_label_and_variant() {
+        let badge = StatusBadge::new("Running", BadgeVariant::Success);
+        assert_eq!(badge.label, "Running");
+        assert_eq!(badge.variant, BadgeVariant::Success);
+    }
+
+    #[test]
+    fn default_is_neutral() {
+        let badge = StatusBadge::default();
+        assert_eq!(badge.variant, BadgeVariant::Neutral);
+        assert!(badge.label.is_empty());
+    }
+
+    #[test]
+    fn neutral_style_uses_tan() {
+        let badge = StatusBadge::new("Idle", BadgeVariant::Neutral);
+        let style = badge.style(&theme());
+        assert_eq!(style.fg, Some(TAN));
+        assert!(!style.add_modifier.contains(Modifier::BOLD));
+    }
+
+    #[test]
+    fn success_style_uses_sprout() {
+        let badge = StatusBadge::new("Done", BadgeVariant::Success);
+        let style = badge.style(&theme());
+        assert_eq!(style.fg, Some(SPROUT));
+    }
+
+    #[test]
+    fn warning_style_is_bold_amber() {
+        let badge = StatusBadge::new("Thinking", BadgeVariant::Warning);
+        let style = badge.style(&theme());
+        assert_eq!(style.fg, Some(AMBER));
+        assert!(style.add_modifier.contains(Modifier::BOLD));
+    }
+
+    #[test]
+    fn error_style_is_bold_rose() {
+        let badge = StatusBadge::new("Error", BadgeVariant::Error);
+        let style = badge.style(&theme());
+        assert_eq!(style.fg, Some(ROSE));
+        assert!(style.add_modifier.contains(Modifier::BOLD));
+    }
+
+    #[test]
+    fn info_style_uses_cream() {
+        let badge = StatusBadge::new("ToolCall", BadgeVariant::Info);
+        let style = badge.style(&theme());
+        assert_eq!(style.fg, Some(CREAM));
+    }
+
+    #[test]
+    fn to_span_carries_label_and_style() {
+        let badge = StatusBadge::new("Ready", BadgeVariant::Success);
+        let span = badge.to_span(&theme());
+        assert_eq!(span.content.as_ref(), "Ready");
+        assert_eq!(span.style.fg, Some(SPROUT));
+    }
+
+    #[test]
+    fn from_agent_state_idle() {
+        let badge = StatusBadge::from_agent_state("Idle");
+        assert_eq!(badge.label, "Idle");
+        assert_eq!(badge.variant, BadgeVariant::Neutral);
+    }
+
+    #[test]
+    fn from_agent_state_thinking() {
+        let badge = StatusBadge::from_agent_state("Thinking");
+        assert_eq!(badge.variant, BadgeVariant::Warning);
+    }
+
+    #[test]
+    fn from_agent_state_toolcall() {
+        let badge = StatusBadge::from_agent_state("ToolCall");
+        assert_eq!(badge.variant, BadgeVariant::Info);
+    }
+
+    #[test]
+    fn from_agent_state_approval() {
+        let badge = StatusBadge::from_agent_state("Approval");
+        assert_eq!(badge.variant, BadgeVariant::Warning);
+    }
+
+    #[test]
+    fn from_agent_state_error() {
+        let badge = StatusBadge::from_agent_state("Error");
+        assert_eq!(badge.variant, BadgeVariant::Error);
+    }
+
+    #[test]
+    fn from_agent_state_unknown_falls_back_to_neutral() {
+        let badge = StatusBadge::from_agent_state("SomeNewState");
+        assert_eq!(badge.label, "SomeNewState");
+        assert_eq!(badge.variant, BadgeVariant::Neutral);
+    }
+
+    #[test]
+    fn all_variants_produce_distinct_styles() {
+        let variants = [
+            BadgeVariant::Neutral,
+            BadgeVariant::Success,
+            BadgeVariant::Warning,
+            BadgeVariant::Error,
+            BadgeVariant::Info,
+        ];
+        let styles: Vec<_> = variants
+            .iter()
+            .map(|v| StatusBadge::new("x", *v).style(&theme()))
+            .collect();
+        // Each variant should produce a unique style (fg or modifier differs)
+        for i in 0..styles.len() {
+            for j in (i + 1)..styles.len() {
+                assert_ne!(
+                    styles[i], styles[j],
+                    "variants {:?} and {:?} should have distinct styles",
+                    variants[i], variants[j]
+                );
+            }
+        }
+    }
+}
