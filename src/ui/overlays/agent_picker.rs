@@ -29,6 +29,7 @@ use crate::adapters::{
     generic::GenericAdapter,
 };
 use crate::app::state::AgentPickerState;
+use crate::config::profiles::AgentProfile;
 
 // ── Theme colors ──────────────────────────────────────────────────────────────
 
@@ -83,9 +84,56 @@ impl AgentRow {
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
+/// Resolve adapter capabilities from an adapter identifier string.
+fn caps_for_adapter(adapter: &str) -> AdapterCapabilities {
+    match adapter {
+        "claude" => ClaudeAdapter.capabilities(),
+        "codex" => CodexAdapter.capabilities(),
+        _ => GenericAdapter::new(adapter).capabilities(),
+    }
+}
+
+/// Detect the binary path for an adapter, returning `None` if not found.
+fn detect_binary(adapter: &str) -> Option<std::path::PathBuf> {
+    match adapter {
+        "claude" => ClaudeAdapter.detect(),
+        "codex" => CodexAdapter.detect(),
+        _ => GenericAdapter::new(adapter).detect(),
+    }
+}
+
+/// Build agent rows from merged profiles for display in the picker.
+///
+/// Each [`AgentProfile`] becomes a row. The binary path is resolved from
+/// `profile.binary` if set, otherwise via adapter auto-detection.
+pub fn build_agent_rows_from_profiles(profiles: &[AgentProfile]) -> Vec<AgentRow> {
+    profiles
+        .iter()
+        .map(|p| {
+            let resolved_path = p
+                .binary
+                .as_ref()
+                .map(std::path::PathBuf::from)
+                .filter(|b| b.exists())
+                .or_else(|| detect_binary(&p.adapter));
+            let available = resolved_path.is_some();
+            AgentRow {
+                display_name: p.name.clone(),
+                adapter_name: p.adapter.clone(),
+                available,
+                binary_display: resolved_path
+                    .and_then(|b| b.to_str().map(str::to_string))
+                    .unwrap_or_else(|| "not found".to_string()),
+                caps: caps_for_adapter(&p.adapter),
+            }
+        })
+        .collect()
+}
+
 /// Build the list of detectable agents for display in the picker.
 ///
-/// Always includes Claude, Codex, and an OpenCode generic fallback.
+/// Fallback when no profiles are available — always includes Claude, Codex,
+/// and an OpenCode generic fallback.
 pub fn build_agent_rows() -> Vec<AgentRow> {
     let claude = ClaudeAdapter;
     let codex = CodexAdapter;

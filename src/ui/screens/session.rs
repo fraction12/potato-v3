@@ -152,7 +152,13 @@ pub fn render_session(frame: &mut Frame, area: Rect, state: &mut AppState) {
                 render_sessions_overlay_stub(frame, area);
             }
             Overlay::AgentPicker => {
-                let rows = crate::ui::overlays::agent_picker::build_agent_rows();
+                let rows = if state.agent_profiles.is_empty() {
+                    crate::ui::overlays::agent_picker::build_agent_rows()
+                } else {
+                    crate::ui::overlays::agent_picker::build_agent_rows_from_profiles(
+                        &state.agent_profiles,
+                    )
+                };
                 crate::ui::overlays::agent_picker::render_agent_picker(
                     frame,
                     area,
@@ -167,8 +173,12 @@ pub fn render_session(frame: &mut Frame, area: Rect, state: &mut AppState) {
 // ── Left rail — agents + sessions ─────────────────────────────────────────────
 
 fn render_left_rail(frame: &mut Frame, area: Rect, state: &AppState, focus: CockpitFocus) {
-    // Detect agents for the rail display.
-    let agent_rows = crate::ui::overlays::agent_picker::build_agent_rows();
+    // Build agent rows from profiles if available, otherwise detect.
+    let agent_rows = if state.agent_profiles.is_empty() {
+        crate::ui::overlays::agent_picker::build_agent_rows()
+    } else {
+        crate::ui::overlays::agent_picker::build_agent_rows_from_profiles(&state.agent_profiles)
+    };
     // Agents section: border (2) + N item rows, capped at 5.
     let agent_row_count = agent_rows.len().min(3) as u16;
     let agents_height = 2 + agent_row_count; // border top + bottom + rows

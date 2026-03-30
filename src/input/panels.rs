@@ -18,7 +18,11 @@ pub fn handle(state: &mut AppState, key: &KeyEvent, focus: CockpitFocus) -> KeyA
 
 fn handle_agents(state: &mut AppState, key: &KeyEvent) -> KeyAction {
     if let AppScreen::Session(ref mut session) = state.screen {
-        let agent_count = crate::ui::overlays::agent_picker::build_agent_rows().len();
+        let agent_count = if state.agent_profiles.is_empty() {
+            crate::ui::overlays::agent_picker::build_agent_rows().len()
+        } else {
+            state.agent_profiles.len()
+        };
         let max_idx = agent_count.saturating_sub(1);
         match key.code {
             KeyCode::Up => {
