@@ -67,7 +67,7 @@ fn render_title(frame: &mut Frame, area: Rect) {
     frame.render_widget(block, area);
 
     // Centered title.
-    let title = Paragraph::new("🥔  Potato")
+    let title = Paragraph::new("🥔  POTATO")
         .alignment(Alignment::Center)
         .style(
             Style::default()
@@ -76,6 +76,20 @@ fn render_title(frame: &mut Frame, area: Rect) {
                 .add_modifier(Modifier::BOLD),
         );
     frame.render_widget(title, inner);
+
+    // Subtitle below title.
+    if inner.height > 2 {
+        let subtitle_area = Rect {
+            x: inner.x,
+            y: inner.y + 1,
+            width: inner.width,
+            height: 1,
+        };
+        let subtitle = Paragraph::new("Personal Orchestration Tool for Agentic Task Operations")
+            .alignment(Alignment::Center)
+            .style(Style::default().fg(STONE).bg(BG));
+        frame.render_widget(subtitle, subtitle_area);
+    }
 
     // Right-aligned version label.
     if inner.width > 10 {

@@ -2,7 +2,7 @@
 
 ## What is Potato?
 
-Terminal cockpit for coding agents. Spawns Claude Code, Codex, or any CLI agent in a real PTY and wraps it in a unified TUI with observability, session management, and inter-agent coordination via MCP.
+**Personal Orchestration Tool for Agentic Task Operations.** A terminal cockpit for coding agents. Spawns Claude Code, Codex, or any CLI agent in a real PTY and wraps it in a unified TUI with observability, session management, and inter-agent coordination via MCP.
 
 Potato is **not** an agent — it's iTerm2 for the agent era. No LLM API calls, no tool execution. It spawns real agent processes and observes them.
 
