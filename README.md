@@ -1,6 +1,8 @@
-# 🥔 Potato
+# 🥔 POTATO
 
-**A terminal cockpit for coding agents.**
+**Personal Orchestration Tool for Agentic Task Operations**
+
+*A terminal cockpit for coding agents.*
 
 Potato runs real agents like Claude Code and Codex in embedded terminal panes, gives them shared coordination tools over MCP, and lets you watch the work happen in one place.
 

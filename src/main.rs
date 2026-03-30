@@ -1,4 +1,5 @@
-//! Potato — terminal cockpit for external coding agents.
+//! POTATO — Personal Orchestration Tool for Agentic Task Operations.
+//! A terminal cockpit for external coding agents.
 //!
 //! Boots to a dashboard where you pick an agent, then suspends its TUI,
 //! hands the full terminal to the agent, and reclaims it when the agent exits.
@@ -54,7 +55,7 @@ use ui::screens::{dashboard::render_dashboard, session::render_session};
 
 // ── CLI arguments ─────────────────────────────────────────────────────────────
 
-/// Potato — terminal cockpit for external coding agents.
+/// POTATO — Personal Orchestration Tool for Agentic Task Operations.
 #[derive(Parser, Debug)]
 #[command(name = "potato", version, about)]
 struct Cli {

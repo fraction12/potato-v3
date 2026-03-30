@@ -2,7 +2,7 @@
 name = "potato"
 version = "0.1.0"
 edition = "2024"
-description = "Terminal cockpit for external coding agents"
+description = "Personal Orchestration Tool for Agentic Task Operations — a terminal cockpit for coding agents"
 license = "MIT"
 repository = "https://github.com/pzemlyanuka/potato"
 rust-version = "1.86"
