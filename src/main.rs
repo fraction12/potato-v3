@@ -282,7 +282,7 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
             }
         }
         if openspec_updated {
-            sync_openspec_to_mcp(&state);
+            sync_openspec_to_mcp(state);
         }
 
         // ── Render ────────────────────────────────────────────────────────────
@@ -1294,19 +1294,17 @@ fn refresh_rail_async(state: &mut AppState) {
     // while the background task is still running.
     state.last_rail_refresh = unix_now();
     state.rail_refresh_in_flight = true;
-    tokio::task::spawn_blocking(move || {
-        match SessionStore::open(&db_path) {
-            Ok(store) => match store.list_sessions() {
-                Ok(sessions) => {
-                    let _ = tx.send(SnapshotMsg::Rail(sessions));
-                }
-                Err(e) => {
-                    tracing::warn!("refresh_rail: list_sessions failed: {e}");
-                }
-            },
-            Err(e) => {
-                tracing::warn!("refresh_rail: failed to open DB: {e}");
+    tokio::task::spawn_blocking(move || match SessionStore::open(&db_path) {
+        Ok(store) => match store.list_sessions() {
+            Ok(sessions) => {
+                let _ = tx.send(SnapshotMsg::Rail(sessions));
             }
+            Err(e) => {
+                tracing::warn!("refresh_rail: list_sessions failed: {e}");
+            }
+        },
+        Err(e) => {
+            tracing::warn!("refresh_rail: failed to open DB: {e}");
         }
     });
 }
