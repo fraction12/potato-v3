@@ -191,7 +191,7 @@ mod tests {
 
     #[test]
     fn enter_delay_ticks_is_positive() {
-        assert!(ENTER_DELAY_TICKS > 0);
+        const { assert!(ENTER_DELAY_TICKS > 0) };
     }
 
     #[test]

@@ -217,7 +217,7 @@ fn dispatch_request(
 
     let is_send_message = parsed_rpc
         .as_ref()
-        .map(|v| is_send_message_call(v))
+        .map(is_send_message_call)
         .unwrap_or(false);
 
     let server = McpServer::new(bridge_req.pane_id, Arc::clone(state));

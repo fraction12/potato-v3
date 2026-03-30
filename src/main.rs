@@ -276,11 +276,8 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
         // ── PTY event drain ───────────────────────────────────────────────────
         if let Some(ref mut handle) = turn_handle {
             // Drain any pending PTY events without blocking.
-            loop {
-                match handle.event_rx.try_recv() {
-                    Ok(event) => apply_pty_event(state, event),
-                    Err(_) => break,
-                }
+            while let Ok(event) = handle.event_rx.try_recv() {
+                apply_pty_event(state, event);
             }
             // Check if the turn process has exited — clear the handle when done.
             if handle.exit_rx.borrow().is_some() {
@@ -741,7 +738,7 @@ fn spawn_claude_pane(state: &mut AppState, resume_id: Option<&str>) -> Result<St
     // Potato MCP tools. Written on every pane spawn (not just the 2nd) so
     // that pane 0 has the config available if a 2nd pane is opened later
     // and Claude re-reads it on the next conversation turn.
-    let wrote_mcp = if state.panes.len() >= 1 {
+    let wrote_mcp = if !state.panes.is_empty() {
         if let Some(ref _sock) = state.mcp_socket_path.clone() {
             if let Some(ref cwd) = launch_cwd {
                 // Single shared "potato" MCP entry. Each Claude PTY inherits
@@ -1323,6 +1320,7 @@ async fn main() -> Result<()> {
     if let Some(parent) = db_path.parent() {
         std::fs::create_dir_all(parent).ok();
     }
+    #[allow(clippy::arc_with_non_send_sync)] // Arc used for shared ownership, not threading
     let store = Arc::new(SessionStore::open(&db_path.to_string_lossy())?);
 
     // Scan ~/.claude/projects/ once at startup and upsert all known sessions.

@@ -201,8 +201,8 @@ mod tests {
 
         let snap = collector.snapshot();
         assert_eq!(snap.turn_count, 3);
-        assert_eq!(snap.input_tokens, 0 + 10 + 20);
-        assert_eq!(snap.output_tokens, 0 + 5 + 10);
+        assert_eq!(snap.input_tokens, 10 + 20);
+        assert_eq!(snap.output_tokens, 5 + 10);
     }
 
     #[test]

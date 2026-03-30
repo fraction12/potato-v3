@@ -58,8 +58,8 @@ fn is_valid_key_expr(s: &str) -> bool {
         return true;
     }
     // Function keys: f1..f12
-    if s.starts_with('f') {
-        if let Ok(n) = s[1..].parse::<u8>() {
+    if let Some(rest) = s.strip_prefix('f') {
+        if let Ok(n) = rest.parse::<u8>() {
             return (1..=12).contains(&n);
         }
     }

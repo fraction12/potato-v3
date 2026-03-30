@@ -369,7 +369,6 @@ impl PtyProcess {
                     let _ = event_tx_stdin.send(AgentEvent::Error {
                         message: format!("stdin write failed: {e}"),
                     });
-                    return;
                 }
                 // Drop stdin here → child sees EOF immediately.
                 // (stdin is dropped when this block ends)
@@ -1121,12 +1120,7 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         // Drain events already buffered (AgentStarted, AgentExited).
-        loop {
-            match rx.try_recv() {
-                Ok(_) => {}
-                Err(_) => break,
-            }
-        }
+        while rx.try_recv().is_ok() {}
 
         // Now attempt a write to the dead process — this should result in
         // an Error event from the writer task.

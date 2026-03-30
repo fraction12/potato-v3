@@ -34,20 +34,15 @@ use crate::ui::panels::PanelId;
 /// High-level layout modes.
 ///
 /// Re-exported from this module so callers need only import from `ui::layout`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum LayoutPreset {
     /// Chat panel 70% left, ToolOutput 30% right.
+    #[default]
     Sidebar,
     /// Chat panel full width top, ToolOutput stacked below (50/50).
     Wide,
     /// Chat panel takes the entire area.
     Minimal,
-}
-
-impl Default for LayoutPreset {
-    fn default() -> Self {
-        Self::Sidebar
-    }
 }
 
 // Re-export so callers can do `use crate::ui::layout::LayoutPreset`.
@@ -574,8 +569,8 @@ mod tests {
         let tool_w = areas[&PanelId::ToolOutput].width;
 
         // 70% of 200 = 140; allow ±5 for rounding.
-        assert!(chat_w >= 135 && chat_w <= 145, "chat_w={}", chat_w);
-        assert!(tool_w >= 55 && tool_w <= 65, "tool_w={}", tool_w);
+        assert!((135..=145).contains(&chat_w), "chat_w={}", chat_w);
+        assert!((55..=65).contains(&tool_w), "tool_w={}", tool_w);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -671,8 +666,8 @@ mod tests {
         let side = areas.side.unwrap();
         let chat_pct = (areas.chat.width as f32 / 200.0 * 100.0) as u16;
         let side_pct = (side.width as f32 / 200.0 * 100.0) as u16;
-        assert!(chat_pct >= 65 && chat_pct <= 75, "chat_pct={}", chat_pct);
-        assert!(side_pct >= 25 && side_pct <= 35, "side_pct={}", side_pct);
+        assert!((65..=75).contains(&chat_pct), "chat_pct={}", chat_pct);
+        assert!((25..=35).contains(&side_pct), "side_pct={}", side_pct);
         assert_eq!(areas.chat.width + side.width, 200);
     }
 }

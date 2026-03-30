@@ -204,6 +204,7 @@ impl SessionStore {
 
     /// Upsert a session row. Creates it if absent; updates totals and timestamp
     /// if it already exists but the incoming data has higher token counts.
+    #[allow(clippy::too_many_arguments)]
     pub fn upsert_session(
         &self,
         id: &str,

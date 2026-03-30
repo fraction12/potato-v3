@@ -91,7 +91,7 @@ impl OverlayStack {
     }
 
     /// Peek at the top overlay (mutable).
-    pub fn top_mut<'a>(&'a mut self) -> Option<&'a mut dyn Overlay> {
+    pub fn top_mut(&mut self) -> Option<&mut dyn Overlay> {
         match self.stack.last_mut() {
             Some(b) => Some(b.as_mut()),
             None => None,

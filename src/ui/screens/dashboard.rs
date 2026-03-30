@@ -1136,10 +1136,12 @@ mod tests {
     fn make_settings_state() -> AppState {
         use crate::app::state::PathSnapshots;
 
-        let mut state = AppState::default();
-        state.config_path = "/home/user/.potato/config.toml".to_string();
-        state.model = "sonnet-4".to_string();
-        state.mcp_socket_path = Some(std::path::PathBuf::from("/tmp/potato.sock"));
+        let mut state = AppState {
+            config_path: "/home/user/.potato/config.toml".to_string(),
+            model: "sonnet-4".to_string(),
+            mcp_socket_path: Some(std::path::PathBuf::from("/tmp/potato.sock")),
+            ..Default::default()
+        };
         if let Some(dash) = state.dashboard_mut() {
             dash.available_agents = vec![
                 AgentInfo {

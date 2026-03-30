@@ -17,15 +17,11 @@ use super::project_store::ProjectStore;
 /// Priority level for inter-session messages.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum MessagePriority {
+    #[default]
     Normal,
     Urgent,
-}
-
-impl Default for MessagePriority {
-    fn default() -> Self {
-        Self::Normal
-    }
 }
 
 /// A message in a pane's inbox.
@@ -249,7 +245,7 @@ impl InterSessionState {
                 }
             }
             // Drain fully-read messages from the front to free memory.
-            while queue.front().map_or(false, |m| m.read) {
+            while queue.front().is_some_and(|m| m.read) {
                 queue.pop_front();
             }
         }
@@ -908,9 +904,9 @@ mod tests {
 
         state.unregister_pane(1);
 
-        assert!(state.roles.get(&1).is_none(), "role should be cleaned up");
+        assert!(!state.roles.contains_key(&1), "role should be cleaned up");
         assert!(
-            state.inboxes.get(&1).is_none(),
+            !state.inboxes.contains_key(&1),
             "inbox should be cleaned up"
         );
         assert!(

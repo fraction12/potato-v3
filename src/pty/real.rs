@@ -509,7 +509,7 @@ mod tests {
                 if let Some(cell) = screen.cell(row, col) {
                     let s = cell.contents();
                     if !s.is_empty() {
-                        contents.push_str(&s);
+                        contents.push_str(s);
                     }
                 }
             }
@@ -544,7 +544,7 @@ mod tests {
                 if let Some(cell) = screen.cell(row, col) {
                     let s = cell.contents();
                     if !s.is_empty() {
-                        contents.push_str(&s);
+                        contents.push_str(s);
                     }
                 }
             }

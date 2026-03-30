@@ -213,30 +213,30 @@ impl CodexSessionLogTracker {
                 let role = payload["role"].as_str().unwrap_or("");
                 let p_type = payload["type"].as_str().unwrap_or("");
 
-                if p_type == "message" {
-                    if role == "user" || role == "developer" || role == "assistant" {
-                        // Extract first user message as title.
-                        if self.title.is_empty() && (role == "user" || role == "developer") {
-                            if let Some(content) = payload["content"].as_array() {
-                                for item in content {
-                                    if item["type"].as_str() == Some("input_text")
-                                        || item["type"].as_str() == Some("text")
-                                    {
-                                        if let Some(text) = item["text"].as_str() {
-                                            if !text.is_empty() {
-                                                self.title = truncate_str(text, 80);
-                                                changed = true;
-                                            }
+                if p_type == "message"
+                    && (role == "user" || role == "developer" || role == "assistant")
+                {
+                    // Extract first user message as title.
+                    if self.title.is_empty() && (role == "user" || role == "developer") {
+                        if let Some(content) = payload["content"].as_array() {
+                            for item in content {
+                                if item["type"].as_str() == Some("input_text")
+                                    || item["type"].as_str() == Some("text")
+                                {
+                                    if let Some(text) = item["text"].as_str() {
+                                        if !text.is_empty() {
+                                            self.title = truncate_str(text, 80);
+                                            changed = true;
                                         }
                                     }
                                 }
                             }
                         }
+                    }
 
-                        if role == "assistant" {
-                            self.turns = self.turns.saturating_add(1);
-                            changed = true;
-                        }
+                    if role == "assistant" {
+                        self.turns = self.turns.saturating_add(1);
+                        changed = true;
                     }
                 }
             }

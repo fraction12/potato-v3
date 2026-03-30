@@ -255,7 +255,7 @@ mod tests {
     fn open_at_capacity_returns_none() {
         let mut pm = PaneManager::new();
         for i in 0..MAX_PANES {
-            pm.open(&format!("sess-{}", i + 1), "claude");
+            pm.open(format!("sess-{}", i + 1), "claude");
         }
         assert_eq!(pm.len(), MAX_PANES);
         assert!(pm.open("sess-overflow", "claude").is_none());
