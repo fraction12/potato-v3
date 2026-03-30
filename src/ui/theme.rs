@@ -153,3 +153,137 @@ impl Theme {
         Style::default().fg(STONE)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── Color constants ───────────────────────────────────────────────────────
+
+    #[test]
+    fn palette_colors_are_distinct() {
+        let colors = [TAN, BROWN, SOIL, SPROUT, RUST_RED, AMBER, CREAM, CHARCOAL, BG, BRASS, STONE, ROSE];
+        for (i, a) in colors.iter().enumerate() {
+            for (j, b) in colors.iter().enumerate() {
+                if i != j {
+                    assert_ne!(a, b, "palette colors at index {i} and {j} should differ");
+                }
+            }
+        }
+    }
+
+    // ── Theme defaults ────────────────────────────────────────────────────────
+
+    #[test]
+    fn default_theme_uses_expected_background_and_foreground() {
+        let theme = Theme::default();
+        assert_eq!(theme.background, BG);
+        assert_eq!(theme.foreground, CREAM);
+    }
+
+    #[test]
+    fn default_theme_fields_are_from_palette() {
+        let theme = Theme::default();
+        let palette = [TAN, BROWN, SOIL, SPROUT, RUST_RED, AMBER, CREAM, CHARCOAL, BG, BRASS, STONE, ROSE];
+        let theme_colors = [
+            theme.background, theme.foreground, theme.border, theme.border_focused,
+            theme.user_bubble, theme.assistant_bubble, theme.tool_highlight,
+            theme.error, theme.warning, theme.success, theme.muted,
+        ];
+        for (i, c) in theme_colors.iter().enumerate() {
+            assert!(palette.contains(c), "theme field at index {i} ({c:?}) is not from the palette");
+        }
+    }
+
+    // ── Style helpers ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn base_style_has_fg_and_bg() {
+        let theme = Theme::default();
+        let style = theme.base();
+        assert_eq!(style.fg, Some(CREAM));
+        assert_eq!(style.bg, Some(BG));
+    }
+
+    #[test]
+    fn user_message_uses_cream() {
+        let style = Theme::default().user_message();
+        assert_eq!(style.fg, Some(CREAM));
+    }
+
+    #[test]
+    fn assistant_message_uses_tan() {
+        let style = Theme::default().assistant_message();
+        assert_eq!(style.fg, Some(TAN));
+    }
+
+    #[test]
+    fn system_message_uses_brass() {
+        let style = Theme::default().system_message();
+        assert_eq!(style.fg, Some(BRASS));
+    }
+
+    #[test]
+    fn error_message_uses_rose() {
+        let style = Theme::default().error_message();
+        assert_eq!(style.fg, Some(ROSE));
+    }
+
+    #[test]
+    fn input_prompt_is_bold_amber() {
+        let style = Theme::default().input_prompt();
+        assert_eq!(style.fg, Some(AMBER));
+        assert!(style.add_modifier.contains(Modifier::BOLD));
+    }
+
+    #[test]
+    fn input_active_vs_disabled_differ() {
+        let theme = Theme::default();
+        assert_ne!(theme.input_active().fg, theme.input_disabled().fg);
+    }
+
+    #[test]
+    fn status_bar_has_charcoal_bg() {
+        let style = Theme::default().status_bar();
+        assert_eq!(style.bg, Some(CHARCOAL));
+        assert_eq!(style.fg, Some(TAN));
+    }
+
+    #[test]
+    fn tool_states_use_distinct_colors() {
+        let theme = Theme::default();
+        let running = theme.tool_running().fg;
+        let done = theme.tool_done().fg;
+        let failed = theme.tool_failed().fg;
+        assert_ne!(running, done);
+        assert_ne!(done, failed);
+        assert_ne!(running, failed);
+    }
+
+    #[test]
+    fn bold_style_has_bold_modifier() {
+        let style = Theme::default().bold();
+        assert!(style.add_modifier.contains(Modifier::BOLD));
+    }
+
+    #[test]
+    fn inline_code_has_tan_on_charcoal() {
+        let style = Theme::default().inline_code();
+        assert_eq!(style.fg, Some(TAN));
+        assert_eq!(style.bg, Some(CHARCOAL));
+    }
+
+    #[test]
+    fn approval_header_is_bold_with_amber_bg() {
+        let style = Theme::default().approval_header();
+        assert_eq!(style.bg, Some(AMBER));
+        assert_eq!(style.fg, Some(BG));
+        assert!(style.add_modifier.contains(Modifier::BOLD));
+    }
+
+    #[test]
+    fn muted_style_uses_stone() {
+        let style = Theme::default().muted();
+        assert_eq!(style.fg, Some(STONE));
+    }
+}
