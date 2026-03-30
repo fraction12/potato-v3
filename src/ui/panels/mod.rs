@@ -7,6 +7,7 @@
 pub mod agent_status;
 pub mod chat;
 pub mod file_preview;
+pub mod quick_actions;
 pub mod sessions;
 pub mod token_dash;
 pub mod tool_output;

@@ -14,6 +14,7 @@ mod commands;
 mod config;
 mod events;
 mod git;
+mod input;
 mod log;
 mod mcp;
 mod metrics;
@@ -253,6 +254,11 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
     let mut turn_handle: Option<TurnHandle> = None;
 
     loop {
+        // ── Background-thread panic recovery (T-907) ──────────────────────────
+        if terminal::panic_hook::take_redraw_flag() {
+            terminal.clear()?;
+        }
+
         // ── Render ────────────────────────────────────────────────────────────
         terminal.draw(|frame| {
             let area = frame.area();
@@ -305,281 +311,61 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
         let mut pending_new_session = false;
 
         if let Some(m) = msg {
-            // Intercept Enter on the dashboard.
+            // ── Centralized key dispatch ─────────────────────────────────
             if let Message::Key(ref key) = m {
-                if key.code == crossterm::event::KeyCode::Enter {
-                    // Skip dashboard Enter intercept when inline input is active
-                    // (e.g. typing a role name/prompt) — let the inline input handler below process it.
-                    let inline_input_active = matches!(
-                        &state.screen,
-                        AppScreen::Dashboard(dash) if dash.input != crate::app::state::DashboardInput::None
-                    );
-                    if !inline_input_active {
-                    if let AppScreen::Dashboard(ref dash) = state.screen {
-                        use crate::app::state::DashboardMenuItem;
-                        let menu_item = DashboardMenuItem::ALL[dash.selected_menu];
-                        match (menu_item, &dash.focus) {
-                            (DashboardMenuItem::RoastPotato, DashboardFocus::Menu) => {
-                                // Snapshot roles BEFORE spawning — spawn_claude_pane
-                                // switches screen to Session, making Dashboard inaccessible.
-                                let roles: Vec<crate::app::state::RoleDefinition> = dash.roles.clone();
-                                let role_count = roles.len().max(1);
-
-                                // Launch panes — one per defined role, or one default.
-                                for _ in 0..role_count.min(2) {
-                                    match spawn_claude_pane(state, None) {
-                                        Ok(id) => {
-                                            tracing::info!("Dashboard spawned pane: {}", id);
-                                        }
-                                        Err(e) => {
-                                            tracing::error!("Dashboard spawn failed: {e}");
-                                            state.set_error(format!("Spawn failed: {e}"), 100);
-                                            break;
-                                        }
-                                    }
-                                }
-
-                                // Silently pre-register roles in pane titles + MCP state.
-                                // NO PTY write — the user-triggered broadcast handles
-                                // agent instructions. This only sets bookkeeping so
-                                // potato_get_role returns the correct assignment.
-                                for (i, role) in roles.iter().enumerate() {
-                                    if let Some(pane) = state.panes.get_mut(i) {
-                                        pane.role_name = Some(role.name.clone());
-
-                                        if let Some(ref iss) = state.inter_session_state {
-                                            if let Ok(mut st) = iss.lock() {
-                                                st.set_role(pane.id, crate::mcp::state::PaneRole {
-                                                    name: role.name.clone(),
-                                                    description: role.prompt.clone(),
-                                                });
-                                            }
-                                        }
-                                    }
-                                }
-
-                                state.tick_count = state.tick_count.wrapping_add(1);
-                                continue;
-                            }
-                            (DashboardMenuItem::RoastPotato, DashboardFocus::Detail) => {
-                                // Enter on a recent session — resume it.
-                                if let AppScreen::Dashboard(ref dash) = state.screen {
-                                    if dash.selected_detail < dash.recent_sessions.len() {
-                                        let resume_id = dash.recent_sessions[dash.selected_detail].session_id.clone();
-                                        pending_session_resume = Some(resume_id);
-                                    }
-                                }
-                            }
-                            _ => {
-                                // Other menu items: Enter on menu focuses detail pane.
-                                if let AppScreen::Dashboard(ref mut dash) = state.screen {
-                                    if dash.focus == DashboardFocus::Menu {
-                                        dash.focus = DashboardFocus::Detail;
-                                        dash.selected_detail = 0;
-                                    }
-                                }
-                                continue;
-                            }
-                        }
-                    }
-                    } // end !inline_input_active
-                }
-
-                // ── Dashboard inline input mode (role add) ──────────────────
-                if let AppScreen::Dashboard(ref mut dash) = state.screen {
-                    use crate::app::state::DashboardInput;
-                    match &mut dash.input {
-                        DashboardInput::RoleName(buf) => {
-                            match key.code {
-                                KeyCode::Enter => {
-                                    let name = buf.trim().to_string();
-                                    if name.is_empty() {
-                                        dash.input = DashboardInput::None;
-                                    } else {
-                                        dash.input = DashboardInput::RolePrompt {
-                                            name,
-                                            prompt: String::new(),
-                                        };
-                                    }
-                                    continue;
-                                }
-                                KeyCode::Esc => {
-                                    dash.input = DashboardInput::None;
-                                    continue;
-                                }
-                                KeyCode::Backspace => {
-                                    buf.pop();
-                                    continue;
-                                }
-                                KeyCode::Char(c) => {
-                                    buf.push(c);
-                                    continue;
-                                }
-                                _ => { continue; }
-                            }
-                        }
-                        DashboardInput::RolePrompt { name, prompt } => {
-                            match key.code {
-                                KeyCode::Enter => {
-                                    let prompt_text = prompt.trim().to_string();
-                                    if !prompt_text.is_empty() {
-                                        let role = crate::app::state::RoleDefinition {
-                                            name: name.clone(),
-                                            prompt: prompt_text,
-                                        };
-                                        dash.roles.push(role);
-                                        dash.selected_detail = dash.roles.len().saturating_sub(1);
-                                        // Persist to disk.
-                                        if let Ok(cwd) = std::env::current_dir() {
-                                            if let Err(e) = roles::save_roles(&cwd, &dash.roles) {
-                                                tracing::error!("Failed to save roles: {e}");
-                                            }
-                                        }
-                                    }
-                                    dash.input = DashboardInput::None;
-                                    continue;
-                                }
-                                KeyCode::Esc => {
-                                    dash.input = DashboardInput::None;
-                                    continue;
-                                }
-                                KeyCode::Backspace => {
-                                    prompt.pop();
-                                    continue;
-                                }
-                                KeyCode::Char(c) => {
-                                    prompt.push(c);
-                                    continue;
-                                }
-                                _ => { continue; }
-                            }
-                        }
-                        DashboardInput::None => {}
-                    }
-                }
-
-                // ── Dashboard role add/delete keybinds ────────────────────────
-                if let AppScreen::Dashboard(ref mut dash) = state.screen {
-                    use crate::app::state::{DashboardMenuItem, DashboardInput};
-                    let menu_item = DashboardMenuItem::ALL[dash.selected_menu];
-                    if menu_item == DashboardMenuItem::DefineRoles && dash.focus == DashboardFocus::Detail {
-                        match key.code {
-                            KeyCode::Char('a') => {
-                                dash.input = DashboardInput::RoleName(String::new());
-                                continue;
-                            }
-                            KeyCode::Char('d') => {
-                                if !dash.roles.is_empty() && dash.selected_detail < dash.roles.len() {
-                                    dash.roles.remove(dash.selected_detail);
-                                    if dash.selected_detail > 0 && dash.selected_detail >= dash.roles.len() {
-                                        dash.selected_detail = dash.roles.len().saturating_sub(1);
-                                    }
-                                    // Persist to disk.
-                                    if let Ok(cwd) = std::env::current_dir() {
-                                        if let Err(e) = roles::save_roles(&cwd, &dash.roles) {
-                                            tracing::error!("Failed to save roles: {e}");
-                                        }
-                                    }
-                                }
-                                continue;
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-
-                // Dashboard Tab / Arrow / Esc navigation.
-                if let AppScreen::Dashboard(ref mut dash) = state.screen {
-                    match key.code {
-                        KeyCode::Tab => {
-                            dash.focus = match dash.focus {
-                                DashboardFocus::Menu => DashboardFocus::Detail,
-                                DashboardFocus::Detail => DashboardFocus::Menu,
-                            };
-                            continue;
-                        }
-                        KeyCode::Up | KeyCode::Char('k') => {
-                            match dash.focus {
-                                DashboardFocus::Menu if dash.selected_menu > 0 => {
-                                    dash.selected_menu -= 1;
-                                }
-                                DashboardFocus::Detail => {
-                                    use crate::app::state::DashboardMenuItem;
-                                    let menu_item = DashboardMenuItem::ALL[dash.selected_menu];
-                                    if menu_item == DashboardMenuItem::Settings {
-                                        dash.settings_scroll = dash.settings_scroll.saturating_sub(1);
-                                    } else if dash.selected_detail > 0 {
-                                        dash.selected_detail -= 1;
-                                    }
-                                }
-                                _ => {}
-                            }
-                            continue;
-                        }
-                        KeyCode::Down | KeyCode::Char('j') => {
-                            match dash.focus {
-                                DashboardFocus::Menu => {
-                                    use crate::app::state::DashboardMenuItem;
-                                    let max = DashboardMenuItem::ALL.len().saturating_sub(1);
-                                    if dash.selected_menu < max { dash.selected_menu += 1; }
-                                }
-                                DashboardFocus::Detail => {
-                                    // Bound by context — sessions list, roles list, etc.
-                                    use crate::app::state::DashboardMenuItem;
-                                    let menu_item = DashboardMenuItem::ALL[dash.selected_menu];
-                                    if menu_item == DashboardMenuItem::Settings {
-                                        // Settings uses its own scroll offset (no max — render clamps).
-                                        dash.settings_scroll = dash.settings_scroll.saturating_add(1);
-                                    } else {
-                                        let max = match menu_item {
-                                            DashboardMenuItem::DefineRoles => dash.roles.len().saturating_sub(1),
-                                            DashboardMenuItem::RoastPotato => dash.recent_sessions.len().saturating_sub(1),
-                                            // Integrations has no scrollable list — no-op.
-                                            _ => 0,
-                                        };
-                                        if dash.selected_detail < max {
-                                            dash.selected_detail += 1;
-                                        }
-                                    }
-                                }
-                            }
-                            continue;
-                        }
-                        KeyCode::Esc => {
-                            if dash.focus == DashboardFocus::Detail {
-                                dash.focus = DashboardFocus::Menu;
-                                continue;
-                            }
-                            state.should_quit = true;
-                            break;
-                        }
-                        KeyCode::Char('q') => {
-                            state.should_quit = true;
-                            break;
-                        }
-                        _ => {}
-                    }
-                }
-
-                // ── Session key handling ──────────────────────────────────────
-                if matches!(state.screen, AppScreen::Session(_)) {
-                    // ── Global quit — Ctrl+\ always quits; Ctrl+Q quits
-                    //    unless terminal is focused (where it means "exit terminal").
-                    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('\\') {
+                match input::handle_key(state, key) {
+                    input::KeyAction::Quit => {
                         state.should_quit = true;
                         break;
                     }
+                    input::KeyAction::SpawnDashboard => {
+                        // Snapshot roles BEFORE spawning — spawn_claude_pane
+                        // switches screen to Session, making Dashboard inaccessible.
+                        let roles: Vec<crate::app::state::RoleDefinition> =
+                            if let AppScreen::Dashboard(ref dash) = state.screen {
+                                dash.roles.clone()
+                            } else {
+                                Vec::new()
+                            };
+                        let role_count = roles.len().max(1);
 
-                    // ── Ctrl+J — jump directly to Terminal focus ──────────────
-                    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('j') {
-                        if let AppScreen::Session(ref mut session) = state.screen {
-                            session.cockpit_focus = CockpitFocus::Terminal;
+                        for _ in 0..role_count.min(2) {
+                            match spawn_claude_pane(state, None) {
+                                Ok(id) => tracing::info!("Dashboard spawned pane: {}", id),
+                                Err(e) => {
+                                    tracing::error!("Dashboard spawn failed: {e}");
+                                    state.set_error(format!("Spawn failed: {e}"), 100);
+                                    break;
+                                }
+                            }
                         }
+
+                        for (i, role) in roles.iter().enumerate() {
+                            if let Some(pane) = state.panes.get_mut(i) {
+                                pane.role_name = Some(role.name.clone());
+                                if let Some(ref iss) = state.inter_session_state {
+                                    if let Ok(mut st) = iss.lock() {
+                                        st.set_role(pane.id, crate::mcp::state::PaneRole {
+                                            name: role.name.clone(),
+                                            description: role.prompt.clone(),
+                                        });
+                                    }
+                                }
+                            }
+                        }
+
+                        state.tick_count = state.tick_count.wrapping_add(1);
                         continue;
                     }
-
-                    // ── Ctrl+W — close active pane ────────────────────────────
-                    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('w') {
+                    input::KeyAction::ResumeSession(id) => {
+                        pending_session_resume = Some(id);
+                        // Fall through to update() then deferred resume handler.
+                    }
+                    input::KeyAction::SpawnAgent => {
+                        pending_new_session = true;
+                        // Fall through to deferred spawn handler.
+                    }
+                    input::KeyAction::ClosePane => {
                         if let Some(closed) = state.panes.close_active() {
                             if let Some(ref iss) = state.inter_session_state {
                                 if let Ok(mut st) = iss.lock() {
@@ -590,7 +376,6 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
 
                         turn_handle = None;
 
-                        // Clean up .mcp.json when all panes are gone.
                         if state.panes.is_empty() {
                             if let Ok(cwd) = std::env::current_dir() {
                                 let _ = crate::mcp::config_writer::remove_mcp_config(&cwd);
@@ -605,515 +390,44 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                         }
                         continue;
                     }
-
-                    // (Alt+[/] pane switching removed — Tab/Shift+Tab handles this.)
-
-                    // Get current focus (without mutably borrowing state yet).
-                    let current_focus = state
-                        .session()
-                        .map(|s| s.cockpit_focus)
-                        .unwrap_or(CockpitFocus::Input);
-
-                    // ── Tab / Shift+Tab — cycle focus ring ────────────────────
-                    // When multiple panes exist and focus is on Terminal, Tab
-                    // switches to the next pane's terminal before advancing to
-                    // Sidebar. Shift+Tab does the reverse.
-                    if key.code == KeyCode::Tab {
-                        let forward = !key.modifiers.contains(KeyModifiers::SHIFT);
+                    input::KeyAction::Broadcast(text) => {
                         let n_panes = state.panes.len();
-
-                        if n_panes > 1 && current_focus == CockpitFocus::Terminal {
-                            let active = state.panes.active_index();
-                            if forward {
-                                // If not on the last pane, move to next pane.
-                                if active + 1 < n_panes {
-                                    state.panes.focus_next();
-                                    continue;
-                                }
-                                // Last pane → advance focus ring normally (Terminal → Sidebar).
-                            } else {
-                                // If not on the first pane, move to prev pane.
-                                if active > 0 {
-                                    state.panes.focus_prev();
-                                    continue;
-                                }
-                                // First pane → retreat focus ring normally (Terminal → Input).
-                            }
-                        }
-
-                        // When tabbing *into* Terminal with multiple panes,
-                        // land on the first pane (forward) or last pane (backward).
-                        if n_panes > 1 {
-                            if forward && current_focus == CockpitFocus::Input {
-                                state.panes.focus(0);
-                            } else if !forward && current_focus == CockpitFocus::Sidebar {
-                                state.panes.focus(n_panes - 1);
-                            }
-                        }
-
-                        if let AppScreen::Session(ref mut session) = state.screen {
-                            session.cockpit_focus = if forward {
-                                session.cockpit_focus.next()
-                            } else {
-                                session.cockpit_focus.prev()
-                            };
-                        }
-                        continue;
-                    }
-
-                    // ? is no longer a shortcut — use /help instead.
-                    // Help overlay is accessible via /help slash command.
-
-                    // ── Overlay active — dispatch key to overlay ──────────────
-                    {
-                        let overlay_kind = state.session().and_then(|s| s.overlay.clone());
-                        if let Some(ref kind) = overlay_kind {
-                            match kind {
-                                crate::app::state::Overlay::AgentPicker => {
-                                    match key.code {
-                                        KeyCode::Esc => {
-                                            if let AppScreen::Session(ref mut session) = state.screen {
-                                                session.overlay = None;
-                                            }
-                                        }
-                                        KeyCode::Up | KeyCode::Char('k') => {
-                                            if let AppScreen::Session(ref mut session) = state.screen {
-                                                if session.agent_picker.selected > 0 {
-                                                    session.agent_picker.selected -= 1;
-                                                }
-                                            }
-                                        }
-                                        KeyCode::Down | KeyCode::Char('j') => {
-                                            // 3 agents: Claude, Codex, OpenCode
-                                            const MAX_AGENTS: usize = 2;
-                                            if let AppScreen::Session(ref mut session) = state.screen {
-                                                if session.agent_picker.selected < MAX_AGENTS {
-                                                    session.agent_picker.selected += 1;
-                                                }
-                                            }
-                                        }
-                                        KeyCode::Enter => {
-                                            // Launch the selected agent.
-                                            let selected = state.session()
-                                                .map(|s| s.agent_picker.selected)
-                                                .unwrap_or(0);
-                                            let agent_names = ["claude", "codex", "opencode"];
-                                            let adapter = agent_names.get(selected)
-                                                .copied()
-                                                .unwrap_or("claude");
-                                            if let AppScreen::Session(ref mut session) = state.screen {
-                                                session.overlay = None;
-                                            }
-                                            match spawn_agent_pane(state, adapter, None) {
-                                                Ok(id) => tracing::info!("Agent picker launched {} pane: {}", adapter, id),
-                                                Err(e) => state.set_error(format!("Failed to launch {adapter}: {e}"), 100),
-                                            }
-                                        }
-                                        _ => {}
-                                    }
-                                    continue;
-                                }
-                                _ => {
-                                    // Esc or ? dismisses all other overlays; all keys are consumed.
-                                    if key.code == KeyCode::Esc || key.code == KeyCode::Char('?') {
-                                        if let AppScreen::Session(ref mut session) = state.screen {
-                                            session.overlay = None;
-                                        }
-                                    }
-                                    continue;
-                                }
-                            }
-                        }
-                    }
-
-                    // ── Esc — context-sensitive ───────────────────────────────
-                    // Terminal focus: Esc passes through to agent PTY (Claude needs it).
-                    // Input focus: Esc clears the input buffer (if non-empty), otherwise no-op.
-                    // Other focus: Esc returns to Input.
-                    // Pane closing requires Ctrl+W, not Esc.
-                    if key.code == KeyCode::Esc && current_focus != CockpitFocus::Terminal {
-                        match current_focus {
-                            CockpitFocus::Input => {
-                                // Clear input buffer if there's text; otherwise just ignore.
-                                if let AppScreen::Session(ref mut session) = state.screen {
-                                    if !session.input_buffer.is_empty() {
-                                        session.input_buffer.clear();
-                                    }
-                                }
-                                continue;
-                            }
-                            CockpitFocus::Terminal => unreachable!(), // guarded above
-                            // Esc from Agents/Sessions/Sidebar = return focus to Input.
-                            _ => {
-                                if let AppScreen::Session(ref mut session) = state.screen {
-                                    session.cockpit_focus = CockpitFocus::Input;
-                                }
-                                continue;
-                            }
-                        }
-                    }
-
-                    // ── Ctrl+Q — leave terminal focus back to Input ───────────
-                    if key.code == KeyCode::Char('q')
-                        && key.modifiers.contains(KeyModifiers::CONTROL)
-                        && current_focus == CockpitFocus::Terminal
-                    {
-                        if let AppScreen::Session(ref mut session) = state.screen {
-                            session.cockpit_focus = CockpitFocus::Input;
-                        }
-                        continue;
-                    }
-
-                    // ── Terminal focus — viewport scroll first, PTY keys second ──
-                    if current_focus == CockpitFocus::Terminal {
-                        {
-                            let has_pane = !state.panes.is_empty();
-                            let handled = if has_pane {
-                                if let Some(pane) = state.panes.active_pane_mut() {
-                                    match key.code {
-                                        KeyCode::PageUp   => { pane.session.scroll_terminal_up(10);    true }
-                                        KeyCode::PageDown => { pane.session.scroll_terminal_down(10);  true }
-                                        KeyCode::Home     => { pane.session.scroll_terminal_up(10_000); true }
-                                        KeyCode::End      => { pane.session.reset_terminal_scroll();   true }
-                                        _ => false,
-                                    }
-                                } else { false }
-                            } else if let Some(session) = state.session_mut() {
-                                match key.code {
-                                    KeyCode::PageUp   => { session.scroll_terminal_up(10);    true }
-                                    KeyCode::PageDown => { session.scroll_terminal_down(10);  true }
-                                    KeyCode::Home     => { session.scroll_terminal_up(10_000); true }
-                                    KeyCode::End      => { session.reset_terminal_scroll();   true }
-                                    _ => false,
-                                }
-                            } else { false };
-                            if handled { continue; }
-                        }
-
-                        let raw_bytes = key_event_to_bytes(*key);
-                        if !raw_bytes.is_empty() {
-                            // Write to active pane's PTY.
-                            if let Some(pane) = state.panes.active_pane_mut() {
+                        let mut any_written = false;
+                        for i in 0..n_panes {
+                            if let Some(pane) = state.panes.get_mut(i) {
                                 if let Some(ref mut pty) = pane.pty {
-                                    if let Err(e) = pty.write_input(&raw_bytes) {
-                                        tracing::warn!("PTY write_input (terminal focus): {e}");
-                                    }
-                                }
-                            }
-                        }
-                        continue;
-                    }
-
-                    // ── Input focus — Potato-owned text editing ───────────────
-                    if current_focus == CockpitFocus::Input {
-                        // ── Autocomplete navigation (Up/Down/Tab) ────────────
-                        // Only active when input starts with `/`.
-                        let in_command_mode = state.session()
-                            .map(|s| s.input_buffer.starts_with('/'))
-                            .unwrap_or(false);
-
-                        if in_command_mode {
-                            match key.code {
-                                KeyCode::Up => {
-                                    if let AppScreen::Session(ref mut session) = state.screen {
-                                        let prefix = &session.input_buffer[1..];
-                                        let count = commands::registry::completions(prefix).len();
-                                        if count > 0 {
-                                            if session.command_selected == 0 {
-                                                session.command_selected = count - 1;
-                                            } else {
-                                                session.command_selected -= 1;
-                                            }
-                                        }
-                                    }
-                                    continue;
-                                }
-                                KeyCode::Down => {
-                                    if let AppScreen::Session(ref mut session) = state.screen {
-                                        let prefix = &session.input_buffer[1..];
-                                        let count = commands::registry::completions(prefix).len();
-                                        if count > 0 {
-                                            session.command_selected = (session.command_selected + 1) % count;
-                                        }
-                                    }
-                                    continue;
-                                }
-                                KeyCode::Tab => {
-                                    if let AppScreen::Session(ref mut session) = state.screen {
-                                        let prefix = session.input_buffer[1..].to_string();
-                                        let completions = commands::registry::completions(&prefix);
-                                        let idx = session.command_selected.min(completions.len().saturating_sub(1));
-                                        if let Some(cmd) = completions.get(idx) {
-                                            session.input_buffer = format!("/{}", cmd.name);
-                                            session.input_cursor = session.input_buffer.len();
-                                            session.command_selected = 0;
-                                        }
-                                    }
-                                    continue;
-                                }
-                                _ => {}
-                            }
-                        }
-
-                        if let AppScreen::Session(ref mut session) = state.screen {
-                            match key.code {
-                                // Enter — parse slash command or send to PTY.
-                                KeyCode::Enter => {
-                                    let text = std::mem::take(&mut session.input_buffer);
-                                    session.input_cursor = 0;
-                                    session.command_selected = 0;
-                                    session.reset_terminal_scroll();
-
-                                    if !text.is_empty() {
-                                        if text.starts_with('/') {
-                                            // ── Slash command dispatch ────────
-                                            use commands::registry::{CommandResult, OverlayKind};
-                                            match commands::registry::parse_command(&text) {
-                                                CommandResult::ShowOverlay(OverlayKind::Help) => {
-                                                    session.overlay = Some(crate::app::state::Overlay::Help);
-                                                }
-                                                CommandResult::ShowOverlay(OverlayKind::Sessions) => {
-                                                    session.overlay = Some(crate::app::state::Overlay::Sessions);
-                                                }
-                                                CommandResult::ShowOverlay(OverlayKind::AgentPicker) => {
-                                                    session.overlay = Some(crate::app::state::Overlay::AgentPicker);
-                                                }
-                                                CommandResult::NewSession { .. } => {
-                                                    let agent_rows = crate::ui::overlays::agent_picker::build_agent_rows();
-                                                    let sel = state.session().map(|s| s.selected_agent).unwrap_or(0);
-                                                    let adapter = agent_rows.get(sel).map(|r| r.adapter_name.as_str()).unwrap_or("claude");
-                                                    match spawn_agent_pane(state, adapter, None) {
-                                                        Ok(id) => tracing::info!("New {} pane spawned: {}", adapter, id),
-                                                        Err(e) => state.set_error(e, 100),
-                                                    }
-                                                    continue;
-                                                }
-                                                CommandResult::SetRole { name, description } => {
-                                                    // Store role on the active pane.
-                                                    let active_idx = state.panes.active_index();
-                                                    let active_pane_id = state.panes.active_pane().map(|p| p.id);
-                                                    if let Some(pane) = state.panes.active_pane_mut() {
-                                                        pane.role_name = Some(name.clone());
-                                                        pane.role_description = description.clone();
-                                                        tracing::info!(
-                                                            "Pane {} role set to '{}': {:?}",
-                                                            pane.id, name, description
-                                                        );
-                                                    }
-                                                    // Update InterSessionState so MCP tools reflect the role.
-                                                    if let Some(ref inter) = state.inter_session_state {
-                                                        if let Ok(mut is) = inter.lock() {
-                                                            if let Some(pid) = active_pane_id {
-                                                                is.set_role(pid, crate::mcp::state::PaneRole {
-                                                                    name: name.clone(),
-                                                                    description: description.clone().unwrap_or_default(),
-                                                                });
-                                                            }
-                                                        }
-                                                    }
-                                                    // Inject notification into ALL other panes.
-                                                    if let Some(pid) = active_pane_id {
-                                                        let n_panes = state.panes.len();
-                                                        let desc_part = description
-                                                            .as_deref()
-                                                            .filter(|d| !d.is_empty())
-                                                            .map(|d| format!(" — {d}"))
-                                                            .unwrap_or_default();
-                                                        let content = format!(
-                                                            "🏷️ Partner Pane {pid} has set their role to: {name}{desc_part}"
-                                                        );
-                                                        let notification = crate::mcp::injection::format_notification(
-                                                            pid,
-                                                            Some(&name),
-                                                            &content,
-                                                        );
-                                                        for target in 0..n_panes {
-                                                            if state.panes.get(target).map(|p| p.id) != Some(pid) {
-                                                                if let Err(e) = crate::mcp::injection::inject_into_pane(
-                                                                    &mut state.panes,
-                                                                    target,
-                                                                    &notification,
-                                                                ) {
-                                                                    tracing::warn!("role inject to pane {target}: {e}");
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                                CommandResult::Handled => {
-                                                    tracing::info!("Slash command handled: {}", text);
-                                                }
-                                                CommandResult::Unknown(cmd) => {
-                                                    state.set_error(
-                                                        format!("Unknown command: /{cmd}  (type /help for commands)"),
-                                                        80,
-                                                    );
-                                                }
-                                                CommandResult::PassThrough(_) => {
-                                                    // Should not happen since we checked starts_with('/').
-                                                }
-                                            }
+                                    if !pty.child_exited() {
+                                        if let Err(e) = pty.write_input(text.as_bytes()) {
+                                            tracing::warn!("Broadcast text to pane {i}: {e}");
                                         } else {
-                                            // ── Broadcast to all panes ────────
-                                            // Write text first (no \r), then
-                                            // defer Enter via PENDING_ENTERS
-                                            // to avoid racing Claude's Ink UI.
-                                            let n_panes = state.panes.len();
-                                            let mut any_written = false;
-                                            for i in 0..n_panes {
-                                                if let Some(pane) = state.panes.get_mut(i) {
-                                                    if let Some(ref mut pty) = pane.pty {
-                                                        if !pty.child_exited() {
-                                                            if let Err(e) = pty.write_input(text.as_bytes()) {
-                                                                tracing::warn!("Broadcast text to pane {i}: {e}");
-                                                            } else {
-                                                                any_written = true;
-                                                                if let Ok(mut pending) = PENDING_ENTERS.lock() {
-                                                                    pending.push(crate::mcp::injection::PendingEnter {
-                                                                        pane_index: i,
-                                                                        written_at_tick: state.tick_count,
-                                                                        delay_ticks: crate::mcp::injection::ENTER_DELAY_TICKS,
-                                                                    });
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                            if !any_written {
-                                                tracing::warn!("No panes to broadcast to");
+                                            any_written = true;
+                                            if let Ok(mut pending) = PENDING_ENTERS.lock() {
+                                                pending.push(crate::mcp::injection::PendingEnter {
+                                                    pane_index: i,
+                                                    written_at_tick: state.tick_count,
+                                                    delay_ticks: crate::mcp::injection::ENTER_DELAY_TICKS,
+                                                });
                                             }
                                         }
                                     }
-                                    continue;
                                 }
-                                KeyCode::Backspace => {
-                                    session.input_buffer.pop();
-                                    if session.input_cursor > session.input_buffer.len() {
-                                        session.input_cursor = session.input_buffer.len();
-                                    }
-                                    // Reset autocomplete selection on buffer change.
-                                    session.command_selected = 0;
-                                    continue;
-                                }
-                                KeyCode::Left => {
-                                    if session.input_cursor > 0 {
-                                        session.input_cursor -= 1;
-                                    }
-                                    continue;
-                                }
-                                KeyCode::Right => {
-                                    if session.input_cursor < session.input_buffer.len() {
-                                        session.input_cursor += 1;
-                                    }
-                                    continue;
-                                }
-                                KeyCode::Home => {
-                                    session.input_cursor = 0;
-                                    continue;
-                                }
-                                KeyCode::End => {
-                                    session.input_cursor = session.input_buffer.len();
-                                    continue;
-                                }
-                                KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                                    session.input_buffer.push(c);
-                                    session.input_cursor = session.input_buffer.len();
-                                    // Reset autocomplete selection when buffer changes.
-                                    session.command_selected = 0;
-                                    continue;
-                                }
-                                _ => {}
                             }
                         }
-                    }
-
-                    // ── Agents focus — agent picker ───────────────────────────
-                    if current_focus == CockpitFocus::Agents {
-                        if let AppScreen::Session(ref mut session) = state.screen {
-                            let agent_count = crate::ui::overlays::agent_picker::build_agent_rows().len();
-                            let max_idx = agent_count.saturating_sub(1);
-                            match key.code {
-                                KeyCode::Up | KeyCode::Char('k') => {
-                                    if session.selected_agent > 0 {
-                                        session.selected_agent -= 1;
-                                    }
-                                    continue;
-                                }
-                                KeyCode::Down | KeyCode::Char('j') => {
-                                    if session.selected_agent < max_idx {
-                                        session.selected_agent += 1;
-                                    }
-                                    continue;
-                                }
-                                KeyCode::Home => {
-                                    session.selected_agent = 0;
-                                    continue;
-                                }
-                                KeyCode::End => {
-                                    session.selected_agent = max_idx;
-                                    continue;
-                                }
-                                KeyCode::Enter => {
-                                    // Spawn agent session for the selected agent.
-                                    pending_new_session = true;
-                                    // Fall through so the deferred handler runs.
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-
-                    // ── Git focus — scroll the git panel ──────────────────────
-                    if current_focus == CockpitFocus::Git {
-                        if let AppScreen::Session(ref mut session) = state.screen {
-                            let handled = match key.code {
-                                KeyCode::Up | KeyCode::Char('k') => {
-                                    session.git_scroll = session.git_scroll.saturating_sub(1);
-                                    true
-                                }
-                                KeyCode::Down | KeyCode::Char('j') => {
-                                    session.git_scroll = session.git_scroll.saturating_add(1);
-                                    true
-                                }
-                                KeyCode::Home => {
-                                    session.git_scroll = 0;
-                                    true
-                                }
-                                KeyCode::End => {
-                                    session.git_scroll = usize::MAX;
-                                    true
-                                }
-                                KeyCode::PageUp => {
-                                    session.git_scroll = session.git_scroll.saturating_sub(10);
-                                    true
-                                }
-                                KeyCode::PageDown => {
-                                    session.git_scroll = session.git_scroll.saturating_add(10);
-                                    true
-                                }
-                                KeyCode::Char('r') => {
-                                    // Manual refresh.
-                                    state.git_snapshot = git::GitSnapshot::capture();
-                                    state.git_refresh_ticks = 0;
-                                    session.git_scroll = 0;
-                                    true
-                                }
-                                _ => false,
-                            };
-                            if handled { continue; }
-                        }
-                    }
-
-                    // ── Sidebar focus — Enter returns to Input ────────────────
-                    if current_focus == CockpitFocus::Sidebar && key.code == KeyCode::Enter {
-                        if let AppScreen::Session(ref mut session) = state.screen {
-                            session.cockpit_focus = CockpitFocus::Input;
+                        if !any_written {
+                            tracing::warn!("No panes to broadcast to");
                         }
                         continue;
+                    }
+                    input::KeyAction::Handled => {
+                        continue;
+                    }
+                    input::KeyAction::Unhandled => {
+                        // Fall through to update().
                     }
                 }
+                // Old key handling removed — now in src/input/ module.
             } // end if let Message::Key
+
 
             if let Message::Mouse(ref mouse) = m {
                 if matches!(state.screen, AppScreen::Session(_)) {
@@ -1950,6 +1264,14 @@ async fn main() -> Result<()> {
     // All tracing output goes to ~/.potato/potato.log, never to the terminal.
     if let Err(e) = log::init_file_logging() {
         eprintln!("Warning: could not initialise file logging: {e}");
+    }
+
+    // Redirect stderr (fd 2) to the log file so that eprintln!, panic
+    // output, and library debug spew never corrupt the ratatui surface.
+    // This must happen after init_file_logging (which sets up tracing)
+    // but before we enter the TUI.
+    if let Err(e) = log::redirect_stderr(&log::log_path()) {
+        tracing::warn!("could not redirect stderr: {e}");
     }
 
     let cli = Cli::parse();

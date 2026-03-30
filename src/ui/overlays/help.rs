@@ -37,10 +37,11 @@ struct Section {
 static GLOBAL_ENTRIES: &[KeyEntry] = &[
     KeyEntry::new("Ctrl+\\",     "Quit"),
     KeyEntry::new("Ctrl+W",      "Close active pane"),
-    KeyEntry::new("Tab/S-Tab",   "Cycle focus / panes"),
-    KeyEntry::new("Tab",         "Next focus panel"),
+    KeyEntry::new("Tab",         "Next focus panel / cycle panes"),
     KeyEntry::new("Shift+Tab",   "Previous focus panel"),
-    KeyEntry::new("?",           "Toggle help"),
+    KeyEntry::new("F1",          "Toggle help"),
+    KeyEntry::new("F5",          "Refresh git / tasks"),
+    KeyEntry::new("F6",          "Focus terminal"),
 ];
 
 static INPUT_ENTRIES: &[KeyEntry] = &[
@@ -50,11 +51,11 @@ static INPUT_ENTRIES: &[KeyEntry] = &[
 ];
 
 static TERMINAL_ENTRIES: &[KeyEntry] = &[
-    KeyEntry::new("Ctrl+J",     "Focus terminal"),
-    KeyEntry::new("Ctrl+Q",     "Exit terminal focus"),
-    KeyEntry::new("Esc",        "Passes through to agent"),
-    KeyEntry::new("PgUp/PgDn",  "Scroll terminal"),
+    KeyEntry::new("Tab",        "Exit terminal focus (forward)"),
+    KeyEntry::new("Ctrl+\\",    "Quit (only intercept)"),
+    KeyEntry::new("PgUp/PgDn",  "Scroll terminal viewport"),
     KeyEntry::new("End",        "Jump to bottom"),
+    KeyEntry::new("*",          "All other keys → agent PTY"),
 ];
 
 static NAVIGATION_ENTRIES: &[KeyEntry] = &[

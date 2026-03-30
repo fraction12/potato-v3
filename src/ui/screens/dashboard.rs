@@ -12,7 +12,7 @@
 //! │  Settings          │                                                     │
 //! │                    │                                                     │
 //! ├────────────────────┴─────────────────────────────────────────────────────┤
-//! │  ↑↓ navigate  Tab switch  Enter select  q quit                          │
+//! │  ↑↓ navigate  Tab switch  Enter select  Ctrl+\ quit                      │
 //! └──────────────────────────────────────────────────────────────────────────┘
 //! ```
 
@@ -385,7 +385,7 @@ fn render_detail_roles(frame: &mut Frame, area: Rect, state: &AppState) {
         )));
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
-            "  Press a to add a role and customise behaviour.",
+            "  Press F2 to add a role and customise behaviour.",
             Style::default().fg(MUTED),
         )));
     } else {
@@ -484,7 +484,7 @@ fn render_detail_roles(frame: &mut Frame, area: Rect, state: &AppState) {
             // Keybind hints.
             lines.push(Line::from(""));
             lines.push(Line::from(Span::styled(
-                "  a add role  d delete  ↑↓ select",
+                "  F2 add role  F3 delete  ↑↓ select",
                 Style::default().fg(MUTED),
             )));
         }
@@ -781,10 +781,10 @@ fn render_footer(frame: &mut Frame, area: Rect, state: &AppState) {
 
     let hints = match (DashboardMenuItem::ALL[dash.selected_menu], &dash.focus) {
         (DashboardMenuItem::RoastPotato, DashboardFocus::Menu) => {
-            "↑↓ navigate  Tab details  Enter launch  q quit"
+            "↑↓ navigate  Tab details  Enter launch  Ctrl+\\ quit"
         }
         (_, DashboardFocus::Menu) => {
-            "↑↓ navigate  Tab details  Enter select  q quit"
+            "↑↓ navigate  Tab details  Enter select  Ctrl+\\ quit"
         }
         (DashboardMenuItem::Settings, DashboardFocus::Detail) => {
             "↑↓ scroll  Tab menu  Esc back"
@@ -969,7 +969,7 @@ mod tests {
         let lines = super::build_settings_lines(&state);
         let text = lines_to_string(&lines);
         assert!(text.contains("KEYBINDS"), "missing KEYBINDS header");
-        assert!(text.contains("ctrl+q"), "missing quit keybind");
+        assert!(text.contains("ctrl+\\"), "missing quit keybind");
         assert!(text.contains("enter"), "missing submit keybind");
     }
 

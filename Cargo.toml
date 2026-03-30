@@ -15,6 +15,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
 notify = { version = "7", default-features = false, features = ["macos_kqueue"] }
+# T-905: PollWatcher is exposed from notify's core — no extra feature needed.
 rusqlite = { version = "0.32", features = ["bundled"] }
 toml = "0.8"
 syntect = "5"
@@ -24,6 +25,7 @@ thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 dirs = "6"
+libc = "0.2"
 clap = { version = "4", features = ["derive"] }
 nucleo-matcher = "0.3"
 chrono = { version = "0.4", features = ["serde"] }

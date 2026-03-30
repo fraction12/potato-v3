@@ -8,7 +8,7 @@ project:
   language: Rust
   framework: ratatui + tokio + crossterm + portable-pty + vt100
   storage: SQLite (rusqlite, WAL mode)
-  current_phase: phase-8b-project
+  current_phase: phase-10-keybind-overhaul
 
 metadata:
   version: 0.1.0

@@ -22,19 +22,25 @@ pub struct KeybindConfig {
     pub deny: String,
     /// Key to create a new session.
     pub new_session: String,
+    /// Key to refresh git/tasks/status.
+    pub refresh: String,
+    /// Key to jump to terminal focus.
+    pub focus_terminal: String,
 }
 
 impl Default for KeybindConfig {
     fn default() -> Self {
         Self {
-            quit: "ctrl+q".to_string(),
+            quit: "ctrl+\\".to_string(),
             submit: "enter".to_string(),
             slash_menu: "/".to_string(),
             model_picker: "ctrl+m".to_string(),
-            help: "?".to_string(),
+            help: "f1".to_string(),
             approve: "y".to_string(),
             deny: "n".to_string(),
             new_session: "ctrl+n".to_string(),
+            refresh: "f5".to_string(),
+            focus_terminal: "f6".to_string(),
         }
     }
 }

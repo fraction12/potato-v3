@@ -1056,6 +1056,249 @@ tasks:
       - No config writing — read-only for now
       - Tests for scroll state and section rendering logic
 
+  # ─── Phase 10 — Keyboard Shortcut Overhaul ────────────────────────────────────
+  #
+  # Problem: bare letter shortcuts (q, a, d, j, k, r, ?) block typing,
+  # vim bindings duplicate arrow keys, no discoverability, all keybind
+  # logic scattered through 1200-line main.rs. Users can't type '?' in
+  # overlays (line 718 still dismisses them).
+  #
+  # Solution: remove all bare-letter shortcuts, add F-key alternatives,
+  # extract central input handler, build Quick Actions panel in sidebar.
+
+  - id: T-1001
+    title: "Remove bare-letter shortcuts and fix residual ? binding"
+    status: open
+    phase: phase-10-keybind-overhaul
+    priority: high
+    description: |
+      Remove all bare single-letter keyboard shortcuts that block normal typing:
+
+      **Remove entirely:**
+      - `q` on Dashboard (line 556) — bare quit; Ctrl+\ covers it
+      - `j`/`k` everywhere — 8 occurrences across Dashboard, Session (Agents,
+        Git, Sidebar), and AgentPicker overlay; Arrow keys already handle all
+        these cases
+      - `r` in Git focus (line 1095) — bare refresh; moving to F5
+      - `?` overlay dismiss (line 718) — still in code, dismisses non-help
+        overlays; use Esc only
+
+      **Rework:**
+      - `a`/`d` in Dashboard DefineRoles detail (lines 467/471) — replace with
+        inline buttons or F2/F3 (add/delete role)
+      - `Esc` on Dashboard Menu (line 548) — currently quits app; change to
+        no-op or show confirm dialog
+      - `Ctrl+J` (line 574) — conflicts with newline (ASCII 0x0A); replace
+        with F6 for "Focus Terminal"
+
+      **Keep unchanged:**
+      - Ctrl+\ (quit) — works everywhere including terminal focus
+      - Tab/Shift+Tab (focus cycle) — works everywhere including terminal focus
+      - Enter, Esc (clear/back in non-dashboard contexts)
+      - / (slash commands in input), Arrow keys, PageUp/Down, Home/End
+      - Mouse scroll
+
+      **Terminal focus rule (IMPORTANT):**
+      When CockpitFocus::Terminal is active, ONLY two keys are intercepted:
+      - `Tab` (forward only, NOT Shift+Tab) — cycle focus out of terminal
+      - `Ctrl+\` — quit app
+      EVERYTHING else passes through to the agent PTY — including Shift+Tab
+      (Claude Code uses it), Ctrl+Q, Ctrl+W, all F-keys, all Ctrl combos.
+      The terminal is the agent's domain. This simplifies the mental model:
+      "Tab to leave, Ctrl+\ to quit, everything else is the agent's."
+      No backward cycling from terminal — user Tabs forward through the
+      ring (Terminal → Sidebar → Agents → Git → Input).
+
+      **Remove from terminal focus:**
+      - `Ctrl+Q` (line 757) — currently exits terminal focus; remove,
+        user uses Tab instead
+      - `Ctrl+W` (line 582) — currently closes pane from any focus;
+        restrict to non-terminal focuses only
+      - `Ctrl+J` (line 574) — currently jumps TO terminal; irrelevant
+        when already in terminal, but also remove from global intercept
+        since F6 replaces it
+
+      **Lines to modify in main.rs:**
+      - 467, 471: `a`/`d` role add/delete
+      - 501, 519: Dashboard `j`/`k`
+      - 548: Dashboard Esc quit
+      - 556: Dashboard `q` quit
+      - 574: `Ctrl+J` terminal focus
+      - 679, 686: AgentPicker overlay `j`/`k`
+      - 718: `?` overlay dismiss
+      - 1037, 1043: Agents focus `j`/`k`
+      - 1071, 1075: Git focus `j`/`k`
+      - 1095: Git focus `r` refresh
+
+      Also update help.rs GLOBAL_ENTRIES to remove `?` entry (line ~44).
+    acceptance:
+      - No bare letter key triggers any action outside of text input contexts
+      - "? can be typed freely in any input/overlay"
+      - All navigation still works via Arrow keys
+      - Ctrl+\ remains the only way to quit from session screen
+      - Dashboard Esc no longer quits app
+      - All 711+ existing tests still pass
+      - "cargo test green, cargo build green"
+
+  - id: T-1002
+    title: "Add F-key shortcuts (F1 Help, F5 Refresh, F6 Terminal)"
+    status: open
+    phase: phase-10-keybind-overhaul
+    priority: high
+    depends_on: [T-1001]
+    description: |
+      Add Function key shortcuts as replacements for removed bindings:
+
+      **New F-key bindings (intercept BEFORE PTY passthrough):**
+      - `F1` — Toggle Help overlay (replaces `?`). Works in all screens/focuses.
+      - `F5` — Refresh git snapshot (replaces bare `r`). Works when Git panel
+        exists. Also refreshes OpenSpec tasks and agent status.
+      - `F6` — Focus Terminal (replaces `Ctrl+J`). Jumps focus to terminal pane.
+
+      **Optional / future:**
+      - `F2` — Add role (replaces bare `a` in Dashboard DefineRoles)
+      - `F3` — Delete role (replaces bare `d` in Dashboard DefineRoles)
+      - `F9` — Quick Actions panel focus (if built)
+
+      **Implementation notes:**
+      - F-keys are currently passed through to PTY in `pty/real.rs:333-344`.
+      - For non-Terminal focuses, F-keys already reach main.rs key handler.
+        Add F1/F5/F6 handling there.
+      - For Terminal focus: do NOT intercept F-keys. They pass through to
+        the agent PTY per the terminal focus rule (only Tab + Ctrl+\
+        intercepted). This keeps the mental model simple and avoids
+        stealing keys from agents that might use them.
+      - Update `config/keybinds.rs` KeybindConfig with new fields:
+        `help: "f1"`, `refresh: "f5"`, `focus_terminal: "f6"`.
+      - Update `ui/overlays/help.rs` to show new F-key bindings.
+    acceptance:
+      - F1 toggles help overlay from any screen/focus
+      - F5 refreshes git panel (and OpenSpec tasks)
+      - F6 jumps to terminal focus
+      - "F-keys NOT intercepted in terminal focus; they pass through to the agent PTY (terminal focus rule - only Tab (no Shift) and Ctrl+\\ intercepted; Shift+Tab passes through for Claude Code)"
+      - "F1/F5/F6 only work in non-terminal focuses (Input, Sidebar, etc.)"
+      - KeybindConfig updated with new defaults
+      - Help overlay shows updated keybinds
+      - Tests pass
+
+  - id: T-1003
+    title: "Extract input_handler.rs — centralize all keybind dispatch"
+    status: open
+    phase: phase-10-keybind-overhaul
+    priority: medium
+    depends_on: [T-1001, T-1002]
+    description: |
+      Extract all keyboard event handling from main.rs into a dedicated
+      `src/input_handler.rs` module. main.rs is currently ~1200+ lines with
+      keybind logic scattered across ~500 lines of nested match blocks.
+
+      **New module: `src/input_handler.rs`**
+      ```rust
+      pub enum InputAction {
+          Quit,
+          FocusTerminal,
+          FocusInput,
+          ClosePane,
+          CycleFocusForward,
+          CycleFocusBackward,
+          ToggleHelp,
+          RefreshGit,
+          ScrollUp(usize),
+          ScrollDown(usize),
+          Navigate(Direction),
+          Select,
+          Dismiss,
+          TypeChar(char),
+          DeleteChar,
+          ClearInput,
+          SendInput(String),
+          SlashCommand(String),
+          Noop,
+          PassthroughToPty(Vec<u8>),
+      }
+
+      pub fn handle_key(
+          key: KeyEvent,
+          screen: &AppScreen,
+          focus: CockpitFocus,
+      ) -> InputAction { ... }
+      ```
+
+      **Approach:**
+      - Map (KeyEvent, Screen, Focus) → InputAction in one place
+      - main.rs interprets InputAction and mutates state
+      - All keybind logic in one file, testable independently
+      - main.rs shrinks by ~400-500 lines
+
+      **File size rule:** input_handler.rs must stay under 200 lines.
+      If it grows past that, split into `input/mod.rs` + `input/dashboard.rs`
+      + `input/session.rs`.
+    acceptance:
+      - All key handling routed through input_handler
+      - main.rs only contains state mutation, not key interpretation
+      - input_handler.rs under 200 lines (split if needed)
+      - Unit tests for handle_key covering all screens and focuses
+      - No behavior changes — pure refactor
+      - All existing tests pass
+
+  - id: T-1004
+    title: "Quick Actions panel in sidebar"
+    status: open
+    phase: phase-10-keybind-overhaul
+    priority: medium
+    depends_on: [T-1001]
+    description: |
+      Add a Quick Actions section to the right sidebar that provides
+      discoverable, context-sensitive actions as an alternative to
+      memorizing keyboard shortcuts.
+
+      **Location:** Top section of the Sidebar panel (above current metrics).
+
+      **Interaction:**
+      - Tab to Sidebar to see actions
+      - Arrow Up/Down to highlight an action
+      - Enter to execute
+      - Actions are contextual — only relevant items shown
+
+      **Actions by context:**
+
+      *Always visible:*
+      - Toggle Help (F1)
+      - New Agent Session (/new)
+
+      *Session screen:*
+      - Refresh Git (F5)
+      - Export Session (/export)
+      - Focus Terminal (F6)
+      - Close Active Pane (Ctrl+W)
+
+      *Dashboard — DefineRoles:*
+      - Add Role (F2)
+      - Delete Role (F3)
+
+      *When approval pending:*
+      - Approve
+      - Deny
+
+      **Widget: `src/ui/panels/quick_actions.rs`**
+      - Renders a compact list with keybind hints aligned right
+      - Selected item highlighted with AMBER
+      - Max ~8 visible items, scrollable if more
+
+      **Integration:**
+      - Sidebar panel splits into QuickActions (top, fixed height) +
+        existing metrics/tools (bottom, flex)
+      - When Sidebar is focused, Up/Down navigate actions instead of
+        scrolling metrics
+      - Enter on action dispatches the corresponding InputAction
+    acceptance:
+      - Quick Actions panel renders in sidebar
+      - Actions are context-sensitive
+      - Arrow keys navigate, Enter executes
+      - Keybind hints shown next to each action
+      - Panel stays under 200 lines
+      - Tests for action list generation per context
+
   # ─── Phase 9 — Polish + Distribution ──────────────────────────────────────────
 
   - id: T-901
@@ -1089,3 +1332,39 @@ tasks:
     description: |
       README with hero GIF (vhs/asciinema), feature screenshots,
       install instructions, quickstart guide.
+
+  - id: T-906
+    title: "Redirect stderr to log file at TUI startup"
+    status: open
+    phase: phase-9-release
+    description: |
+      At startup, dup2 stderr to a log file (e.g. /tmp/potato.log or
+      ~/.potato/potato.log). This prevents any background thread panic,
+      eprintln, or library debug output from corrupting the ratatui
+      terminal surface. This is the primary defense — after this, no
+      thread can trash the TUI by writing to stderr. gitui uses the
+      same pattern. Ensure tracing/log output also routes to the file.
+
+  - id: T-907
+    title: "Background thread panic → force full TUI redraw"
+    status: open
+    phase: phase-9-release
+    description: |
+      Enhance the global panic hook to detect when the app is still
+      running (vs dying). On background thread panics, instead of
+      terminal restore + exit, send a signal to the main event loop
+      to force terminal.clear() + full redraw on the next tick.
+      This is defense in depth behind T-906 (stderr redirect) for
+      any edge case where output still reaches the terminal surface.
+
+  - id: T-905
+    title: "Switch OpenSpec watcher from kqueue to poll backend"
+    status: open
+    phase: phase-9-release
+    description: |
+      Replace notify::recommended_watcher (kqueue on macOS) with
+      notify::PollWatcher for the OpenSpec backlog file watcher.
+      kqueue panics when watched paths are rapidly created/deleted
+      during heavy agent file ops (known kqueue 1.1.1 bug). Polling
+      is perfectly adequate for a YAML that changes every few minutes.
+      Optionally add watcher-restart-on-panic as defense in depth.

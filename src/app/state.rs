@@ -384,6 +384,9 @@ pub struct SessionState {
 
     /// State for the agent picker overlay.
     pub agent_picker: AgentPickerState,
+
+    /// Index of the selected Quick Action in the sidebar panel.
+    pub selected_action: usize,
 }
 
 impl SessionState {
@@ -411,6 +414,7 @@ impl SessionState {
             overlay: None,
             command_selected: 0,
             agent_picker: AgentPickerState::default(),
+            selected_action: 0,
         }
     }
 
@@ -739,6 +743,6 @@ mod tests {
         assert_eq!(state.config.default_agent, "claude");
         assert_eq!(state.config.theme, "earth");
         assert_eq!(state.config.tick_rate_ms, 250);
-        assert_eq!(state.config.keybinds.quit, "ctrl+q");
+        assert_eq!(state.config.keybinds.quit, "ctrl+\\");
     }
 }

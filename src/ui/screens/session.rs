@@ -20,16 +20,16 @@
 //!
 //! `Tab` cycles: Sessions → Broadcast → Terminal → Sidebar → Sessions.
 //! `Shift+Tab` reverses.
-//! `Ctrl+J` jumps directly to Terminal.
-//! `Ctrl+Q` leaves terminal focus back to Broadcast.
+//! `F6` jumps directly to Terminal.
 //! `Esc` passes through to agent PTY when terminal is focused.
 //!
 //! - **Broadcast** focus: characters go into `session.input_buffer`; Enter
 //!   broadcasts the text (via bracketed paste + CR) to ALL open panes.
 //!   Tab into a specific terminal to talk to a single agent directly.
-//! - **Terminal** focus: *all* key events (except Ctrl+Q/Ctrl+\) are converted
-//!   to raw byte sequences and written to the PTY stdin unchanged. This lets
-//!   the user interact with Claude's native pickers / approvals / menus.
+//! - **Terminal** focus: only `Tab` (forward) and `Ctrl+\` are intercepted;
+//!   *all* other key events are converted to raw byte sequences and written
+//!   to the PTY stdin unchanged. This lets the user interact with Claude's
+//!   native pickers / approvals / menus.
 //! - **Sessions / Sidebar** focus: arrow keys navigate lists; Enter/Esc return
 //!   to Broadcast.
 
@@ -766,13 +766,22 @@ fn render_right_rail(frame: &mut Frame, area: Rect, state: &AppState, focus: Coc
         (ctx_keys.len() as u16).clamp(2, 5) + 2
     } else { 4 };
 
-    let [claude_area, team_area, tasks_area, ctx_area] = Layout::vertical([
+    // Quick Actions height: 2 (border) + number of actions.
+    let has_approval = state.session().and_then(|s| s.approval_pending.as_ref()).is_some();
+    let qa_count = crate::ui::panels::quick_actions::actions_for_context(true, has_approval).len();
+    let qa_height = (qa_count as u16) + 2; // actions + border
+
+    let [qa_area, claude_area, team_area, tasks_area, ctx_area] = Layout::vertical([
+        Constraint::Length(qa_height), // Quick Actions
         Constraint::Length(5),   // Claude compact
         Constraint::Length(((roles.len().max(1)) as u16) * 2 + 3), // Team
         Constraint::Length(task_height),  // Tasks
         Constraint::Min(ctx_height),     // Context (fills remaining)
     ])
     .areas(area);
+
+    // ── Quick Actions ────────────────────────────────────────────────────────
+    crate::ui::panels::quick_actions::render(frame, qa_area, state, focused);
 
     // ── Claude (compact) ──────────────────────────────────────────────────────
     let model_short = sidebar
@@ -1035,9 +1044,9 @@ fn render_status_bar(
     );
 
     let keys_text = if pane_count > 1 {
-        " Tab:cycle focus  Ctrl+J:term  Ctrl+W:close pane  Ctrl+\\:quit "
+        " Tab:cycle focus  F6:term  Ctrl+W:close pane  Ctrl+\\:quit "
     } else {
-        " Tab:cycle  Ctrl+J:term  Ctrl+Q:exit term  Ctrl+W:close  ?:help "
+        " Tab:cycle  F6:term  Ctrl+W:close  /help  Ctrl+\\:quit "
     };
     let keys_span = Span::styled(
         keys_text,

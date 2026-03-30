@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+use notify::{Event, EventKind, PollWatcher, RecursiveMode, Watcher};
 use tokio::sync::mpsc;
 
 use super::parser::OpenSpecBacklog;
@@ -27,7 +27,7 @@ pub struct OpenSpecWatcher {
     /// Channel receiver — yields `()` on every file change.
     pub rx: mpsc::UnboundedReceiver<()>,
     /// Hold the watcher alive.
-    _watcher: Option<RecommendedWatcher>,
+    _watcher: Option<PollWatcher>,
     /// Path to the backlog file.
     path: PathBuf,
 }
@@ -83,49 +83,59 @@ impl OpenSpecWatcher {
         path: PathBuf,
         backlog: Arc<std::sync::Mutex<Option<OpenSpecBacklog>>>,
         tx: mpsc::UnboundedSender<()>,
-    ) -> Option<RecommendedWatcher> {
+    ) -> Option<PollWatcher> {
         let watch_dir = path.parent()?.to_path_buf();
 
-        let mut watcher = notify::recommended_watcher(move |res: Result<Event, notify::Error>| {
-            let Ok(event) = res else { return };
+        // T-905: Use PollWatcher instead of kqueue (RecommendedWatcher).
+        // kqueue panics when watched paths are rapidly created/deleted
+        // during heavy agent file ops. Polling every 2 seconds is fine
+        // for a YAML that changes every few minutes.
+        let config = notify::Config::default()
+            .with_poll_interval(Duration::from_secs(2));
 
-            // Only react to modifications/creates of the backlog file.
-            let dominated = matches!(
-                event.kind,
-                EventKind::Modify(_) | EventKind::Create(_)
-            );
-            if !dominated {
-                return;
-            }
+        let mut watcher = PollWatcher::new(
+            move |res: Result<Event, notify::Error>| {
+                let Ok(event) = res else { return };
 
-            let affects_backlog = event.paths.iter().any(|p| {
-                p.file_name()
-                    .is_some_and(|n| n == "backlog.yaml")
-            });
-            if !affects_backlog {
-                return;
-            }
+                // Only react to modifications/creates of the backlog file.
+                let dominated = matches!(
+                    event.kind,
+                    EventKind::Modify(_) | EventKind::Create(_)
+                );
+                if !dominated {
+                    return;
+                }
 
-            // Debounce: small sleep then reload.
-            std::thread::sleep(Duration::from_millis(100));
+                let affects_backlog = event.paths.iter().any(|p| {
+                    p.file_name()
+                        .is_some_and(|n| n == "backlog.yaml")
+                });
+                if !affects_backlog {
+                    return;
+                }
 
-            match OpenSpecBacklog::from_file(&path) {
-                Ok(b) => {
-                    tracing::info!(
-                        "OpenSpec backlog reloaded: {} tasks ({} open)",
-                        b.tasks.len(),
-                        b.open_tasks().len()
-                    );
-                    if let Ok(mut guard) = backlog.lock() {
-                        *guard = Some(b);
+                // Debounce: small sleep then reload.
+                std::thread::sleep(Duration::from_millis(100));
+
+                match OpenSpecBacklog::from_file(&path) {
+                    Ok(b) => {
+                        tracing::info!(
+                            "OpenSpec backlog reloaded: {} tasks ({} open)",
+                            b.tasks.len(),
+                            b.open_tasks().len()
+                        );
+                        if let Ok(mut guard) = backlog.lock() {
+                            *guard = Some(b);
+                        }
+                        let _ = tx.send(());
                     }
-                    let _ = tx.send(());
+                    Err(e) => {
+                        tracing::warn!("Failed to reload OpenSpec backlog: {e}");
+                    }
                 }
-                Err(e) => {
-                    tracing::warn!("Failed to reload OpenSpec backlog: {e}");
-                }
-            }
-        })
+            },
+            config,
+        )
         .ok()?;
 
         if let Err(e) = watcher.watch(&watch_dir, RecursiveMode::NonRecursive) {
@@ -133,7 +143,7 @@ impl OpenSpecWatcher {
             return None;
         }
 
-        tracing::info!("Watching .openspec/ for backlog changes");
+        tracing::info!("Watching .openspec/ for backlog changes (poll, 2s interval)");
         Some(watcher)
     }
 
