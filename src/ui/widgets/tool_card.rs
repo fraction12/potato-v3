@@ -62,7 +62,7 @@ fn args_line_count(args: &str, _width: usize) -> usize {
 }
 
 fn output_line_count(output: &str, _width: usize) -> usize {
-    output.lines().count().min(8).max(1)
+    output.lines().count().clamp(1, 8)
 }
 
 // ── ToolCard widget ───────────────────────────────────────────────────────────

@@ -7,6 +7,7 @@ use serde_json::Value;
 
 // ── JSON-RPC 2.0 error codes ──────────────────────────────────────────────────
 
+pub const PARSE_ERROR: i64 = -32700;
 pub const METHOD_NOT_FOUND: i64 = -32601;
 pub const INVALID_PARAMS: i64 = -32602;
 pub const INTERNAL_ERROR: i64 = -32603;

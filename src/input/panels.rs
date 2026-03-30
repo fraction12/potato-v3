@@ -144,7 +144,7 @@ fn execute_quick_action(
         }
         QuickActionKind::NewSession | QuickActionKind::ExportSession => KeyAction::SpawnAgent,
         QuickActionKind::RefreshGit => {
-            state.git_snapshot = crate::git::GitSnapshot::capture();
+            state.git_snapshot = crate::git::GitSnapshot::refresh();
             state.git_refresh_ticks = 0;
             if let AppScreen::Session(ref mut session) = state.screen {
                 session.git_scroll = 0;

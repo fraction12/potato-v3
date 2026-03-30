@@ -128,6 +128,12 @@ impl ClaudeSessionLogTracker {
         }
 
         let mut file = File::open(&self.path)?;
+        // Detect log rotation/truncation: if file shrank, reset to beginning.
+        let file_len = file.metadata().map(|m| m.len()).unwrap_or(0);
+        if file_len < self.offset {
+            self.offset = 0;
+            self.carry.clear();
+        }
         file.seek(SeekFrom::Start(self.offset))?;
 
         let mut buf = Vec::new();
@@ -423,15 +429,7 @@ fn extract_user_text(content: &Value) -> String {
     }
 }
 
-/// Truncate a string to at most `max` characters.
-fn truncate_str(s: &str, max: usize) -> String {
-    if s.chars().count() <= max {
-        s.to_string()
-    } else {
-        let truncated: String = s.chars().take(max.saturating_sub(1)).collect();
-        format!("{}…", truncated)
-    }
-}
+use crate::util::truncate_str;
 
 fn compact_json(value: Option<&Value>) -> String {
     let Some(value) = value else {
@@ -446,13 +444,9 @@ fn compact_json(value: Option<&Value>) -> String {
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ");
-    if compact.len() > 120 {
-        // Find a char boundary at or before byte 119.
-        let mut end = 119;
-        while end > 0 && !compact.is_char_boundary(end) {
-            end -= 1;
-        }
-        format!("{}…", &compact[..end])
+    if compact.chars().count() > 120 {
+        let truncated: String = compact.chars().take(119).collect();
+        format!("{truncated}…")
     } else {
         compact
     }

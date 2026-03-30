@@ -62,6 +62,14 @@ pub fn load_config(path: Option<&str>) -> Result<Config> {
     Ok(Config::default())
 }
 
+/// Validate keybind config and log any warnings.
+pub fn validate_keybinds(config: &Config) {
+    let warnings = config.keybinds.validate();
+    for w in &warnings {
+        tracing::warn!("Config: {w}");
+    }
+}
+
 /// Resolve the `~/.potato` directory path.
 fn potato_dir() -> Result<PathBuf> {
     let home = dirs::home_dir().context("could not determine home directory")?;

@@ -40,6 +40,8 @@ pub struct FilePreviewPanel {
     pub language: Option<String>,
     /// Whether this panel is visible.
     visible: bool,
+    /// Last rendered visible height (cached from render for key handling).
+    last_visible_height: std::cell::Cell<usize>,
 }
 
 impl FilePreviewPanel {
@@ -162,6 +164,8 @@ impl Panel for FilePreviewPanel {
             .style(Style::default().bg(BG));
 
         let inner = block.inner(area);
+        self.last_visible_height
+            .set(inner.height.saturating_sub(1) as usize);
         frame.render_widget(block, area);
 
         if inner.height == 0 || inner.width == 0 {
@@ -218,8 +222,7 @@ impl Panel for FilePreviewPanel {
     }
 
     fn handle_key(&mut self, key: KeyEvent, _state: &mut AppState) -> PanelAction {
-        // Use a reasonable default for visible height when not known.
-        let visible_height: usize = 30;
+        let visible_height = self.last_visible_height.get().max(1);
 
         match key.code {
             KeyCode::Char('j') | KeyCode::Down => {

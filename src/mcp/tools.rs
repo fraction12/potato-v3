@@ -253,23 +253,27 @@ fn handle_send_message(
         }
     };
 
-    // Resolve target pane.
-    let to_pane: u64 = match args.get("to").and_then(Value::as_str) {
-        Some("partner") | None => {
-            let st = lock_state!(state);
-            match st.resolve_partner(pane_id) {
-                Some(partner) => partner,
-                None => return CallToolResult::failure("No partner pane found."),
-            }
-        }
+    // Resolve target and send in a single lock acquisition to avoid TOCTOU.
+    let to_explicit: Option<u64> = match args.get("to").and_then(Value::as_str) {
+        Some("partner") | None => None,
         Some(id_str) => match id_str.parse::<u64>() {
-            Ok(id) => id,
+            Ok(id) => Some(id),
             Err(_) => return CallToolResult::failure(format!("Invalid target pane id: {id_str}")),
         },
     };
 
     let mut st = lock_state!(state);
-    st.send_message(pane_id, to_pane, &message, priority);
+    let to_pane = match to_explicit {
+        Some(id) => id,
+        None => match st.resolve_partner(pane_id) {
+            Some(partner) => partner,
+            None => return CallToolResult::failure("No partner pane found."),
+        },
+    };
+
+    if !st.send_message(pane_id, to_pane, &message, priority) {
+        return CallToolResult::failure(format!("Target pane {to_pane} is not registered."));
+    }
 
     CallToolResult::success(format!(
         "Message delivered to pane {to_pane}. Priority: {}.",
@@ -683,6 +687,7 @@ mod tests {
     #[test]
     fn send_message_to_specific_pane() {
         let state = make_state();
+        state.lock().unwrap().register_pane(2);
         let args = json!({"message": "direct", "to": "2"});
         let result = handle_tool_call(TOOL_SEND_MESSAGE, &args, 0, &state);
         assert!(!result.is_error);
@@ -781,7 +786,9 @@ mod tests {
 
     #[test]
     fn get_partner_status_no_partners() {
-        let state = make_state();
+        // Only register one pane so there are genuinely no partners.
+        let state = Arc::new(Mutex::new(InterSessionState::new()));
+        state.lock().unwrap().register_pane(0);
         let result = handle_tool_call(TOOL_GET_PARTNER_STATUS, &json!({}), 0, &state);
         assert!(!result.is_error);
         assert!(result.content[0].text.contains("No partner panes"));

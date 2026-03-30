@@ -48,7 +48,7 @@ pub fn handle(state: &mut AppState, key: &KeyEvent) -> KeyAction {
 
     // ── F5 — refresh git, OpenSpec tasks, agent status ───────────────
     if key.code == KeyCode::F(5) && current_focus != CockpitFocus::Terminal {
-        state.git_snapshot = crate::git::GitSnapshot::capture();
+        state.git_snapshot = crate::git::GitSnapshot::refresh();
         state.git_refresh_ticks = 0;
         if let AppScreen::Session(ref mut session) = state.screen {
             session.git_scroll = 0;
@@ -165,9 +165,9 @@ fn handle_overlay(state: &mut AppState, key: &KeyEvent) -> Option<KeyAction> {
                     }
                 }
                 KeyCode::Down => {
-                    const MAX_AGENTS: usize = 2;
+                    const MAX_AGENT_INDEX: usize = 2; // 0=Claude, 1=Codex, 2=OpenCode
                     if let AppScreen::Session(ref mut session) = state.screen {
-                        if session.agent_picker.selected < MAX_AGENTS {
+                        if session.agent_picker.selected < MAX_AGENT_INDEX {
                             session.agent_picker.selected += 1;
                         }
                     }

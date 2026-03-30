@@ -385,8 +385,10 @@ mod tests {
     #[test]
     fn test_sync_from_state_updates_model() {
         let mut panel = AgentStatusPanel::new();
-        let mut state = AppState::default();
-        state.model = "gpt-4o".into();
+        let state = AppState {
+            model: "gpt-4o".into(),
+            ..Default::default()
+        };
         panel.sync_from_state(&state);
         assert_eq!(panel.model, "gpt-4o");
     }

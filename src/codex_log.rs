@@ -77,8 +77,8 @@ struct ToolSlot {
 
 /// Incremental JSONL tracker for a Codex session log.
 ///
-/// Call [`poll`] periodically to read new lines and update internal state.
-/// Call [`snapshot`] to obtain the latest [`CodexSidebarData`] for display.
+/// Call `poll` periodically to read new lines and update internal state.
+/// Call `snapshot` to obtain the latest [`CodexSidebarData`] for display.
 #[derive(Debug, Default)]
 pub struct CodexSessionLogTracker {
     path: PathBuf,
@@ -119,6 +119,12 @@ impl CodexSessionLogTracker {
         }
 
         let mut file = File::open(&self.path)?;
+        // Detect log rotation/truncation: if file shrank, reset to beginning.
+        let file_len = file.metadata().map(|m| m.len()).unwrap_or(0);
+        if file_len < self.offset {
+            self.offset = 0;
+            self.carry.clear();
+        }
         file.seek(SeekFrom::Start(self.offset))?;
 
         let mut buf = Vec::new();
@@ -207,30 +213,30 @@ impl CodexSessionLogTracker {
                 let role = payload["role"].as_str().unwrap_or("");
                 let p_type = payload["type"].as_str().unwrap_or("");
 
-                if p_type == "message" {
-                    if role == "user" || role == "developer" || role == "assistant" {
-                        // Extract first user message as title.
-                        if self.title.is_empty() && (role == "user" || role == "developer") {
-                            if let Some(content) = payload["content"].as_array() {
-                                for item in content {
-                                    if item["type"].as_str() == Some("input_text")
-                                        || item["type"].as_str() == Some("text")
-                                    {
-                                        if let Some(text) = item["text"].as_str() {
-                                            if !text.is_empty() {
-                                                self.title = truncate_str(text, 80);
-                                                changed = true;
-                                            }
+                if p_type == "message"
+                    && (role == "user" || role == "developer" || role == "assistant")
+                {
+                    // Extract first user message as title.
+                    if self.title.is_empty() && (role == "user" || role == "developer") {
+                        if let Some(content) = payload["content"].as_array() {
+                            for item in content {
+                                if item["type"].as_str() == Some("input_text")
+                                    || item["type"].as_str() == Some("text")
+                                {
+                                    if let Some(text) = item["text"].as_str() {
+                                        if !text.is_empty() {
+                                            self.title = truncate_str(text, 80);
+                                            changed = true;
                                         }
                                     }
                                 }
                             }
                         }
+                    }
 
-                        if role == "assistant" {
-                            self.turns = self.turns.saturating_add(1);
-                            changed = true;
-                        }
+                    if role == "assistant" {
+                        self.turns = self.turns.saturating_add(1);
+                        changed = true;
                     }
                 }
             }
@@ -383,14 +389,7 @@ pub fn find_session_log(home: &Path, session_id: &str) -> Option<PathBuf> {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-fn truncate_str(s: &str, max: usize) -> String {
-    if s.chars().count() <= max {
-        s.to_string()
-    } else {
-        let truncated: String = s.chars().take(max.saturating_sub(1)).collect();
-        format!("{}…", truncated)
-    }
-}
+use crate::util::truncate_str;
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 

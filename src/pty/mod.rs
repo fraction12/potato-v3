@@ -182,21 +182,34 @@ impl PtyProcess {
         // ── Task 1b: stderr reader (emit as warnings) ─────────────────────────
         {
             let event_tx_e = event_tx.clone();
+            let mut kill_rx_e = kill_rx.clone();
             let mut stderr_reader = BufReader::new(stderr).lines();
 
             tokio::spawn(async move {
                 loop {
-                    match stderr_reader.next_line().await {
-                        Ok(Some(line)) => {
-                            debug!(stderr = %line, "agent stderr");
-                            if !line.trim().is_empty() {
-                                let _ = event_tx_e.send(AgentEvent::Warning { message: line });
+                    tokio::select! {
+                        _ = kill_rx_e.changed() => {
+                            if *kill_rx_e.borrow() {
+                                debug!("stderr reader: kill signal received, exiting");
+                                break;
                             }
                         }
-                        Ok(None) => break,
-                        Err(e) => {
-                            warn!(error = %e, "error reading agent stderr");
-                            break;
+                        result = stderr_reader.next_line() => {
+                            match result {
+                                Ok(Some(line)) => {
+                                    debug!(stderr = %line, "agent stderr");
+                                    if !line.trim().is_empty() {
+                                        let _ = event_tx_e.send(AgentEvent::Warning {
+                                            message: line,
+                                        });
+                                    }
+                                }
+                                Ok(None) => break,
+                                Err(e) => {
+                                    warn!(error = %e, "error reading agent stderr");
+                                    break;
+                                }
+                            }
                         }
                     }
                 }
@@ -349,9 +362,13 @@ impl PtyProcess {
         // ── Task 0: stdin writer — write prompt then close stdin ──────────────
         {
             let prompt_bytes = format!("{prompt}\n");
+            let event_tx_stdin = event_tx.clone();
             tokio::spawn(async move {
                 if let Err(e) = stdin.write_all(prompt_bytes.as_bytes()).await {
                     error!(error = %e, "spawn_turn: failed to write prompt to stdin");
+                    let _ = event_tx_stdin.send(AgentEvent::Error {
+                        message: format!("stdin write failed: {e}"),
+                    });
                 }
                 // Drop stdin here → child sees EOF immediately.
                 // (stdin is dropped when this block ends)
@@ -1103,12 +1120,7 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         // Drain events already buffered (AgentStarted, AgentExited).
-        loop {
-            match rx.try_recv() {
-                Ok(_) => {}
-                Err(_) => break,
-            }
-        }
+        while rx.try_recv().is_ok() {}
 
         // Now attempt a write to the dead process — this should result in
         // an Error event from the writer task.

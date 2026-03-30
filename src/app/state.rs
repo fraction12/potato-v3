@@ -314,21 +314,24 @@ pub struct ToolCallRecord {
 }
 
 /// Current execution status of the active agent.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum AgentStatus {
     Starting,
+    #[default]
     Idle,
     Thinking,
-    RunningTool { name: String },
-    WaitingApproval { tool_name: String },
-    Exited { code: Option<i32> },
-    Error { message: String },
-}
-
-impl Default for AgentStatus {
-    fn default() -> Self {
-        Self::Idle
-    }
+    RunningTool {
+        name: String,
+    },
+    WaitingApproval {
+        tool_name: String,
+    },
+    Exited {
+        code: Option<i32>,
+    },
+    Error {
+        message: String,
+    },
 }
 
 impl AgentStatus {
@@ -371,7 +374,7 @@ pub struct SessionState {
     pub user_scrolled: bool,
     pub input_cursor: usize,
     pub tick_count: u64,
-    /// The Claude-native session id received from the last [`AgentEvent::SessionBound`] event.
+    /// The Claude-native session id received from the last `AgentEvent::SessionBound` event.
     ///
     /// Pass this as `--resume <id>` when spawning the next turn so Claude can
     /// continue the conversation thread. `None` until the first turn completes.
@@ -471,7 +474,7 @@ impl SessionState {
 /// The top-level screen the application is currently showing.
 pub enum AppScreen {
     Dashboard(DashboardState),
-    Session(SessionState),
+    Session(Box<SessionState>),
 }
 
 impl Default for AppScreen {
@@ -620,7 +623,7 @@ impl AppState {
 
     /// Transition to a session screen.
     pub fn enter_session(&mut self, session_id: impl Into<String>, agent_name: impl Into<String>) {
-        self.screen = AppScreen::Session(SessionState::new(session_id, agent_name));
+        self.screen = AppScreen::Session(Box::new(SessionState::new(session_id, agent_name)));
     }
 
     /// Return a mutable reference to the session state if active.
@@ -769,8 +772,7 @@ mod tests {
 
     #[test]
     fn agent_picker_state_selected_can_be_changed() {
-        let mut state = AgentPickerState::default();
-        state.selected = 2;
+        let state = AgentPickerState { selected: 2 };
         assert_eq!(state.selected, 2);
     }
 

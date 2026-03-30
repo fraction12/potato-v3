@@ -27,24 +27,21 @@ use crate::ui::theme::{BRASS, CHARCOAL, CREAM, SPROUT};
 #[must_use]
 pub fn render_markdown_line(line: &str) -> Vec<Span<'static>> {
     // ── Heading shortcuts (must be the first thing on the line) ──────────────
-    if line.starts_with("### ") {
-        let text = line[4..].to_string();
+    if let Some(text) = line.strip_prefix("### ") {
         return vec![Span::styled(
-            text,
+            text.to_string(),
             Style::default().fg(BRASS).add_modifier(Modifier::BOLD),
         )];
     }
-    if line.starts_with("## ") {
-        let text = line[3..].to_string();
+    if let Some(text) = line.strip_prefix("## ") {
         return vec![Span::styled(
-            text,
+            text.to_string(),
             Style::default().fg(BRASS).add_modifier(Modifier::BOLD),
         )];
     }
-    if line.starts_with("# ") {
-        let text = line[2..].to_string();
+    if let Some(text) = line.strip_prefix("# ") {
         return vec![Span::styled(
-            text,
+            text.to_string(),
             Style::default().fg(SPROUT).add_modifier(Modifier::BOLD),
         )];
     }
@@ -64,11 +61,7 @@ pub fn is_code_fence(line: &str) -> bool {
 /// E.g. `"```rust"` → `"rust"`, `"```"` → `""`.
 #[must_use]
 pub fn extract_lang(line: &str) -> &str {
-    if line.starts_with("```") {
-        line[3..].trim()
-    } else {
-        ""
-    }
+    line.strip_prefix("```").map_or("", str::trim)
 }
 
 // ── Inline parser ─────────────────────────────────────────────────────────────
