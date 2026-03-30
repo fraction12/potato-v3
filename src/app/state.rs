@@ -62,6 +62,7 @@ pub struct ToolCallInfo {
 }
 
 impl ToolCallInfo {
+    /// Create a new tool call record with status [`ToolCallStatus::Running`].
     pub fn new(tool_name: impl Into<String>, args: impl Into<String>) -> Self {
         Self {
             tool_name: tool_name.into(),
@@ -126,6 +127,7 @@ impl DashboardMenuItem {
         Self::Settings,
     ];
 
+    /// Human-readable label for display in the menu rail.
     pub fn label(self) -> &'static str {
         match self {
             Self::RoastPotato => "Roast Potato",
@@ -270,12 +272,15 @@ pub struct TranscriptEntry {
 }
 
 impl TranscriptEntry {
+    /// Create an assistant transcript entry timestamped to now.
     pub fn assistant(content: impl Into<String>) -> Self {
         Self { role: MessageRole::Assistant, content: content.into(), timestamp: Utc::now(), tool_call: None }
     }
+    /// Create a user transcript entry timestamped to now.
     pub fn user(content: impl Into<String>) -> Self {
         Self { role: MessageRole::User, content: content.into(), timestamp: Utc::now(), tool_call: None }
     }
+    /// Create a system transcript entry timestamped to now.
     pub fn system(content: impl Into<String>) -> Self {
         Self { role: MessageRole::System, content: content.into(), timestamp: Utc::now(), tool_call: None }
     }
@@ -386,6 +391,10 @@ pub struct SessionState {
 }
 
 impl SessionState {
+    /// Create a fresh session state with sensible defaults.
+    ///
+    /// The agent starts in [`AgentStatus::Starting`] and focus defaults to
+    /// the input bar so the user can type immediately.
     pub fn new(session_id: impl Into<String>, agent_name: impl Into<String>) -> Self {
         Self {
             session_id: session_id.into(),
@@ -413,18 +422,22 @@ impl SessionState {
         }
     }
 
+    /// Scroll the terminal viewport up by `lines` rows.
     pub fn scroll_terminal_up(&mut self, lines: usize) {
         self.terminal_scroll = self.terminal_scroll.saturating_add(lines);
     }
 
+    /// Scroll the terminal viewport down by `lines` rows (saturates at 0).
     pub fn scroll_terminal_down(&mut self, lines: usize) {
         self.terminal_scroll = self.terminal_scroll.saturating_sub(lines);
     }
 
+    /// Reset the terminal viewport to live-follow mode (scroll offset 0).
     pub fn reset_terminal_scroll(&mut self) {
         self.terminal_scroll = 0;
     }
 
+    /// Returns `true` when the terminal is live-following (not scrolled up).
     pub fn terminal_is_live(&self) -> bool {
         self.terminal_scroll == 0
     }
@@ -590,6 +603,7 @@ impl AppState {
 
     // ── Error helpers ─────────────────────────────────────────────────────────
 
+    /// Show an error message for `ticks` main-loop ticks, then auto-dismiss.
     pub fn set_error(&mut self, msg: impl Into<String>, ticks: u32) {
         self.error_message = Some(msg.into());
         self.error_dismiss_ticks = ticks;
