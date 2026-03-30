@@ -41,3 +41,79 @@ impl Default for KeybindConfig {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn defaults_are_sensible() {
+        let kb = KeybindConfig::default();
+        assert_eq!(kb.quit, "ctrl+\\");
+        assert_eq!(kb.submit, "enter");
+        assert_eq!(kb.model_picker, "ctrl+m");
+        assert_eq!(kb.help, "f1");
+        assert_eq!(kb.approve, "y");
+        assert_eq!(kb.deny, "n");
+        assert_eq!(kb.new_session, "ctrl+n");
+        assert_eq!(kb.refresh, "f5");
+        assert_eq!(kb.focus_terminal, "f6");
+    }
+
+    #[test]
+    fn serde_roundtrip_preserves_all_fields() {
+        let kb = KeybindConfig::default();
+        let toml_str = toml::to_string(&kb).expect("serialize");
+        let decoded: KeybindConfig = toml::from_str(&toml_str).expect("deserialize");
+        assert_eq!(decoded.quit, kb.quit);
+        assert_eq!(decoded.submit, kb.submit);
+        assert_eq!(decoded.model_picker, kb.model_picker);
+        assert_eq!(decoded.help, kb.help);
+        assert_eq!(decoded.approve, kb.approve);
+        assert_eq!(decoded.deny, kb.deny);
+        assert_eq!(decoded.new_session, kb.new_session);
+        assert_eq!(decoded.refresh, kb.refresh);
+        assert_eq!(decoded.focus_terminal, kb.focus_terminal);
+    }
+
+    #[test]
+    fn partial_toml_fills_defaults() {
+        let toml_str = r#"quit = "ctrl+q""#;
+        let kb: KeybindConfig = toml::from_str(toml_str).expect("deserialize partial");
+        assert_eq!(kb.quit, "ctrl+q", "explicit override should take effect");
+        assert_eq!(kb.submit, "enter", "missing field should use default");
+        assert_eq!(kb.help, "f1", "missing field should use default");
+    }
+
+    #[test]
+    fn empty_toml_gives_all_defaults() {
+        let kb: KeybindConfig = toml::from_str("").expect("deserialize empty");
+        let defaults = KeybindConfig::default();
+        assert_eq!(kb.quit, defaults.quit);
+        assert_eq!(kb.submit, defaults.submit);
+        assert_eq!(kb.approve, defaults.approve);
+    }
+
+    #[test]
+    fn custom_overrides_serialize_correctly() {
+        let kb = KeybindConfig {
+            quit: "ctrl+q".to_string(),
+            approve: "ctrl+y".to_string(),
+            ..Default::default()
+        };
+        let toml_str = toml::to_string(&kb).expect("serialize");
+        assert!(toml_str.contains(r#"quit = "ctrl+q""#));
+        assert!(toml_str.contains(r#"approve = "ctrl+y""#));
+        // Non-overridden fields still present
+        assert!(toml_str.contains(r#"submit = "enter""#));
+    }
+
+    #[test]
+    fn json_roundtrip() {
+        let kb = KeybindConfig::default();
+        let json = serde_json::to_string(&kb).expect("json serialize");
+        let decoded: KeybindConfig = serde_json::from_str(&json).expect("json deserialize");
+        assert_eq!(decoded.quit, kb.quit);
+        assert_eq!(decoded.focus_terminal, kb.focus_terminal);
+    }
+}
