@@ -47,7 +47,7 @@ static GLOBAL_ENTRIES: &[KeyEntry] = &[
     KeyEntry::new("F1", "Toggle help"),
     KeyEntry::new("F2", "Agent picker"),
     KeyEntry::new("F3", "Session picker"),
-    KeyEntry::new("F5", "Refresh git / tasks"),
+    KeyEntry::new("F5", "Refresh git / OpenSpec"),
     KeyEntry::new("F6", "Focus terminal"),
 ];
 

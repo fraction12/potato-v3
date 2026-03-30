@@ -567,8 +567,10 @@ pub struct AppState {
     pub inject_rx:
         Option<tokio::sync::mpsc::UnboundedReceiver<crate::mcp::injection::InjectRequest>>,
 
-    /// OpenSpec watcher — tracks `openspec/changes/*/tasks.md` for live task data.
-    pub openspec: Option<crate::openspec::OpenSpecWatcher>,
+    /// OpenSpec CLI snapshot — periodic summary of changes and artifacts.
+    pub openspec_snapshot: crate::openspec::snapshot::OpenSpecSnapshot,
+    /// Tick counter for periodic OpenSpec refresh (~30s / 120 ticks).
+    pub openspec_refresh_ticks: u16,
 
     /// Merged agent profiles (defaults < global < project `.potato/agents.toml`).
     /// Stored at top level so profiles survive dashboard → session transitions.
@@ -601,7 +603,8 @@ impl Default for AppState {
             mcp_socket_path: None,
             inter_session_state: None,
             inject_rx: None,
-            openspec: None,
+            openspec_snapshot: crate::openspec::snapshot::OpenSpecSnapshot::default(),
+            openspec_refresh_ticks: 0,
             agent_profiles: Vec::new(),
         }
     }
