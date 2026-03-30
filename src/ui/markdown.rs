@@ -24,6 +24,7 @@ use crate::ui::theme::{BRASS, CHARCOAL, CREAM, SPROUT};
 /// - `*italic*` → Italic
 /// - `` `code` `` → Charcoal bg + Cream fg (inline code)
 /// - Plain text → Cream
+#[must_use]
 pub fn render_markdown_line(line: &str) -> Vec<Span<'static>> {
     // ── Heading shortcuts (must be the first thing on the line) ──────────────
     if line.starts_with("### ") {
@@ -53,6 +54,7 @@ pub fn render_markdown_line(line: &str) -> Vec<Span<'static>> {
 }
 
 /// Returns `true` if `line` starts with three back-ticks (a code fence).
+#[must_use]
 pub fn is_code_fence(line: &str) -> bool {
     line.starts_with("```")
 }
@@ -60,6 +62,7 @@ pub fn is_code_fence(line: &str) -> bool {
 /// Extracts the language identifier from an opening code fence.
 ///
 /// E.g. `"```rust"` → `"rust"`, `"```"` → `""`.
+#[must_use]
 pub fn extract_lang(line: &str) -> &str {
     if line.starts_with("```") {
         line[3..].trim()

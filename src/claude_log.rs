@@ -57,6 +57,7 @@ pub struct ClaudeUsageTotals {
 
 impl ClaudeUsageTotals {
     /// Returns the sum of input and output tokens.
+    #[must_use]
     pub fn total_tokens(&self) -> u64 {
         self.input_tokens + self.output_tokens
     }
@@ -111,6 +112,7 @@ impl ClaudeSessionLogTracker {
     }
 
     /// Returns the path of the log file being tracked.
+    #[must_use]
     pub fn path(&self) -> &Path {
         &self.path
     }
@@ -158,6 +160,7 @@ impl ClaudeSessionLogTracker {
     }
 
     /// Return a point-in-time snapshot of the parsed session data.
+    #[must_use]
     pub fn snapshot(&self) -> ClaudeSidebarData {
         let mut ordered: BTreeMap<u64, ClaudeToolEntry> = BTreeMap::new();
         for slot in self.tools.values() {
