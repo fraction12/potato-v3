@@ -81,6 +81,7 @@ pub struct HelpOverlay {
 }
 
 impl HelpOverlay {
+    /// Create a new help overlay scrolled to the top.
     pub fn new() -> Self {
         Self::default()
     }
@@ -116,6 +117,7 @@ impl HelpOverlay {
     }
 
     /// Total scrollable content height.
+    #[must_use]
     pub fn content_height(&self) -> usize {
         self.build_lines().len()
     }

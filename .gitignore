@@ -16,6 +16,9 @@
 .env
 .env.local
 
+# Local install script (personal use)
+install.sh
+
 # Logs
 *.log
 

@@ -55,6 +55,7 @@ impl AgentRow {
     ///
     /// Characters: `S`=structured, `R`=resumable, `A`=approval, `T`=tools.
     /// Missing capabilities are shown as `.`.
+    #[must_use]
     pub fn caps_str(&self) -> String {
         let mut s = String::with_capacity(4);
         s.push(if self.caps.structured_output { 'S' } else { '.' });

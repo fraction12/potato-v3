@@ -76,16 +76,19 @@ impl<'a> MessageHistory<'a> {
     }
 
     /// Approximate running total of tokens across all messages.
+    #[must_use]
     pub fn total_tokens(&self) -> u32 {
         self.total_tokens
     }
 
     /// Number of messages in the in-memory buffer.
+    #[must_use]
     pub fn len(&self) -> usize {
         self.messages.len()
     }
 
     /// Whether there are no messages.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.messages.is_empty()
     }

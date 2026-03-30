@@ -178,3 +178,156 @@ impl<'a> Widget for ToolCard<'a> {
             .render(inner, buf);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::state::{ToolCallInfo, ToolCallStatus};
+
+    fn make_tc(status: ToolCallStatus, args: &str, output: Option<&str>, expanded: bool) -> ToolCallInfo {
+        ToolCallInfo {
+            tool_name: "read_file".into(),
+            args: args.into(),
+            output: output.map(|s| s.into()),
+            status,
+            started_at: chrono::Utc::now(),
+            expanded,
+        }
+    }
+
+    // ── status_icon ──
+
+    #[test]
+    fn status_icon_running() {
+        assert_eq!(status_icon(&ToolCallStatus::Running), "●");
+    }
+
+    #[test]
+    fn status_icon_done() {
+        assert_eq!(status_icon(&ToolCallStatus::Done), "✓");
+    }
+
+    #[test]
+    fn status_icon_failed() {
+        assert_eq!(status_icon(&ToolCallStatus::Failed), "✗");
+    }
+
+    // ── args_line_count ──
+
+    #[test]
+    fn args_line_count_empty() {
+        assert_eq!(args_line_count("", 80), 1);
+    }
+
+    #[test]
+    fn args_line_count_single_line() {
+        assert_eq!(args_line_count("path: /foo/bar", 80), 1);
+    }
+
+    #[test]
+    fn args_line_count_multiline() {
+        assert_eq!(args_line_count("a\nb\nc", 80), 3);
+    }
+
+    // ── output_line_count ──
+
+    #[test]
+    fn output_line_count_empty() {
+        // empty string has 0 lines().count(), clamped to max(1)
+        assert_eq!(output_line_count("", 80), 1);
+    }
+
+    #[test]
+    fn output_line_count_short() {
+        assert_eq!(output_line_count("line1\nline2\nline3", 80), 3);
+    }
+
+    #[test]
+    fn output_line_count_capped_at_8() {
+        let long = (1..=20).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
+        assert_eq!(output_line_count(&long, 80), 8);
+    }
+
+    // ── card_height ──
+
+    #[test]
+    fn card_height_collapsed() {
+        let tc = make_tc(ToolCallStatus::Running, "", None, false);
+        assert_eq!(card_height(&tc, 80), 1);
+    }
+
+    #[test]
+    fn card_height_expanded_no_output() {
+        // 3 (top border + header + separator) + 1 (empty args = 1 line) + 1 (bottom border) = 5
+        let tc = make_tc(ToolCallStatus::Done, "", None, true);
+        assert_eq!(card_height(&tc, 80), 5);
+    }
+
+    #[test]
+    fn card_height_expanded_with_args_and_output() {
+        let tc = make_tc(ToolCallStatus::Done, "a\nb\nc", Some("out1\nout2"), true);
+        // 3 + 3 (args) + 1 (output label) + 2 (output lines) + 1 (bottom border) = 10
+        assert_eq!(card_height(&tc, 80), 10);
+    }
+
+    #[test]
+    fn card_height_expanded_output_capped() {
+        let long_out = (1..=20).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
+        let tc = make_tc(ToolCallStatus::Done, "arg", Some(&long_out), true);
+        // 3 + 1 (args) + 1 (output label) + 8 (capped) + 1 (bottom) = 14
+        assert_eq!(card_height(&tc, 80), 14);
+    }
+
+    // ── ToolCard ──
+
+    #[test]
+    fn tool_card_status_style_maps_correctly() {
+        let theme = Theme::default();
+        for (status, expected_style) in [
+            (ToolCallStatus::Running, theme.tool_running()),
+            (ToolCallStatus::Done, theme.tool_done()),
+            (ToolCallStatus::Failed, theme.tool_failed()),
+        ] {
+            let tc = make_tc(status, "", None, false);
+            let card = ToolCard::new(&tc, &theme);
+            assert_eq!(card.status_style(), expected_style);
+        }
+    }
+
+    #[test]
+    fn collapsed_line_contains_tool_name() {
+        let theme = Theme::default();
+        let tc = make_tc(ToolCallStatus::Done, "", None, false);
+        let card = ToolCard::new(&tc, &theme);
+        let line = card.collapsed_line();
+        let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(text.contains("read_file"));
+        assert!(text.contains("✓"));
+    }
+
+    #[test]
+    fn collapsed_line_shows_expand_hint() {
+        let theme = Theme::default();
+        let mut tc = make_tc(ToolCallStatus::Running, "", None, false);
+        let card = ToolCard::new(&tc, &theme);
+        let line = card.collapsed_line();
+        let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(text.contains("▸"), "collapsed should show ▸");
+
+        tc.expanded = true;
+        let card = ToolCard::new(&tc, &theme);
+        let line = card.collapsed_line();
+        let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(text.contains("▾"), "expanded should show ▾");
+    }
+
+    #[test]
+    fn duration_str_format() {
+        let theme = Theme::default();
+        let tc = make_tc(ToolCallStatus::Running, "", None, false);
+        let card = ToolCard::new(&tc, &theme);
+        let dur = card.duration_str();
+        // Just created, should be <1000ms
+        assert!(dur.ends_with("ms"), "expected ms suffix, got: {dur}");
+    }
+}

@@ -141,6 +141,7 @@ impl OpenSpecWatcher {
     }
 
     /// Get the `openspec/changes/` directory path.
+    #[must_use]
     pub fn path(&self) -> &Path {
         &self.path
     }

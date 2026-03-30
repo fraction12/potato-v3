@@ -94,6 +94,7 @@ impl OpenSpecBacklog {
     }
 
     /// Get only actionable (non-done) tasks.
+    #[must_use]
     pub fn open_tasks(&self) -> Vec<&OpenSpecTask> {
         self.tasks
             .iter()
@@ -102,6 +103,7 @@ impl OpenSpecBacklog {
     }
 
     /// Find a task by ID.
+    #[must_use]
     pub fn find(&self, id: &str) -> Option<&OpenSpecTask> {
         self.tasks.iter().find(|t| t.id == id)
     }

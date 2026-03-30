@@ -1,3 +1,14 @@
+//! Claude Code session JSONL log tracker.
+//!
+//! Claude Code stores session history under `~/.claude/projects/<project-dir>/`.
+//! Each session file is named `<session-id>.jsonl` and contains one JSON object
+//! per line — assistant turns with usage/tool_use blocks and user turns with
+//! tool_result blocks.
+//!
+//! [`ClaudeSessionLogTracker`] incrementally tails a session log file, parsing
+//! new lines on each [`poll()`](ClaudeSessionLogTracker::poll) call and
+//! maintaining a running [`ClaudeSidebarData`] snapshot used by the UI sidebar.
+
 use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
@@ -6,22 +17,34 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use serde_json::Value;
 
+/// Execution status of a single tool invocation tracked from the log.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ClaudeToolStatus {
+    /// Tool has been invoked but no result has been received yet.
     Running,
+    /// Tool completed successfully.
     Done,
+    /// Tool returned an error.
     Error,
 }
 
+/// A single tool call extracted from a Claude session log, including its
+/// current status, input preview, and optional result.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClaudeToolEntry {
+    /// Unique tool-use ID (e.g. `toolu_abc123`).
     pub id: String,
+    /// Tool name (e.g. `Read`, `Bash`, `Write`).
     pub name: String,
+    /// Current execution status.
     pub status: ClaudeToolStatus,
+    /// Compact preview of the tool input arguments.
     pub input_preview: String,
+    /// Compact preview of the tool result, populated when the result arrives.
     pub result_preview: Option<String>,
 }
 
+/// Cumulative token and server-tool-use counts for a Claude session.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ClaudeUsageTotals {
     pub input_tokens: u64,
@@ -33,19 +56,27 @@ pub struct ClaudeUsageTotals {
 }
 
 impl ClaudeUsageTotals {
+    /// Returns the sum of input and output tokens.
+    #[must_use]
     pub fn total_tokens(&self) -> u64 {
         self.input_tokens + self.output_tokens
     }
 }
 
+/// Aggregated session data surfaced in the Potato sidebar panel.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ClaudeSidebarData {
+    /// Model identifier reported by the assistant (e.g. `claude-sonnet-4-6`).
     pub model: Option<String>,
+    /// Number of assistant turns observed so far.
     pub turns: u64,
+    /// Most recent `stop_reason` from an assistant message.
     pub last_stop_reason: Option<String>,
+    /// Cumulative token usage across the session.
     pub usage: ClaudeUsageTotals,
+    /// Ordered list of tool calls observed in the session.
     pub tools: Vec<ClaudeToolEntry>,
-    /// First user prompt text (used as session title in the rail).
+    /// First user prompt text, used as the session title in the sidebar rail.
     pub title: String,
 }
 
@@ -56,6 +87,11 @@ struct ToolSlot {
 }
 
 #[derive(Debug, Default)]
+/// Incremental tailer for a single Claude Code `.jsonl` session log.
+///
+/// Call [`poll()`](Self::poll) periodically to read new lines from the log
+/// file and update internal state. Call [`snapshot()`](Self::snapshot) to
+/// get a point-in-time [`ClaudeSidebarData`] for the UI.
 pub struct ClaudeSessionLogTracker {
     path: PathBuf,
     offset: u64,
@@ -70,14 +106,19 @@ pub struct ClaudeSessionLogTracker {
 }
 
 impl ClaudeSessionLogTracker {
+    /// Create a new tracker for the given log file path.
     pub fn new(path: PathBuf) -> Self {
         Self { path, ..Self::default() }
     }
 
+    /// Returns the path of the log file being tracked.
+    #[must_use]
     pub fn path(&self) -> &Path {
         &self.path
     }
 
+    /// Read any new bytes appended since the last poll, parse complete lines,
+    /// and return `true` if the sidebar data changed.
     pub fn poll(&mut self) -> Result<bool> {
         if !self.path.exists() {
             return Ok(false);
@@ -118,6 +159,8 @@ impl ClaudeSessionLogTracker {
         Ok(changed)
     }
 
+    /// Return a point-in-time snapshot of the parsed session data.
+    #[must_use]
     pub fn snapshot(&self) -> ClaudeSidebarData {
         let mut ordered: BTreeMap<u64, ClaudeToolEntry> = BTreeMap::new();
         for slot in self.tools.values() {
@@ -141,6 +184,8 @@ impl ClaudeSessionLogTracker {
         self.process_line(text)
     }
 
+    /// Parse a single JSONL line and update internal state.
+    /// Returns `true` if the line caused any observable change.
     pub fn process_line(&mut self, line: &str) -> bool {
         let Ok(v) = serde_json::from_str::<Value>(line) else {
             return false;
@@ -308,10 +353,14 @@ impl ClaudeSessionLogTracker {
     }
 }
 
+/// Return the Claude Code projects directory: `~/.claude/projects`.
 pub fn claude_projects_dir(home: &Path) -> PathBuf {
     home.join(".claude").join("projects")
 }
 
+/// Convert an absolute project path into the directory name Claude Code uses
+/// under `~/.claude/projects/`. Non-alphanumeric characters (except `-`) are
+/// replaced with `-`.
 pub fn project_dir_name(cwd: &Path) -> String {
     let raw = cwd.to_string_lossy();
     let mut result = String::with_capacity(raw.len());
@@ -325,6 +374,8 @@ pub fn project_dir_name(cwd: &Path) -> String {
     result
 }
 
+/// Build the full path to a Claude Code session log file for a given project
+/// and session ID.
 pub fn session_log_path(home: &Path, cwd: &Path, session_id: &str) -> PathBuf {
     claude_projects_dir(home)
         .join(project_dir_name(cwd))

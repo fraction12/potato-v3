@@ -43,6 +43,7 @@ pub struct FilePreviewPanel {
 }
 
 impl FilePreviewPanel {
+    /// Create an empty, visible file preview panel with no file loaded.
     pub fn new() -> Self {
         Self {
             visible: true,
@@ -98,6 +99,7 @@ impl FilePreviewPanel {
     }
 
     /// Total number of content lines loaded.
+    #[must_use]
     pub fn line_count(&self) -> usize {
         self.lines.len()
     }

@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 use tracing_subscriber::{fmt, EnvFilter, prelude::*};
 
 /// Return the canonical log-file path (`~/.potato/potato.log`).
+#[must_use]
 pub fn log_path() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_default()

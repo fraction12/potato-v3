@@ -31,6 +31,7 @@ pub struct SessionMetrics {
 
 impl SessionMetrics {
     /// Return total tokens (input + output).
+    #[must_use]
     pub fn total_tokens(&self) -> u64 {
         self.input_tokens + self.output_tokens
     }
@@ -59,6 +60,7 @@ impl MetricsCollector {
     }
 
     /// Return a snapshot of the current metrics.
+    #[must_use]
     pub fn snapshot(&self) -> SessionMetrics {
         let mut m = self.metrics.clone();
         m.duration_secs = self.start.elapsed().as_secs();

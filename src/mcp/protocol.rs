@@ -24,6 +24,7 @@ pub struct JsonRpcRequest {
 }
 
 impl JsonRpcRequest {
+    /// Create a new JSON-RPC 2.0 request with the given id, method, and optional params.
     pub fn new(id: impl Into<Value>, method: impl Into<String>, params: Option<Value>) -> Self {
         Self {
             jsonrpc: "2.0".to_string(),
@@ -46,6 +47,7 @@ pub struct JsonRpcResponse {
 }
 
 impl JsonRpcResponse {
+    /// Build a successful JSON-RPC 2.0 response carrying the given result.
     pub fn success(id: impl Into<Value>, result: Value) -> Self {
         Self {
             jsonrpc: "2.0".to_string(),
@@ -55,6 +57,7 @@ impl JsonRpcResponse {
         }
     }
 
+    /// Build an error JSON-RPC 2.0 response with the given error object.
     pub fn error(id: impl Into<Value>, error: JsonRpcError) -> Self {
         Self {
             jsonrpc: "2.0".to_string(),
@@ -75,6 +78,7 @@ pub struct JsonRpcError {
 }
 
 impl JsonRpcError {
+    /// Create an error with a numeric code and human-readable message.
     pub fn new(code: i64, message: impl Into<String>) -> Self {
         Self {
             code,
@@ -83,14 +87,17 @@ impl JsonRpcError {
         }
     }
 
+    /// Standard `-32601` error for an unrecognised method.
     pub fn method_not_found(method: &str) -> Self {
         Self::new(METHOD_NOT_FOUND, format!("Method not found: {method}"))
     }
 
+    /// Standard `-32602` error for malformed or missing parameters.
     pub fn invalid_params(detail: &str) -> Self {
         Self::new(INVALID_PARAMS, format!("Invalid params: {detail}"))
     }
 
+    /// Standard `-32603` error for unexpected server-side failures.
     pub fn internal_error(detail: &str) -> Self {
         Self::new(INTERNAL_ERROR, format!("Internal error: {detail}"))
     }
@@ -175,6 +182,7 @@ pub struct CallToolResult {
 }
 
 impl CallToolResult {
+    /// Wrap a text payload as a successful tool result.
     pub fn success(text: impl Into<String>) -> Self {
         Self {
             content: vec![ToolContent::text(text)],
@@ -182,6 +190,7 @@ impl CallToolResult {
         }
     }
 
+    /// Wrap a text payload as a failed tool result (`is_error = true`).
     pub fn failure(text: impl Into<String>) -> Self {
         Self {
             content: vec![ToolContent::text(text)],
@@ -199,6 +208,7 @@ pub struct ToolContent {
 }
 
 impl ToolContent {
+    /// Create a text content item (the only content type currently used).
     pub fn text(s: impl Into<String>) -> Self {
         Self {
             content_type: "text".to_string(),

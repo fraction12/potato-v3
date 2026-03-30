@@ -45,6 +45,7 @@ pub struct CodexUsageTotals {
 
 impl CodexUsageTotals {
     /// Total tokens processed (input + cached + output).
+    #[must_use]
     pub fn total_tokens(&self) -> u64 {
         self.input_tokens
             .saturating_add(self.cached_input_tokens)
@@ -101,6 +102,7 @@ impl CodexSessionLogTracker {
     }
 
     /// Path to the tracked JSONL file.
+    #[must_use]
     pub fn path(&self) -> &Path {
         &self.path
     }
@@ -149,6 +151,7 @@ impl CodexSessionLogTracker {
     }
 
     /// Return the latest snapshot of session data.
+    #[must_use]
     pub fn snapshot(&self) -> CodexSidebarData {
         let tools = self.tools.values().map(|s| s.entry.clone()).collect();
         CodexSidebarData {

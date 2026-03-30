@@ -73,16 +73,19 @@ impl OverlayStack {
     }
 
     /// Returns `true` if there are any open overlays.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.stack.is_empty()
     }
 
     /// Number of overlays currently on the stack.
+    #[must_use]
     pub fn len(&self) -> usize {
         self.stack.len()
     }
 
     /// Peek at the top overlay (immutable).
+    #[must_use]
     pub fn top(&self) -> Option<&dyn Overlay> {
         self.stack.last().map(|b| b.as_ref())
     }

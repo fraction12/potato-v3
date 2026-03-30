@@ -31,13 +31,22 @@ pub fn write_mcp_config(
     let mut config = load_config(&config_path).unwrap_or_else(|| json!({}));
 
     // Ensure mcpServers key exists.
-    let servers = config
-        .as_object_mut()
-        .expect("config must be a JSON object")
+    let obj = config.as_object_mut().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "existing .mcp.json is not a JSON object",
+        )
+    })?;
+    let servers = obj
         .entry("mcpServers")
         .or_insert_with(|| json!({}))
         .as_object_mut()
-        .expect("mcpServers must be a JSON object");
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "mcpServers in .mcp.json is not a JSON object",
+            )
+        })?;
 
     // Remove legacy per-pane entries (potato-0, potato-1, etc.).
     servers.retain(|k, _| !k.starts_with("potato-"));
@@ -302,6 +311,41 @@ mod tests {
         write_mcp_config(&dir, &[], "").unwrap();
         let config = read_config(&dir);
         assert!(config["mcpServers"]["potato"].is_object());
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn write_returns_error_for_non_object_config() {
+        let dir = temp_test_dir("non_object");
+        // Write a JSON array instead of an object — should error, not panic.
+        fs::write(dir.join(".mcp.json"), "[1, 2, 3]").unwrap();
+        let result = write_mcp_config(&dir, &[], "");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("not a JSON object"),
+            "unexpected error message: {err}"
+        );
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn write_returns_error_for_non_object_mcp_servers() {
+        let dir = temp_test_dir("bad_servers");
+        // mcpServers is a string instead of an object.
+        let bad = json!({"mcpServers": "not-an-object"});
+        fs::write(
+            dir.join(".mcp.json"),
+            serde_json::to_string_pretty(&bad).unwrap(),
+        )
+        .unwrap();
+        let result = write_mcp_config(&dir, &[], "");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("not a JSON object"),
+            "unexpected error message: {err}"
+        );
         cleanup(&dir);
     }
 

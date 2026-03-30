@@ -93,6 +93,7 @@ impl RealPty {
         Self::spawn_in(binary, args, cols, rows, None)
     }
 
+    /// Like [`spawn`] but sets the child process's working directory to `cwd`.
     pub fn spawn_in(binary: &str, args: &[&str], cols: u16, rows: u16, cwd: Option<&std::path::Path>) -> Result<Self> {
         Self::spawn_with_env(binary, args, cols, rows, cwd, &[])
     }
@@ -218,6 +219,7 @@ impl RealPty {
         Ok(())
     }
 
+    /// Set the scrollback buffer size (in rows) and return the actual size applied.
     pub fn set_scrollback(&self, rows: usize) -> usize {
         if let Ok(mut p) = self.screen.lock() {
             p.screen_mut().set_scrollback(rows);
@@ -227,6 +229,7 @@ impl RealPty {
         }
     }
 
+    /// Return the current scrollback buffer size (in rows).
     pub fn scrollback(&self) -> usize {
         if let Ok(p) = self.screen.lock() {
             p.screen().scrollback()

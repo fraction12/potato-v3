@@ -55,6 +55,7 @@ pub struct SessionInfo {
 
 impl SessionInfo {
     /// Total tokens (input + output).
+    #[must_use]
     pub fn total_tokens(&self) -> u64 {
         self.total_input_tokens + self.total_output_tokens
     }

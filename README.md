@@ -26,8 +26,8 @@ Potato turns that mess into a single project cockpit:
 - keep project context and task visibility in one place,
 - and stay in the loop without micromanaging every turn.
 
-[![Rust](https://img.shields.io/badge/Rust-1.86+-orange?logo=rust)](https://www.rust-lang.org/)
-[![Tests](https://img.shields.io/badge/tests-711_passing-brightgreen)](#development)
+[![Rust](https://img.shields.io/badge/Rust-1.94+-orange?logo=rust)](https://www.rust-lang.org/)
+[![Tests](https://img.shields.io/badge/tests-784_passing-brightgreen)](#development)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 ---
@@ -69,7 +69,7 @@ Potato is built in Rust with [ratatui](https://github.com/ratatui/ratatui). It e
 - Metrics, tool activity, and session context stay tied to what the agent actually did
 
 ### Project-aware workflow
-- Reads OpenSpec backlog data when a project has `.openspec/backlog.yaml`
+- Reads OpenSpec task data from `openspec/changes/*/tasks.md` (markdown checkboxes) via the official [OpenSpec CLI](https://github.com/openspec-ai/openspec)
 - Falls back gracefully when OpenSpec is absent
 - Stores project-local coordination state under `.potato/`
 
@@ -78,7 +78,7 @@ Potato is built in Rust with [ratatui](https://github.com/ratatui/ratatui). It e
 ## Quick Start
 
 ### Requirements
-- Rust 1.86+
+- Rust 1.94+
 - At least one installed agent CLI:
   - [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
   - [Codex](https://github.com/openai/codex)
@@ -165,14 +165,23 @@ Potato launches the agents, manages the panes, hosts the MCP bridge, and keeps t
 Before you start a session, Potato gives you a dashboard with:
 - **Roast Potato** — launch the current setup
 - **Define Roles** — set role names/prompts for the run
-- **Integrations** — inspect agent/MCP integration status
+- **Integrations** — Git summary, OpenSpec status, and MCP integration info
 - **Settings** — runtime, paths, keybinds, permissions, and coordination info
 
 ### Session view
 During a run, Potato focuses on project collaboration:
 - **Left rail:** project/git awareness
-- **Center:** real terminal panes
+- **Center:** real terminal panes with full PTY passthrough
 - **Right rail:** Team, Tasks, Context, and compact agent metrics
+
+### Keyboard
+- **Tab / Shift+Tab** — cycle focus ring (Agents → Git → Input → Terminal → Sidebar)
+- **F1** — help overlay
+- **F2** — agent picker
+- **F3** — session picker
+- **Ctrl+W** — close active pane
+- **Ctrl+\\** — return to dashboard
+- In terminal focus, only Tab and Ctrl+\\ are intercepted — everything else passes through to the agent PTY
 
 ---
 
@@ -211,7 +220,7 @@ What’s solid:
 
 What’s still maturing:
 - shared context UX,
-- shortcut/quick-actions polish,
+- quick-actions panel,
 - capability-aware behavior when project integrations are absent,
 - packaging/distribution beyond local builds.
 
@@ -220,7 +229,7 @@ What’s still maturing:
 ## Development
 
 ```bash
-cargo test
+cargo test          # 784 tests
 cargo build --release
 RUST_LOG=debug cargo run
 ```
