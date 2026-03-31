@@ -8,7 +8,7 @@ use super::KeyAction;
 
 /// Handle a key event on the Session screen.
 pub fn handle(state: &mut AppState, key: &KeyEvent) -> KeyAction {
-    // ── Global quit — Ctrl+\ always quits ────────────────────────────
+    // ── Global quit — Ctrl+Q always quits ────────────────────────────
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('\\') {
         return KeyAction::Quit;
     }

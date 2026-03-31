@@ -40,7 +40,7 @@ struct Section {
 // ── Keybind data ──────────────────────────────────────────────────────────────
 
 static GLOBAL_ENTRIES: &[KeyEntry] = &[
-    KeyEntry::new("Ctrl+\\", "Quit"),
+    KeyEntry::new("Ctrl+Q", "Quit"),
     KeyEntry::new("Ctrl+W", "Close active pane"),
     KeyEntry::new("Tab", "Next focus panel / cycle panes"),
     KeyEntry::new("Shift+Tab", "Previous focus panel"),
@@ -58,7 +58,7 @@ static INPUT_ENTRIES: &[KeyEntry] = &[
 
 static TERMINAL_ENTRIES: &[KeyEntry] = &[
     KeyEntry::new("Tab", "Exit terminal focus (forward)"),
-    KeyEntry::new("Ctrl+\\", "Quit (only intercept)"),
+    KeyEntry::new("Ctrl+Q", "Quit (only intercept)"),
     KeyEntry::new("PgUp/PgDn", "Scroll terminal viewport"),
     KeyEntry::new("End", "Jump to bottom"),
     KeyEntry::new("*", "All other keys → agent PTY"),

@@ -122,7 +122,7 @@ impl KeybindConfig {
 impl Default for KeybindConfig {
     fn default() -> Self {
         Self {
-            quit: "ctrl+\\".to_string(),
+            quit: "ctrl+q".to_string(),
             submit: "enter".to_string(),
             model_picker: "ctrl+m".to_string(),
             help: "f1".to_string(),
@@ -142,7 +142,7 @@ mod tests {
     #[test]
     fn defaults_are_sensible() {
         let kb = KeybindConfig::default();
-        assert_eq!(kb.quit, "ctrl+\\");
+        assert_eq!(kb.quit, "ctrl+q");
         assert_eq!(kb.submit, "enter");
         assert_eq!(kb.model_picker, "ctrl+m");
         assert_eq!(kb.help, "f1");

@@ -26,7 +26,7 @@
 //! - **Broadcast** focus: characters go into `session.input_buffer`; Enter
 //!   broadcasts the text (via bracketed paste + CR) to ALL open panes.
 //!   Tab into a specific terminal to talk to a single agent directly.
-//! - **Terminal** focus: only `Tab` (forward) and `Ctrl+\` are intercepted;
+//! - **Terminal** focus: only `Tab` (forward) and `Ctrl+Q` are intercepted;
 //!   *all* other key events are converted to raw byte sequences and written
 //!   to the PTY stdin unchanged. This lets the user interact with Claude's
 //!   native pickers / approvals / menus.
@@ -993,9 +993,9 @@ fn render_status_bar(
     );
 
     let keys_text = if pane_count > 1 {
-        " Tab:cycle  F1:help  F2:agent  F3:sessions  F5:refresh  F6:term  Ctrl+W:close pane  Ctrl+\\:quit "
+        " Tab:cycle  F1:help  F2:agent  F3:sessions  F5:refresh  F6:term  Ctrl+W:close pane  Ctrl+Q:quit "
     } else {
-        " Tab:cycle  F1:help  F2:agent  F3:sessions  F5:refresh  F6:term  Ctrl+\\:quit "
+        " Tab:cycle  F1:help  F2:agent  F3:sessions  F5:refresh  F6:term  Ctrl+Q:quit "
     };
     let keys_span = Span::styled(keys_text, Style::default().fg(STONE).bg(CHARCOAL));
 

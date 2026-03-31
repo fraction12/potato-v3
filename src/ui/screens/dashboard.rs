@@ -12,7 +12,7 @@
 //! │  Settings          │                                                     │
 //! │                    │                                                     │
 //! ├────────────────────┴─────────────────────────────────────────────────────┤
-//! │  ↑↓ navigate  Tab switch  Enter select  Ctrl+\ quit                      │
+//! │  ↑↓ navigate  Tab switch  Enter select  Ctrl+Q quit                      │
 //! └──────────────────────────────────────────────────────────────────────────┘
 //! ```
 
@@ -1035,9 +1035,9 @@ fn render_footer(frame: &mut Frame, area: Rect, state: &AppState) {
 
     let hints = match (DashboardMenuItem::ALL[dash.selected_menu], &dash.focus) {
         (DashboardMenuItem::RoastPotato, DashboardFocus::Menu) => {
-            "↑↓ navigate  Tab details  Enter launch  Ctrl+\\ quit"
+            "↑↓ navigate  Tab details  Enter launch  Ctrl+Q quit"
         }
-        (_, DashboardFocus::Menu) => "↑↓ navigate  Tab details  Enter select  Ctrl+\\ quit",
+        (_, DashboardFocus::Menu) => "↑↓ navigate  Tab details  Enter select  Ctrl+Q quit",
         (DashboardMenuItem::Settings, DashboardFocus::Detail) => "↑↓ scroll  Tab menu  Esc back",
         (_, DashboardFocus::Detail) => "↑↓ navigate  Tab menu  Esc back  Enter select",
     };
@@ -1230,7 +1230,7 @@ mod tests {
         let lines = super::build_settings_lines(&state);
         let text = lines_to_string(&lines);
         assert!(text.contains("KEYBINDS"), "missing KEYBINDS header");
-        assert!(text.contains("ctrl+\\"), "missing quit keybind");
+        assert!(text.contains("ctrl+q"), "missing quit keybind");
         assert!(text.contains("enter"), "missing submit keybind");
     }
 
