@@ -551,7 +551,7 @@ mod tests {
 
         let send_req = json!({
             "pane_id": 0,
-            "request": r#"{"jsonrpc":"2.0","id":20,"method":"tools/call","params":{"name":"potato_send_message","arguments":{"message":"hello pane1","to":"1"}}}"#
+            "request": r#"{"jsonrpc":"2.0","id":20,"method":"tools/call","params":{"name":"potato_send_message","arguments":{"type":"status","subject":"hello pane1","body":{"summary":"greeting from pane 0"},"to":"1"}}}"#
         });
         let mut line = send_req.to_string();
         line.push('\n');

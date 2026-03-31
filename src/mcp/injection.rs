@@ -76,15 +76,39 @@ pub fn format_notification(from_pane: u64, from_role: Option<&str>, content: &st
         .map(|r| format!(" ({r})"))
         .unwrap_or_default();
 
-    // Sanitize control characters from content to prevent injection attacks.
-    // A \r in the content would submit arbitrary input to Claude's PTY.
-    // A \n would be mishandled by Claude Code's Ink raw mode.
+    let prefix = format!("[Potato: Pane {from_pane}{role_suffix}]");
+
+    // Try to parse as structured JSON message.
+    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(content) {
+        if let (Some(msg_type), Some(subject)) = (
+            parsed.get("type").and_then(|v| v.as_str()),
+            parsed.get("subject").and_then(|v| v.as_str()),
+        ) {
+            let mut suffix_parts = Vec::new();
+            if let Some(body) = parsed.get("body") {
+                if let Some(steps) = body.get("steps").and_then(|v| v.as_array()) {
+                    suffix_parts.push(format!("{} steps", steps.len()));
+                }
+                if let Some(files) = body.get("files").and_then(|v| v.as_array()) {
+                    suffix_parts.push(format!("{} files", files.len()));
+                }
+            }
+            let suffix = if suffix_parts.is_empty() {
+                String::new()
+            } else {
+                format!(" | {}", suffix_parts.join(", "))
+            };
+            return format!("{prefix} [{msg_type}] {subject}{suffix}");
+        }
+    }
+
+    // Fallback: legacy/freeform content — sanitize control chars.
     let sanitized: String = content
         .chars()
         .map(|c| if c.is_control() { ' ' } else { c })
         .collect();
     let flat_content = sanitized.replace("  ", " ");
-    format!("[Potato: Pane {from_pane}{role_suffix}] {flat_content}")
+    format!("{prefix} {flat_content}")
 }
 
 /// Attempt to inject a formatted notification into a target pane's PTY.
@@ -187,6 +211,76 @@ mod tests {
             !msg.chars().any(|c| c.is_control()),
             "no control chars should survive in content"
         );
+    }
+
+    #[test]
+    fn format_notification_structured_with_steps_and_files() {
+        let content = serde_json::json!({
+            "type": "task",
+            "subject": "T-812: Wire up agent roster",
+            "body": {
+                "summary": "ProfileLoader exists but is never called.",
+                "files": ["src/config/profiles.rs", "src/app/state.rs", "src/ui/overlays/agent_picker.rs"],
+                "steps": ["Rename profiles.toml", "Feed into AppState", "Update picker", "Test"]
+            }
+        }).to_string();
+        let msg = format_notification(0, Some("architect"), &content);
+        assert_eq!(
+            msg,
+            "[Potato: Pane 0 (architect)] [task] T-812: Wire up agent roster | 4 steps, 3 files"
+        );
+    }
+
+    #[test]
+    fn format_notification_structured_no_steps_or_files() {
+        let content = serde_json::json!({
+            "type": "question",
+            "subject": "Which DB migration tool?",
+            "body": { "summary": "Should we use refinery or sqlx-migrate?" }
+        }).to_string();
+        let msg = format_notification(1, Some("implementer"), &content);
+        assert_eq!(
+            msg,
+            "[Potato: Pane 1 (implementer)] [question] Which DB migration tool?"
+        );
+    }
+
+    #[test]
+    fn format_notification_structured_steps_only() {
+        let content = serde_json::json!({
+            "type": "status",
+            "subject": "Progress update",
+            "body": { "summary": "Done with step 1", "steps": ["step 1", "step 2"] }
+        }).to_string();
+        let msg = format_notification(0, None, &content);
+        assert_eq!(msg, "[Potato: Pane 0] [status] Progress update | 2 steps");
+    }
+
+    #[test]
+    fn format_notification_structured_files_only() {
+        let content = serde_json::json!({
+            "type": "result",
+            "subject": "Completed refactor",
+            "body": { "summary": "Refactored X", "files": ["a.rs"] }
+        }).to_string();
+        let msg = format_notification(0, None, &content);
+        assert_eq!(msg, "[Potato: Pane 0] [result] Completed refactor | 1 files");
+    }
+
+    #[test]
+    fn format_notification_legacy_fallback() {
+        // Non-JSON content should fall back to the old sanitize behavior.
+        let msg = format_notification(0, Some("worker"), "plain text message");
+        assert_eq!(msg, "[Potato: Pane 0 (worker)] plain text message");
+    }
+
+    #[test]
+    fn format_notification_malformed_json_fallback() {
+        // JSON that doesn't have type/subject should fall back.
+        let content = serde_json::json!({"foo": "bar"}).to_string();
+        let msg = format_notification(0, None, &content);
+        assert!(msg.starts_with("[Potato: Pane 0]"));
+        assert!(msg.contains("foo"));
     }
 
     #[test]
