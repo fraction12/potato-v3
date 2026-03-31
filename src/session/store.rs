@@ -251,6 +251,54 @@ impl SessionStore {
         Ok(())
     }
 
+    /// Rename a session: update the primary key and all foreign-key references.
+    ///
+    /// Used when `SessionBound` replaces a placeholder UUID with the agent's
+    /// native session ID, so that events persisted under the old ID are
+    /// migrated to the new one (T-875).
+    ///
+    /// If `old_id` does not exist, this is a no-op (returns Ok).
+    pub fn rename_session(&self, old_id: &str, new_id: &str) -> Result<()> {
+        if old_id == new_id {
+            return Ok(());
+        }
+        // Temporarily disable FK enforcement so we can reparent child rows
+        // before updating the parent PK.
+        self.conn.execute_batch("PRAGMA foreign_keys = OFF")?;
+        let result = (|| -> Result<()> {
+            let tx = self.conn.unchecked_transaction()?;
+            // Update child tables first (foreign key references).
+            tx.execute(
+                "UPDATE session_events SET session_id = ?1 WHERE session_id = ?2",
+                params![new_id, old_id],
+            )?;
+            tx.execute(
+                "UPDATE messages SET session_id = ?1 WHERE session_id = ?2",
+                params![new_id, old_id],
+            )?;
+            // Delete the old session row if the new_id already exists.
+            // Otherwise rename the primary key.
+            let new_exists: bool = tx.query_row(
+                "SELECT COUNT(*) FROM sessions WHERE id = ?1",
+                params![new_id],
+                |row| row.get::<_, i64>(0),
+            )? > 0;
+            if new_exists {
+                tx.execute("DELETE FROM sessions WHERE id = ?1", params![old_id])?;
+            } else {
+                tx.execute(
+                    "UPDATE sessions SET id = ?1 WHERE id = ?2",
+                    params![new_id, old_id],
+                )?;
+            }
+            tx.commit()?;
+            Ok(())
+        })();
+        // Always re-enable FK enforcement.
+        let _ = self.conn.execute_batch("PRAGMA foreign_keys = ON");
+        result
+    }
+
     /// List all sessions ordered by `updated_at` DESC (newest first).
     pub fn list_sessions(&self) -> Result<Vec<SessionInfo>> {
         let mut stmt = self.conn.prepare(
@@ -600,5 +648,54 @@ mod tests {
             .expect("upsert");
         let sessions = store.list_sessions().expect("list");
         assert_eq!(sessions[0].total_tokens(), 1000);
+    }
+
+    #[test]
+    fn rename_session_migrates_row_and_events() {
+        let store = fresh_store();
+        let now = unix_now();
+        store
+            .upsert_session("old-uuid", "proj", "claude", None, "Title", None, 10, 20, 1, now, now)
+            .expect("upsert");
+        store
+            .append_event(&SessionEvent {
+                session_id: "old-uuid".into(),
+                event_type: "user".into(),
+                summary: "hi".into(),
+                tokens_in: None,
+                tokens_out: None,
+                timestamp: now,
+            })
+            .expect("append");
+
+        store.rename_session("old-uuid", "native-id").expect("rename");
+
+        // Old ID should be gone.
+        let sessions = store.list_sessions().expect("list");
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].id, "native-id");
+        assert_eq!(sessions[0].title, "Title");
+
+        // Events should be under the new ID.
+        assert_eq!(store.event_count("native-id").expect("count"), 1);
+        assert_eq!(store.event_count("old-uuid").expect("count"), 0);
+    }
+
+    #[test]
+    fn rename_session_noop_for_same_id() {
+        let store = fresh_store();
+        let now = unix_now();
+        store
+            .upsert_session("same", "proj", "claude", None, "T", None, 0, 0, 0, now, now)
+            .expect("upsert");
+        store.rename_session("same", "same").expect("noop");
+        assert_eq!(store.list_sessions().expect("list").len(), 1);
+    }
+
+    #[test]
+    fn rename_session_nonexistent_is_noop() {
+        let store = fresh_store();
+        store.rename_session("ghost", "new").expect("noop");
+        assert!(store.list_sessions().expect("list").is_empty());
     }
 }

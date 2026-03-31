@@ -113,17 +113,23 @@ pub fn format_notification(from_pane: u64, from_role: Option<&str>, content: &st
 
 /// Attempt to inject a formatted notification into a target pane's PTY.
 ///
+/// Accepts a stable `pane_id` (u64) rather than a volatile Vec index, avoiding
+/// index-vs-ID confusion (see T-862).
+///
 /// Returns `Ok(true)` if injected, `Ok(false)` if the target pane is in a
 /// state that blocks injection (approval pending, not found, no PTY), and
 /// `Err` on I/O failure.
 pub fn inject_into_pane(
     panes: &mut PaneManager,
-    target_pane_index: usize,
+    target_pane_id: u64,
     text: &str,
 ) -> Result<bool, String> {
+    let index = panes
+        .find_by_pane_id(target_pane_id)
+        .ok_or_else(|| format!("target pane id {target_pane_id} not found"))?;
     let pane = panes
-        .get_mut(target_pane_index)
-        .ok_or_else(|| format!("target pane index {target_pane_index} not found"))?;
+        .get_mut(index)
+        .ok_or_else(|| format!("target pane id {target_pane_id} not found"))?;
 
     // Guard: never inject during approval_pending.
     if pane.session.approval_pending.is_some() {
@@ -297,7 +303,23 @@ mod tests {
     #[test]
     fn inject_into_missing_pane_returns_error() {
         let mut panes = PaneManager::new();
-        let result = inject_into_pane(&mut panes, 0, "test");
+        let result = inject_into_pane(&mut panes, 99, "test");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn inject_into_pane_resolves_id_not_index() {
+        let mut panes = PaneManager::new();
+        panes.open("sess-1", "claude"); // id=0
+        panes.open("sess-2", "claude"); // id=1
+        // Close first pane — index 0 now holds the pane with id=1.
+        panes.close(0);
+        // Injecting by pane_id=1 should find the pane even though its index shifted.
+        let result = inject_into_pane(&mut panes, 1, "test");
+        // Will be Err because no PTY, but importantly it should NOT be "not found".
+        assert!(
+            result.is_err() && result.unwrap_err().contains("no PTY"),
+            "should find pane by ID, not index"
+        );
     }
 }

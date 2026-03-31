@@ -556,4 +556,31 @@ mod tests {
 
         let _ = fs::remove_file(&tmp);
     }
+
+    #[test]
+    fn poll_resets_offset_on_file_truncation() {
+        let tmp = std::env::temp_dir()
+            .join(format!("potato-claude-rotation-{}.jsonl", std::process::id()));
+        let _ = fs::remove_file(&tmp);
+
+        // Write a complete line and poll to advance the offset.
+        let line1 = r#"{"type":"assistant","message":{"role":"assistant","usage":{"input_tokens":10},"content":[]}}"#;
+        fs::write(&tmp, format!("{line1}\n")).unwrap();
+
+        let mut tracker = ClaudeSessionLogTracker::new(tmp.clone());
+        assert!(tracker.poll().unwrap());
+        assert_eq!(tracker.snapshot().usage.input_tokens, 10);
+        assert!(tracker.offset > 0);
+
+        // Simulate log rotation: truncate and write a shorter, different file.
+        let line2 = r#"{"type":"assistant","message":{"role":"assistant","usage":{"input_tokens":5},"content":[]}}"#;
+        fs::write(&tmp, format!("{line2}\n")).unwrap();
+
+        // The file is now shorter than the tracker's offset — poll should reset.
+        assert!(tracker.poll().unwrap());
+        // Tokens accumulate from the fresh read (10 from before + 5 from new file).
+        assert_eq!(tracker.snapshot().usage.input_tokens, 15);
+
+        let _ = fs::remove_file(&tmp);
+    }
 }

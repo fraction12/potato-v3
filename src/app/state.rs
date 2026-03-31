@@ -285,6 +285,9 @@ pub struct TranscriptEntry {
     pub content: String,
     pub timestamp: DateTime<Utc>,
     pub tool_call: Option<ToolCallInfo>,
+    /// Monotonic turn sequence — used to match `TextDone` to the correct
+    /// assistant entry even if a new turn started before it arrived (T-874).
+    pub turn_seq: u64,
 }
 
 impl TranscriptEntry {
@@ -295,6 +298,7 @@ impl TranscriptEntry {
             content: content.into(),
             timestamp: Utc::now(),
             tool_call: None,
+            turn_seq: 0,
         }
     }
     /// Create a user transcript entry timestamped to now.
@@ -304,6 +308,7 @@ impl TranscriptEntry {
             content: content.into(),
             timestamp: Utc::now(),
             tool_call: None,
+            turn_seq: 0,
         }
     }
     /// Create a system transcript entry timestamped to now.
@@ -313,6 +318,7 @@ impl TranscriptEntry {
             content: content.into(),
             timestamp: Utc::now(),
             tool_call: None,
+            turn_seq: 0,
         }
     }
 }
@@ -399,6 +405,14 @@ pub struct SessionState {
     /// Cumulative token count for this session (updated from metrics events).
     pub tokens_used: u64,
 
+    /// Monotonic turn sequence counter — incremented on each `TextDelta` that
+    /// creates a new assistant transcript entry (T-874).
+    pub next_turn_seq: u64,
+    /// The `turn_seq` of the assistant entry currently being streamed.
+    /// `TextDone` patches this specific entry instead of blindly targeting
+    /// the last assistant entry (T-874).
+    pub active_turn_seq: Option<u64>,
+
     /// Which cockpit panel currently holds keyboard focus.
     ///
     /// Default: `Input` — the user can start typing immediately.
@@ -453,6 +467,8 @@ impl SessionState {
             tick_count: 0,
             claude_session_id: None,
             tokens_used: 0,
+            next_turn_seq: 0,
+            active_turn_seq: None,
             cockpit_focus: CockpitFocus::Input,
             selected_agent: 0,
             selected_session: 0,
@@ -578,6 +594,14 @@ pub struct AppState {
     /// Arc<Mutex<>> so it can be shared with the MCP bridge and read from UI.
     pub inter_session_state: Option<Arc<std::sync::Mutex<crate::mcp::state::InterSessionState>>>,
 
+    /// Sender for PTY dirty notifications — clone into forwarding tasks so the
+    /// event loop can wake immediately on PTY output instead of waiting for the
+    /// next tick (T-864).
+    pub dirty_tx: mpsc::UnboundedSender<()>,
+    /// Receiver for PTY dirty notifications. Wired into the main `tokio::select!`
+    /// to trigger immediate redraws when any pane has new terminal output.
+    pub dirty_rx: Option<mpsc::UnboundedReceiver<()>>,
+
     /// Receiver for MCP injection requests (messages to push into pane PTYs).
     ///
     /// The bridge sends `InjectRequest`s after `send_message`; the main loop
@@ -635,6 +659,11 @@ impl Default for AppState {
             persisted_event_count: 0,
             mcp_socket_path: None,
             inter_session_state: None,
+            dirty_tx: {
+                let (tx, _) = mpsc::unbounded_channel();
+                tx
+            },
+            dirty_rx: None,
             inject_rx: None,
             openspec_snapshot: crate::openspec::snapshot::OpenSpecSnapshot::default(),
             openspec_refresh_ticks: 0,
