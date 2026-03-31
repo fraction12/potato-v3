@@ -44,28 +44,29 @@ pub struct PendingEnter {
 /// Ink renderer to process the text before we submit.
 pub const ENTER_DELAY_TICKS: u64 = 10; // ~500ms at 50ms/tick — gives Claude Ink time to settle
 
-/// Format a message notification for PTY injection.
+/// Format a structured message as a single-line notification nudge.
 ///
-/// The format uses a clearly delimited block so Claude can distinguish it
-/// from user-typed content:
+/// Instead of rendering the full message body into the PTY (which risks
+/// `\n` being interpreted as Enter by the target agent's terminal), we
+/// inject a short prompt telling the agent to call `potato_get_messages`
+/// to read the actual content.
 ///
+/// Format:
 /// ```text
-/// [Potato: message from Pane 0 (architect)]
-/// Hey, I finished the API design. Check shared context for the schema.
-/// [/Potato]
+/// [Potato: Pane 0 (architect)] New [task] message: T-812: Wire up agent roster. Use potato_get_messages to read it.
 /// ```
+fn format_structured_nudge(prefix: &str, msg_type: &str, subject: &str) -> String {
+    format!("{prefix} New [{msg_type}] message: {subject}. Use potato_get_messages to read it.")
+}
+
 /// Format a message notification for PTY injection.
 ///
-/// Sends raw text followed by `\r` (Enter) to submit. Bracketed paste
-/// is intentionally NOT used because Claude Code's Ink raw mode does not
-/// treat bracketed paste as a submit trigger (see broadcast fix 112096f).
+/// For structured messages (JSON with type/subject), returns a single-line
+/// nudge telling the agent to call `potato_get_messages` for the full content.
+/// The PTY injection is just a notification — the MCP tool delivers the payload.
 ///
-/// ```text
-/// [Potato: message from Pane 0 (architect)]
-/// Hey, I finished the API design. Check shared context for the schema.
-/// [/Potato]
-/// ```
-/// Format a message notification for PTY injection.
+/// For legacy/freeform content, sanitizes control characters and returns a
+/// single-line message.
 ///
 /// Returns the text WITHOUT a trailing `\r`. The caller is responsible
 /// for sending `\r` after a short delay to avoid the race condition where
@@ -78,27 +79,13 @@ pub fn format_notification(from_pane: u64, from_role: Option<&str>, content: &st
 
     let prefix = format!("[Potato: Pane {from_pane}{role_suffix}]");
 
-    // Try to parse as structured JSON message.
+    // Try to parse as structured JSON message — nudge agent to use MCP tool.
     if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(content) {
         if let (Some(msg_type), Some(subject)) = (
             parsed.get("type").and_then(|v| v.as_str()),
             parsed.get("subject").and_then(|v| v.as_str()),
         ) {
-            let mut suffix_parts = Vec::new();
-            if let Some(body) = parsed.get("body") {
-                if let Some(steps) = body.get("steps").and_then(|v| v.as_array()) {
-                    suffix_parts.push(format!("{} steps", steps.len()));
-                }
-                if let Some(files) = body.get("files").and_then(|v| v.as_array()) {
-                    suffix_parts.push(format!("{} files", files.len()));
-                }
-            }
-            let suffix = if suffix_parts.is_empty() {
-                String::new()
-            } else {
-                format!(" | {}", suffix_parts.join(", "))
-            };
-            return format!("{prefix} [{msg_type}] {subject}{suffix}");
+            return format_structured_nudge(&prefix, msg_type, subject);
         }
     }
 
@@ -184,21 +171,20 @@ mod tests {
     }
 
     #[test]
-    fn format_notification_single_line_no_newlines() {
+    fn format_notification_legacy_single_line_no_newlines() {
         let msg = format_notification(0, None, "test content");
-        assert!(
-            !msg.contains('\n'),
-            "must be single-line for Claude Code raw mode"
-        );
+        // Legacy (non-JSON) messages are single-line.
+        assert!(!msg.contains('\n'), "legacy must be single-line");
         assert!(!msg.contains('\r'), "Enter is deferred — no \\r in text");
         assert!(msg.contains("[Potato:"));
         assert!(msg.contains("test content"));
     }
 
     #[test]
-    fn format_notification_multiline_flattened() {
+    fn format_notification_legacy_multiline_flattened() {
         let msg = format_notification(0, None, "line1\nline2\nline3");
-        assert!(!msg.contains('\n'), "newlines must be flattened");
+        // Legacy messages flatten newlines.
+        assert!(!msg.contains('\n'), "legacy newlines must be flattened");
         assert!(msg.contains("line1 line2 line3"));
     }
 
@@ -220,62 +206,91 @@ mod tests {
     }
 
     #[test]
-    fn format_notification_structured_with_steps_and_files() {
+    fn format_notification_structured_is_single_line_nudge() {
         let content = serde_json::json!({
             "type": "task",
             "subject": "T-812: Wire up agent roster",
             "body": {
                 "summary": "ProfileLoader exists but is never called.",
-                "files": ["src/config/profiles.rs", "src/app/state.rs", "src/ui/overlays/agent_picker.rs"],
-                "steps": ["Rename profiles.toml", "Feed into AppState", "Update picker", "Test"]
+                "files": ["src/config/profiles.rs", "src/app/state.rs"],
+                "steps": ["Rename profiles.toml", "Feed into AppState"],
+                "context": "Blocked on config module refactor."
             }
-        }).to_string();
+        })
+        .to_string();
         let msg = format_notification(0, Some("architect"), &content);
         assert_eq!(
             msg,
-            "[Potato: Pane 0 (architect)] [task] T-812: Wire up agent roster | 4 steps, 3 files"
+            "[Potato: Pane 0 (architect)] New [task] message: T-812: Wire up agent roster. Use potato_get_messages to read it."
+        );
+        assert!(!msg.contains('\n'), "nudge must be single-line");
+        assert!(!msg.contains('\r'), "no trailing Enter");
+    }
+
+    #[test]
+    fn format_notification_structured_nudge_various_types() {
+        for (msg_type, subject) in [
+            ("question", "Which DB migration tool?"),
+            ("status", "Progress update"),
+            ("result", "Completed refactor"),
+        ] {
+            let content = serde_json::json!({
+                "type": msg_type,
+                "subject": subject,
+                "body": { "summary": "details here" }
+            })
+            .to_string();
+            let msg = format_notification(1, Some("implementer"), &content);
+            assert!(
+                msg.contains(&format!("New [{msg_type}] message: {subject}")),
+                "should contain type and subject"
+            );
+            assert!(
+                msg.contains("potato_get_messages"),
+                "should tell agent to use MCP tool"
+            );
+            assert!(!msg.contains('\n'), "must be single-line");
+        }
+    }
+
+    #[test]
+    fn format_notification_structured_nudge_minimal_body() {
+        let content = serde_json::json!({
+            "type": "ping",
+            "subject": "Are you there?",
+            "body": {}
+        })
+        .to_string();
+        let msg = format_notification(0, None, &content);
+        assert_eq!(
+            msg,
+            "[Potato: Pane 0] New [ping] message: Are you there?. Use potato_get_messages to read it."
         );
     }
 
     #[test]
-    fn format_notification_structured_no_steps_or_files() {
+    fn format_notification_structured_body_not_leaked() {
         let content = serde_json::json!({
-            "type": "question",
-            "subject": "Which DB migration tool?",
-            "body": { "summary": "Should we use refinery or sqlx-migrate?" }
+            "type": "task",
+            "subject": "Test",
+            "body": {
+                "summary": "secret details",
+                "steps": ["step 1"],
+                "files": ["a.rs"],
+                "context": "extra context"
+            }
         })
         .to_string();
-        let msg = format_notification(1, Some("implementer"), &content);
-        assert_eq!(
-            msg,
-            "[Potato: Pane 1 (implementer)] [question] Which DB migration tool?"
+        let msg = format_notification(0, None, &content);
+        assert!(
+            !msg.contains("secret details"),
+            "body should not appear in nudge"
         );
-    }
-
-    #[test]
-    fn format_notification_structured_steps_only() {
-        let content = serde_json::json!({
-            "type": "status",
-            "subject": "Progress update",
-            "body": { "summary": "Done with step 1", "steps": ["step 1", "step 2"] }
-        })
-        .to_string();
-        let msg = format_notification(0, None, &content);
-        assert_eq!(msg, "[Potato: Pane 0] [status] Progress update | 2 steps");
-    }
-
-    #[test]
-    fn format_notification_structured_files_only() {
-        let content = serde_json::json!({
-            "type": "result",
-            "subject": "Completed refactor",
-            "body": { "summary": "Refactored X", "files": ["a.rs"] }
-        })
-        .to_string();
-        let msg = format_notification(0, None, &content);
-        assert_eq!(
-            msg,
-            "[Potato: Pane 0] [result] Completed refactor | 1 files"
+        assert!(!msg.contains("step 1"), "steps should not appear in nudge");
+        assert!(!msg.contains("a.rs"), "files should not appear in nudge");
+        assert!(
+            !msg.contains("extra context"),
+            "context should not appear in nudge"
         );
     }
 
