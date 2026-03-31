@@ -287,14 +287,19 @@ mod tests {
     fn tools_call_send_then_get_messages() {
         let (server0, server1, _state) = make_server_with_state();
 
-        // Pane 0 sends a message.
+        // Pane 0 sends a structured message.
         let send_req = json!({
             "jsonrpc": "2.0",
             "id": 4,
             "method": "tools/call",
             "params": {
                 "name": "potato_send_message",
-                "arguments": {"message": "hey pane 1", "to": "1"}
+                "arguments": {
+                    "type": "status",
+                    "subject": "hey pane 1",
+                    "body": { "summary": "greeting from pane 0" },
+                    "to": "1"
+                }
             }
         });
         let send_resp = parse_response(&server0.handle_request(&send_req.to_string()));
