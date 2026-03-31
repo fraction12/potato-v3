@@ -551,6 +551,7 @@ mod tests {
             content: content.to_string(),
             timestamp: chrono::Utc::now(),
             tool_call: None,
+            turn_seq: 0,
         }
     }
 
@@ -560,6 +561,7 @@ mod tests {
             content: content.to_string(),
             timestamp: chrono::Utc::now(),
             tool_call: None,
+            turn_seq: 0,
         }
     }
 

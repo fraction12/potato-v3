@@ -36,7 +36,6 @@ use clap::{Parser, Subcommand};
 use crossterm::{
     event::{DisableMouseCapture, EnableMouseCapture, KeyCode, KeyModifiers, MouseEventKind},
     execute,
-    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use ratatui::DefaultTerminal;
 use uuid::Uuid;
@@ -191,17 +190,17 @@ async fn run_mcp_server() -> Result<()> {
 struct TerminalGuard;
 
 impl TerminalGuard {
+    /// Enable mouse capture only — raw mode and alternate screen are owned by
+    /// `ratatui::init()` / `ratatui::restore()` (T-863).
     fn enter() -> Result<Self> {
-        enable_raw_mode()?;
-        execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture)?;
+        execute!(io::stdout(), EnableMouseCapture)?;
         Ok(Self)
     }
 }
 
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
-        let _ = disable_raw_mode();
-        let _ = execute!(io::stdout(), DisableMouseCapture, LeaveAlternateScreen);
+        let _ = execute!(io::stdout(), DisableMouseCapture);
     }
 }
 
@@ -355,6 +354,13 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
         // ── Input / message wait ──────────────────────────────────────────────
         let msg = tokio::select! {
             Some(m) = event_rx.recv() => Some(m),
+            // PTY dirty notification — re-render immediately (T-864).
+            Some(()) = async {
+                match state.dirty_rx.as_mut() {
+                    Some(rx) => rx.recv().await,
+                    None => std::future::pending().await,
+                }
+            } => Some(Message::Tick),
             _ = tokio::time::sleep(tick_duration) => Some(Message::Tick),
         };
 
@@ -763,8 +769,18 @@ fn spawn_claude_pane(
         .ok_or_else(|| "Failed to open pane".to_string())?;
 
     let pane_id = pane.id;
-    // dirty_tx notifications are unused — the UI redraws on a tick timer.
-    // No receiver needed; sends in the PTY reader thread are harmless no-ops.
+    // Forward PTY dirty notifications to the shared AppState channel (T-864).
+    {
+        let mut dirty_sub = real_pty.subscribe_dirty();
+        let dirty_fwd = state.dirty_tx.clone();
+        tokio::spawn(async move {
+            while dirty_sub.recv().await.is_ok() {
+                if dirty_fwd.send(()).is_err() {
+                    break; // AppState receiver dropped — shut down.
+                }
+            }
+        });
+    }
     pane.pty = Some(real_pty);
     pane.session.status = crate::app::state::AgentStatus::Idle;
     pane.session.claude_session_id = Some(session_id.clone());
@@ -1063,43 +1079,33 @@ fn drain_inject_requests(state: &mut AppState) {
                 &req.content,
             );
 
-            let target_index = (0..state.panes.len())
-                .find(|&i| state.panes.get(i).map(|p| p.id) == Some(req.to_pane));
-
-            match target_index {
-                Some(idx) => {
-                    match crate::mcp::injection::inject_into_pane(
-                        &mut state.panes,
-                        idx,
-                        &notification,
-                    ) {
-                        Ok(true) => {
-                            tracing::info!(
-                                "Injected text from pane {} to pane {} (Enter pending)",
-                                req.from_pane,
-                                req.to_pane
-                            );
-                            if let Ok(mut pending) = PENDING_ENTERS.lock() {
-                                pending.push(crate::mcp::injection::PendingEnter {
-                                    pane_id: req.to_pane,
-                                    written_at_tick: current_tick,
-                                    delay_ticks: crate::mcp::injection::ENTER_DELAY_TICKS,
-                                });
-                            }
-                        }
-                        Ok(false) => {
-                            tracing::warn!(
-                                "Skipped injection to pane {} (approval pending or no PTY)",
-                                req.to_pane
-                            );
-                        }
-                        Err(e) => {
-                            tracing::warn!("Injection to pane {} failed: {e}", req.to_pane);
-                        }
+            match crate::mcp::injection::inject_into_pane(
+                &mut state.panes,
+                req.to_pane,
+                &notification,
+            ) {
+                Ok(true) => {
+                    tracing::info!(
+                        "Injected text from pane {} to pane {} (Enter pending)",
+                        req.from_pane,
+                        req.to_pane
+                    );
+                    if let Ok(mut pending) = PENDING_ENTERS.lock() {
+                        pending.push(crate::mcp::injection::PendingEnter {
+                            pane_id: req.to_pane,
+                            written_at_tick: current_tick,
+                            delay_ticks: crate::mcp::injection::ENTER_DELAY_TICKS,
+                        });
                     }
                 }
-                None => {
-                    tracing::warn!("Inject target pane {} not found", req.to_pane);
+                Ok(false) => {
+                    tracing::warn!(
+                        "Skipped injection to pane {} (approval pending or no PTY)",
+                        req.to_pane
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!("Injection to pane {} failed: {e}", req.to_pane);
                 }
             }
         }
@@ -1357,6 +1363,22 @@ fn apply_pty_event(state: &mut AppState, event: crate::events::AgentEvent) {
         _ => {}
     }
 
+    // ── SessionBound: migrate the DB row from placeholder UUID to native ID (T-875).
+    if let AgentEvent::SessionBound { agent_session_id } = &event {
+        if let Some(session) = state.session() {
+            let old_id = session.session_id.clone();
+            if old_id != *agent_session_id {
+                if let Some(ref store) = state.store {
+                    if let Err(e) = store.rename_session(&old_id, agent_session_id) {
+                        tracing::warn!(
+                            "Failed to rename session {old_id} → {agent_session_id}: {e}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     // ── Panel routing (Phase-3) ───────────────────────────────────────────────
     match &event {
         AgentEvent::ToolStart { id, name, input } => {
@@ -1485,7 +1507,12 @@ async fn main() -> Result<()> {
         None => mcp::state::InterSessionState::new(),
     }));
     let (inject_tx, inject_rx) = tokio::sync::mpsc::unbounded_channel();
+    // Give InterSessionState its own clone so send_message() can fire injections directly.
+    if let Ok(mut st) = inter_state.lock() {
+        st.set_inject_tx(inject_tx.clone());
+    }
     let (snapshot_tx, snapshot_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (dirty_tx, dirty_rx) = tokio::sync::mpsc::unbounded_channel();
     let (_mcp_bridge, mcp_socket_path) =
         mcp::bridge::McpBridge::start(Arc::clone(&inter_state), inject_tx)?;
 
@@ -1523,6 +1550,8 @@ async fn main() -> Result<()> {
         last_rail_refresh: unix_now(),
         mcp_socket_path: Some(mcp_socket_path),
         inter_session_state: Some(inter_state),
+        dirty_tx,
+        dirty_rx: Some(dirty_rx),
         inject_rx: Some(inject_rx),
         snapshot_tx,
         snapshot_rx: Some(snapshot_rx),

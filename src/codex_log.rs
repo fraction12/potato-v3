@@ -575,6 +575,35 @@ mod tests {
     // ── truncate_str ──────────────────────────────────────────────────────────
 
     #[test]
+    fn poll_resets_offset_on_file_truncation() {
+        let tmp = std::env::temp_dir().join(format!(
+            "potato-codex-rotation-{}.jsonl",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&tmp);
+
+        // Write a complete line and poll to advance the offset.
+        let line1 = r#"{"timestamp":"2025-01-01T00:00:00Z","type":"event_msg","payload":{"type":"turn_completed","usage":{"input_tokens":10,"cached_input_tokens":0,"output_tokens":20}}}"#;
+        std::fs::write(&tmp, format!("{line1}\n")).unwrap();
+
+        let mut t = CodexSessionLogTracker::new(tmp.clone());
+        assert!(t.poll().unwrap());
+        assert_eq!(t.snapshot().usage.input_tokens, 10);
+        assert!(t.offset > 0);
+
+        // Simulate log rotation: truncate and write a shorter, different file.
+        let line2 = r#"{"timestamp":"2025-01-01T00:00:01Z","type":"event_msg","payload":{"type":"turn_completed","usage":{"input_tokens":5,"cached_input_tokens":0,"output_tokens":8}}}"#;
+        std::fs::write(&tmp, format!("{line2}\n")).unwrap();
+
+        // The file is now shorter than the tracker's offset — poll should reset.
+        assert!(t.poll().unwrap());
+        // Tokens accumulate (10 from before + 5 from rotated file).
+        assert_eq!(t.snapshot().usage.input_tokens, 15);
+
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
     fn truncate_str_short_unchanged() {
         assert_eq!(truncate_str("hello", 80), "hello");
     }

@@ -9,7 +9,9 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tokio::sync::mpsc::UnboundedSender;
 
+use super::injection::InjectRequest;
 use super::project_store::ProjectStore;
 
 // ── Domain types ──────────────────────────────────────────────────────────────
@@ -101,6 +103,11 @@ pub struct InterSessionState {
     /// Behind a Mutex because `rusqlite::Connection` is Send but not Sync.
     pub backing_store: Option<Arc<std::sync::Mutex<ProjectStore>>>,
 
+    /// Channel for pushing injection requests to the main event loop.
+    /// When present, `send_message()` automatically fires a PTY injection
+    /// so agents don't have to poll `get_messages()` to see incoming messages.
+    pub inject_tx: Option<UnboundedSender<InjectRequest>>,
+
     /// Pending task events for the main loop to sync to OpenSpec.
     /// Drained by the main loop each tick.
     pub pending_task_events: Vec<TaskEvent>,
@@ -131,6 +138,11 @@ impl InterSessionState {
     /// Create an empty inter-session state with no backing store.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Attach the injection channel. Call once after construction.
+    pub fn set_inject_tx(&mut self, tx: UnboundedSender<InjectRequest>) {
+        self.inject_tx = Some(tx);
     }
 
     /// Create with a backing store and hydrate from it.
@@ -217,6 +229,17 @@ impl InterSessionState {
                 }
             }
         }
+        // Fire PTY injection so the target agent sees the message without polling.
+        if let Some(ref tx) = self.inject_tx {
+            let from_role = self.roles.get(&from_pane).map(|r| r.name.clone());
+            let _ = tx.send(InjectRequest {
+                from_pane,
+                from_role,
+                to_pane,
+                content: msg.content.clone(),
+            });
+        }
+
         let inbox = self.inboxes.entry(to_pane).or_default();
         inbox.push_back(msg);
         // Cap inbox size to prevent unbounded growth.

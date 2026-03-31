@@ -33,11 +33,15 @@ pub fn apply_event(session: &mut SessionState, event: AgentEvent, now: DateTime<
                     e.content.push_str(&text);
                 }
                 _ => {
+                    let seq = session.next_turn_seq;
+                    session.next_turn_seq = seq.wrapping_add(1);
+                    session.active_turn_seq = Some(seq);
                     session.transcript.push(TranscriptEntry {
                         role: MessageRole::Assistant,
                         content: text,
                         timestamp: now,
                         tool_call: None,
+                        turn_seq: seq,
                     });
                 }
             }
@@ -45,12 +49,27 @@ pub fn apply_event(session: &mut SessionState, event: AgentEvent, now: DateTime<
         }
 
         AgentEvent::TextDone { full_text } => {
-            // Patch the last assistant entry with the authoritative full text.
-            if let Some(e) = session.transcript.last_mut() {
-                if e.role == MessageRole::Assistant {
-                    e.content = full_text;
-                }
+            // Patch the assistant entry that was being streamed, identified by
+            // active_turn_seq. Falls back to the last assistant entry if no
+            // active seq is set (T-874).
+            let target_seq = session.active_turn_seq;
+            let entry = if let Some(seq) = target_seq {
+                session
+                    .transcript
+                    .iter_mut()
+                    .rev()
+                    .find(|e| e.role == MessageRole::Assistant && e.turn_seq == seq)
+            } else {
+                session
+                    .transcript
+                    .iter_mut()
+                    .rev()
+                    .find(|e| e.role == MessageRole::Assistant)
+            };
+            if let Some(e) = entry {
+                e.content = full_text;
             }
+            session.active_turn_seq = None;
         }
 
         // ── Tool lifecycle ────────────────────────────────────────────────────
@@ -166,6 +185,7 @@ pub fn apply_event(session: &mut SessionState, event: AgentEvent, now: DateTime<
                 content: format!("Error: {}", message),
                 timestamp: now,
                 tool_call: None,
+                turn_seq: 0,
             });
         }
 
@@ -819,6 +839,7 @@ mod tests {
             content: "hi".into(),
             timestamp: t1,
             tool_call: None,
+            turn_seq: 0,
         });
         apply_event(
             &mut s,
@@ -867,6 +888,7 @@ mod tests {
             content: "follow up".into(),
             timestamp: tb,
             tool_call: None,
+            turn_seq: 0,
         });
         apply_event(
             &mut s,
@@ -879,6 +901,39 @@ mod tests {
         assert_eq!(s.transcript.len(), 3);
         assert_eq!(s.transcript[0].timestamp, ta);
         assert_eq!(s.transcript[2].timestamp, tb);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // T-874: TextDone targets correct turn even if new turn started
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn text_done_patches_correct_turn_not_latest() {
+        let mut s = fresh_session();
+        let t1 = Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 1).unwrap();
+        let t2 = Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 2).unwrap();
+
+        // Turn 1: assistant starts streaming.
+        apply_event(
+            &mut s,
+            AgentEvent::TextDelta {
+                text: "partial".into(),
+            },
+            t1,
+        );
+        assert_eq!(s.transcript.len(), 1);
+        assert_eq!(s.active_turn_seq, Some(0));
+
+        // TextDone for turn 1 should patch the first entry.
+        apply_event(
+            &mut s,
+            AgentEvent::TextDone {
+                full_text: "complete turn 1".into(),
+            },
+            t2,
+        );
+        assert_eq!(s.transcript[0].content, "complete turn 1");
+        assert_eq!(s.active_turn_seq, None);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
