@@ -655,7 +655,9 @@ mod tests {
         let store = fresh_store();
         let now = unix_now();
         store
-            .upsert_session("old-uuid", "proj", "claude", None, "Title", None, 10, 20, 1, now, now)
+            .upsert_session(
+                "old-uuid", "proj", "claude", None, "Title", None, 10, 20, 1, now, now,
+            )
             .expect("upsert");
         store
             .append_event(&SessionEvent {
@@ -668,7 +670,9 @@ mod tests {
             })
             .expect("append");
 
-        store.rename_session("old-uuid", "native-id").expect("rename");
+        store
+            .rename_session("old-uuid", "native-id")
+            .expect("rename");
 
         // Old ID should be gone.
         let sessions = store.list_sessions().expect("list");

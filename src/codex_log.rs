@@ -576,8 +576,10 @@ mod tests {
 
     #[test]
     fn poll_resets_offset_on_file_truncation() {
-        let tmp = std::env::temp_dir()
-            .join(format!("potato-codex-rotation-{}.jsonl", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!(
+            "potato-codex-rotation-{}.jsonl",
+            std::process::id()
+        ));
         let _ = std::fs::remove_file(&tmp);
 
         // Write a complete line and poll to advance the offset.
