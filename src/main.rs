@@ -44,7 +44,7 @@ use uuid::Uuid;
 use crate::pty::{TurnHandle, key_event_to_bytes};
 use adapters::{AgentAdapter, claude::ClaudeAdapter, codex::CodexAdapter, generic::GenericAdapter};
 use app::message::Message;
-use app::state::{AgentInfo, DashboardState};
+use app::state::{AgentInfo, DashboardState, PathSnapshots};
 use app::state::{AppScreen, AppState, CockpitFocus, DashboardFocus, SnapshotMsg};
 use app::update::update;
 use config::load_config;
@@ -244,6 +244,34 @@ fn detect_agents() -> Vec<AgentInfo> {
     agents
 }
 
+/// Snapshot filesystem paths for the dashboard (`.potato/`, `openspec/`, etc.).
+fn snapshot_paths() -> PathSnapshots {
+    PathSnapshots {
+        cwd: std::env::current_dir()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| "unknown".to_string()),
+        potato_exists: std::path::Path::new(".potato").exists(),
+        openspec_exists: std::path::Path::new("openspec/changes").exists(),
+        mcp_json_exists: std::path::Path::new(".mcp.json").exists(),
+        agents_toml_exists: std::path::Path::new(".potato/agents.toml").exists(),
+    }
+}
+
+/// Rebuild a full `DashboardState` — agents, roles, and path snapshots from disk.
+///
+/// Used when returning to the dashboard after all panes close, so state isn't lost.
+fn rebuild_dashboard_state() -> DashboardState {
+    let project_roles = std::env::current_dir()
+        .map(|cwd| roles::load_roles(&cwd))
+        .unwrap_or_default();
+    DashboardState {
+        available_agents: detect_agents(),
+        roles: project_roles,
+        path_snapshots: snapshot_paths(),
+        ..DashboardState::default()
+    }
+}
+
 // ── Async app loop ────────────────────────────────────────────────────────────
 
 async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Result<()> {
@@ -410,10 +438,7 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                         }
 
                         if state.panes.is_empty() {
-                            state.screen = AppScreen::Dashboard(DashboardState {
-                                available_agents: detect_agents(),
-                                ..DashboardState::default()
-                            });
+                            state.screen = AppScreen::Dashboard(rebuild_dashboard_state());
                         }
                         continue;
                     }
@@ -586,10 +611,7 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
             if had_panes && state.panes.is_empty() && matches!(state.screen, AppScreen::Session(_))
             {
                 tracing::info!("All panes closed, returning to dashboard");
-                state.screen = AppScreen::Dashboard(DashboardState {
-                    available_agents: detect_agents(),
-                    ..DashboardState::default()
-                });
+                state.screen = AppScreen::Dashboard(rebuild_dashboard_state());
             }
         }
 
@@ -1431,18 +1453,7 @@ async fn main() -> Result<()> {
     let model = cli.model.unwrap_or_else(|| cfg.default_agent.clone());
 
     // Snapshot filesystem paths once (not every render frame).
-    let path_snapshots = {
-        use crate::app::state::PathSnapshots;
-        PathSnapshots {
-            cwd: std::env::current_dir()
-                .map(|p| p.display().to_string())
-                .unwrap_or_else(|_| "unknown".to_string()),
-            potato_exists: std::path::Path::new(".potato").exists(),
-            openspec_exists: std::path::Path::new("openspec/changes").exists(),
-            mcp_json_exists: std::path::Path::new(".mcp.json").exists(),
-            agents_toml_exists: std::path::Path::new(".potato/agents.toml").exists(),
-        }
-    };
+    let path_snapshots = snapshot_paths();
 
     // Pre-load session list for the left rail.
     let initial_sessions = store.list_sessions().unwrap_or_default();
