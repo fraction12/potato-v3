@@ -295,13 +295,12 @@ fn validate_structured_message(args: &Value) -> Result<(String, String, Value), 
     let subject = match args.get("subject").and_then(Value::as_str) {
         Some(s) => {
             if s.len() > 200 {
-                errors.push(format!(
-                    "subject exceeds 200 chars (got {})",
-                    s.len()
-                ));
+                errors.push(format!("subject exceeds 200 chars (got {})", s.len()));
             }
             if contains_markdown(s) {
-                errors.push("subject contains markdown (**, ###, or ```). Plain text only.".to_string());
+                errors.push(
+                    "subject contains markdown (**, ###, or ```). Plain text only.".to_string(),
+                );
             }
             Some(s.to_string())
         }
@@ -318,10 +317,7 @@ fn validate_structured_message(args: &Value) -> Result<(String, String, Value), 
             match b.get("summary").and_then(Value::as_str) {
                 Some(s) => {
                     if s.len() > 500 {
-                        errors.push(format!(
-                            "body.summary exceeds 500 chars (got {})",
-                            s.len()
-                        ));
+                        errors.push(format!("body.summary exceeds 500 chars (got {})", s.len()));
                     }
                     if contains_markdown(s) {
                         errors.push("body.summary contains markdown. Plain text only.".to_string());
@@ -973,7 +969,11 @@ mod tests {
         });
         let result = handle_tool_call(TOOL_SEND_MESSAGE, &args, 0, &state);
         assert!(result.is_error);
-        assert!(result.content[0].text.contains("Invalid type: 'announcement'"));
+        assert!(
+            result.content[0]
+                .text
+                .contains("Invalid type: 'announcement'")
+        );
     }
 
     #[test]
@@ -999,7 +999,11 @@ mod tests {
         });
         let result = handle_tool_call(TOOL_SEND_MESSAGE, &args, 0, &state);
         assert!(result.is_error);
-        assert!(result.content[0].text.contains("body.summary contains markdown"));
+        assert!(
+            result.content[0]
+                .text
+                .contains("body.summary contains markdown")
+        );
     }
 
     #[test]
@@ -1012,7 +1016,11 @@ mod tests {
         });
         let result = handle_tool_call(TOOL_SEND_MESSAGE, &args, 0, &state);
         assert!(result.is_error);
-        assert!(result.content[0].text.contains("body.steps[1] contains markdown"));
+        assert!(
+            result.content[0]
+                .text
+                .contains("body.steps[1] contains markdown")
+        );
     }
 
     #[test]
@@ -1040,7 +1048,11 @@ mod tests {
         });
         let result = handle_tool_call(TOOL_SEND_MESSAGE, &args, 0, &state);
         assert!(result.is_error);
-        assert!(result.content[0].text.contains("body.summary exceeds 500 chars"));
+        assert!(
+            result.content[0]
+                .text
+                .contains("body.summary exceeds 500 chars")
+        );
     }
 
     #[test]
@@ -1054,7 +1066,11 @@ mod tests {
         });
         let result = handle_tool_call(TOOL_SEND_MESSAGE, &args, 0, &state);
         assert!(result.is_error);
-        assert!(result.content[0].text.contains("body.context exceeds 1000 chars"));
+        assert!(
+            result.content[0]
+                .text
+                .contains("body.context exceeds 1000 chars")
+        );
     }
 
     #[test]
@@ -1068,7 +1084,11 @@ mod tests {
         });
         let result = handle_tool_call(TOOL_SEND_MESSAGE, &args, 0, &state);
         assert!(result.is_error);
-        assert!(result.content[0].text.contains("body.steps[0] exceeds 200 chars"));
+        assert!(
+            result.content[0]
+                .text
+                .contains("body.steps[0] exceeds 200 chars")
+        );
     }
 
     #[test]
@@ -1112,7 +1132,11 @@ mod tests {
         });
         let result = handle_tool_call(TOOL_SEND_MESSAGE, &args, 0, &state);
         assert!(result.is_error);
-        assert!(result.content[0].text.contains("body must be a JSON object"));
+        assert!(
+            result.content[0]
+                .text
+                .contains("body must be a JSON object")
+        );
     }
 
     #[test]
@@ -1125,7 +1149,11 @@ mod tests {
         });
         let result = handle_tool_call(TOOL_SEND_MESSAGE, &args, 0, &state);
         assert!(result.is_error);
-        assert!(result.content[0].text.contains("Missing required field: body.summary"));
+        assert!(
+            result.content[0]
+                .text
+                .contains("Missing required field: body.summary")
+        );
     }
 
     #[test]

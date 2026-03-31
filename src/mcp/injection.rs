@@ -237,7 +237,8 @@ mod tests {
             "type": "question",
             "subject": "Which DB migration tool?",
             "body": { "summary": "Should we use refinery or sqlx-migrate?" }
-        }).to_string();
+        })
+        .to_string();
         let msg = format_notification(1, Some("implementer"), &content);
         assert_eq!(
             msg,
@@ -251,7 +252,8 @@ mod tests {
             "type": "status",
             "subject": "Progress update",
             "body": { "summary": "Done with step 1", "steps": ["step 1", "step 2"] }
-        }).to_string();
+        })
+        .to_string();
         let msg = format_notification(0, None, &content);
         assert_eq!(msg, "[Potato: Pane 0] [status] Progress update | 2 steps");
     }
@@ -262,9 +264,13 @@ mod tests {
             "type": "result",
             "subject": "Completed refactor",
             "body": { "summary": "Refactored X", "files": ["a.rs"] }
-        }).to_string();
+        })
+        .to_string();
         let msg = format_notification(0, None, &content);
-        assert_eq!(msg, "[Potato: Pane 0] [result] Completed refactor | 1 files");
+        assert_eq!(
+            msg,
+            "[Potato: Pane 0] [result] Completed refactor | 1 files"
+        );
     }
 
     #[test]
