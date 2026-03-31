@@ -1507,6 +1507,10 @@ async fn main() -> Result<()> {
         None => mcp::state::InterSessionState::new(),
     }));
     let (inject_tx, inject_rx) = tokio::sync::mpsc::unbounded_channel();
+    // Give InterSessionState its own clone so send_message() can fire injections directly.
+    if let Ok(mut st) = inter_state.lock() {
+        st.set_inject_tx(inject_tx.clone());
+    }
     let (snapshot_tx, snapshot_rx) = tokio::sync::mpsc::unbounded_channel();
     let (dirty_tx, dirty_rx) = tokio::sync::mpsc::unbounded_channel();
     let (_mcp_bridge, mcp_socket_path) =

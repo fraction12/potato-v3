@@ -212,34 +212,10 @@ fn dispatch_request(
         }
     };
 
-    // Pre-parse the RPC request once so helpers don't re-parse it.
-    let parsed_rpc: Option<serde_json::Value> = serde_json::from_str(&bridge_req.request).ok();
-
-    let is_send_message = parsed_rpc
-        .as_ref()
-        .map(is_send_message_call)
-        .unwrap_or(false);
-
+    // Injection is now handled inside InterSessionState::send_message() —
+    // the bridge no longer does post-hoc parsing of RPC args.
     let server = McpServer::new(bridge_req.pane_id, Arc::clone(state));
     let rpc_response = server.handle_request(&bridge_req.request);
-
-    // After a successful send_message, push an injection request so the
-    // main event loop writes the message into the target pane's PTY.
-    // Only inject if the RPC response indicates success (no "error" field).
-    let is_success = serde_json::from_str::<serde_json::Value>(&rpc_response)
-        .map(|v| v.get("error").is_none())
-        .unwrap_or(false);
-    if is_send_message && is_success {
-        if let Some(tx) = inject_tx {
-            if let Some(ref v) = parsed_rpc {
-                if let Some(inject) = build_inject_request(bridge_req.pane_id, v, state) {
-                    if let Err(e) = tx.send(inject) {
-                        tracing::warn!("Failed to send inject request: {e}");
-                    }
-                }
-            }
-        }
-    }
 
     let resp = BridgeResponse {
         response: rpc_response,
@@ -247,37 +223,10 @@ fn dispatch_request(
     serde_json::to_string(&resp).unwrap_or_default()
 }
 
-/// Check whether a pre-parsed JSON-RPC request is a `tools/call` for `potato_send_message`.
-fn is_send_message_call(v: &serde_json::Value) -> bool {
-    v.get("method").and_then(|m| m.as_str()) == Some("tools/call")
-        && v.pointer("/params/name").and_then(|n| n.as_str()) == Some("potato_send_message")
-}
-
-/// Extract injection details from a pre-parsed send_message RPC request.
-fn build_inject_request(
-    from_pane: u64,
-    v: &serde_json::Value,
-    state: &Arc<Mutex<InterSessionState>>,
-) -> Option<InjectRequest> {
-    let args = v.pointer("/params/arguments")?;
-    let message = args.get("message")?.as_str()?;
-
-    let st = state.lock().ok()?;
-    let to_pane: u64 = match args.get("to").and_then(|t| t.as_str()) {
-        Some("partner") | None => st.resolve_partner(from_pane)?,
-        Some(id_str) => id_str.parse().ok()?,
-    };
-
-    let from_role = st.roles.get(&from_pane).map(|r| r.name.clone());
-    drop(st);
-
-    Some(InjectRequest {
-        from_pane,
-        from_role,
-        to_pane,
-        content: message.to_string(),
-    })
-}
+// NOTE: The old `is_send_message_call()` and `build_inject_request()` functions
+// have been removed. Injection is now triggered inside `InterSessionState::send_message()`
+// which has all the context (from_pane, to_pane, content, roles) without needing to
+// re-parse raw RPC args.
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
