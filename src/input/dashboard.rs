@@ -8,7 +8,7 @@ use super::KeyAction;
 
 /// Handle a key event on the Dashboard screen.
 pub fn handle(state: &mut AppState, key: &KeyEvent) -> KeyAction {
-    // ── Ctrl+\ — quit from any dashboard context ─────────────────────
+    // ── Ctrl+Q — quit from any dashboard context ─────────────────────
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('\\') {
         return KeyAction::Quit;
     }
@@ -137,7 +137,7 @@ pub fn handle(state: &mut AppState, key: &KeyEvent) -> KeyAction {
         if dash.focus == DashboardFocus::Detail {
             dash.focus = DashboardFocus::Menu;
         }
-        // Esc on Menu is no-op (Ctrl+\ to quit).
+        // Esc on Menu is no-op (Ctrl+Q to quit).
         return KeyAction::Handled;
     }
 

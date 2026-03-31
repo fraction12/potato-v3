@@ -191,6 +191,6 @@ tick_rate_ms = 100
         // All other fields should have defaults.
         assert_eq!(config.theme, "earth");
         assert_eq!(config.tick_rate_ms, 250);
-        assert_eq!(config.keybinds.quit, "ctrl+\\");
+        assert_eq!(config.keybinds.quit, "ctrl+q");
     }
 }

@@ -839,6 +839,6 @@ mod tests {
         assert_eq!(state.config.default_agent, "claude");
         assert_eq!(state.config.theme, "earth");
         assert_eq!(state.config.tick_rate_ms, 250);
-        assert_eq!(state.config.keybinds.quit, "ctrl+\\");
+        assert_eq!(state.config.keybinds.quit, "ctrl+q");
     }
 }
