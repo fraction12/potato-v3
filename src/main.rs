@@ -1024,6 +1024,18 @@ fn spawn_agent_pane(
                 .open(&session_id, "codex")
                 .ok_or_else(|| "Failed to open pane".to_string())?;
 
+            // Forward PTY dirty notifications to the shared AppState channel (T-864).
+            {
+                let mut dirty_sub = real_pty.subscribe_dirty();
+                let dirty_fwd = state.dirty_tx.clone();
+                tokio::spawn(async move {
+                    while dirty_sub.recv().await.is_ok() {
+                        if dirty_fwd.send(()).is_err() {
+                            break;
+                        }
+                    }
+                });
+            }
             pane.pty = Some(real_pty);
             pane.session.status = crate::app::state::AgentStatus::Idle;
             pane.session.claude_session_id = Some(session_id.clone());
@@ -1135,6 +1147,18 @@ fn spawn_agent_pane(
                 .open(&session_id, other)
                 .ok_or_else(|| "Failed to open pane".to_string())?;
 
+            // Forward PTY dirty notifications to the shared AppState channel (T-864).
+            {
+                let mut dirty_sub = real_pty.subscribe_dirty();
+                let dirty_fwd = state.dirty_tx.clone();
+                tokio::spawn(async move {
+                    while dirty_sub.recv().await.is_ok() {
+                        if dirty_fwd.send(()).is_err() {
+                            break;
+                        }
+                    }
+                });
+            }
             pane.pty = Some(real_pty);
             pane.session.status = crate::app::state::AgentStatus::Idle;
             pane.session.claude_session_id = Some(session_id.clone());
