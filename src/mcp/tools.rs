@@ -262,6 +262,14 @@ fn collect_all_roles(st: &InterSessionState, self_pane: Option<u64>) -> Vec<Valu
         .collect()
 }
 
+/// Collect unclaimed defined roles for inclusion in tool responses.
+fn collect_available_defined_roles(st: &InterSessionState) -> Vec<Value> {
+    st.get_available_roles()
+        .iter()
+        .map(|r| json!({"name": r.name, "description": r.description}))
+        .collect()
+}
+
 // ── Individual handlers ───────────────────────────────────────────────────────
 
 /// Markdown markers that are rejected in structured message fields.
@@ -463,7 +471,31 @@ fn handle_send_message(
         Some(id) => id,
         None => match st.resolve_partner(pane_id) {
             Some(partner) => partner,
-            None => return CallToolResult::failure("No partner pane found."),
+            None => {
+                // With >2 panes, list available targets so the agent knows who to address.
+                let pane_list: Vec<String> = st
+                    .known_panes
+                    .iter()
+                    .filter(|&&id| id != pane_id)
+                    .map(|&id| {
+                        let role = st
+                            .roles
+                            .get(&id)
+                            .map(|r| format!("{} ({})", r.name, r.description))
+                            .unwrap_or_else(|| "unassigned".into());
+                        format!("  pane {id}: {role}")
+                    })
+                    .collect();
+                let msg = if pane_list.is_empty() {
+                    "No partner pane found.".to_string()
+                } else {
+                    format!(
+                        "Multiple panes active — specify a target using the 'to' parameter with a pane ID:\n{}",
+                        pane_list.join("\n")
+                    )
+                };
+                return CallToolResult::failure(msg);
+            }
         },
     };
 
@@ -689,23 +721,27 @@ fn handle_claim_role(
     match st.claim_role(pane_id, role) {
         RoleClaimResult::Claimed => {
             let all_roles = collect_all_roles(&st, None);
+            let available_roles = collect_available_defined_roles(&st);
             CallToolResult::success(
                 serde_json::to_string_pretty(&json!({
                     "claimed": true,
                     "role": role_name,
-                    "all_roles": all_roles
+                    "all_roles": all_roles,
+                    "available_defined_roles": available_roles
                 }))
                 .unwrap_or_default(),
             )
         }
         RoleClaimResult::AlreadyClaimed { held_by } => {
             let all_roles = collect_all_roles(&st, None);
+            let available_roles = collect_available_defined_roles(&st);
             CallToolResult::success(serde_json::to_string_pretty(&json!({
                 "claimed": false,
                 "role": role_name,
                 "held_by": format!("pane-{held_by}"),
                 "reason": format!("Role '{}' is already claimed by pane {}. Pick a different role.", role_name, held_by),
-                "all_roles": all_roles
+                "all_roles": all_roles,
+                "available_defined_roles": available_roles
             })).unwrap_or_default())
         }
     }
@@ -717,11 +753,13 @@ fn handle_get_role(pane_id: u64, state: &Arc<Mutex<InterSessionState>>) -> CallT
 
     let all_roles = collect_all_roles(&st, Some(pane_id));
 
+    let available_roles = collect_available_defined_roles(&st);
     let result = json!({
         "pane_id": pane_id,
         "your_role": role.map(|r| r.name.clone()).unwrap_or_else(|| "unassigned".to_string()),
         "your_role_description": role.map(|r| r.description.clone()).unwrap_or_default(),
-        "all_roles": all_roles
+        "all_roles": all_roles,
+        "available_defined_roles": available_roles
     });
 
     CallToolResult::success(serde_json::to_string_pretty(&result).unwrap_or_default())
@@ -1550,5 +1588,60 @@ mod tests {
         let result = handle_tool_call(TOOL_GET_ROLE, &json!({}), 0, &state);
         assert!(!result.is_error);
         assert!(result.content[0].text.contains("implementer"));
+    }
+
+    // ── Multi-pane messaging disambiguation ──────────────────────────────────
+
+    fn make_state_3_panes() -> Arc<Mutex<InterSessionState>> {
+        let state = Arc::new(Mutex::new(InterSessionState::new()));
+        {
+            let mut st = state.lock().unwrap();
+            st.register_pane(0);
+            st.register_pane(1);
+            st.register_pane(2);
+            st.set_role(
+                1,
+                PaneRole {
+                    name: "implementer".into(),
+                    description: "Builds things".into(),
+                },
+            );
+            st.set_role(
+                2,
+                PaneRole {
+                    name: "tester".into(),
+                    description: "Tests things".into(),
+                },
+            );
+        }
+        state
+    }
+
+    #[test]
+    fn send_message_requires_explicit_target_with_3_panes() {
+        let state = make_state_3_panes();
+        let args = structured_msg("hello", "hi there");
+        // to=partner (default) should fail with >2 panes.
+        let result = handle_tool_call(TOOL_SEND_MESSAGE, &args, 0, &state);
+        assert!(result.is_error);
+        let text = &result.content[0].text;
+        assert!(
+            text.contains("Multiple panes active"),
+            "expected disambiguation error, got: {text}"
+        );
+        assert!(text.contains("pane 1"), "should list pane 1");
+        assert!(text.contains("pane 2"), "should list pane 2");
+        assert!(text.contains("implementer"), "should show roles");
+    }
+
+    #[test]
+    fn send_message_explicit_target_works_with_3_panes() {
+        let state = make_state_3_panes();
+        let mut args = structured_msg("hello", "hi there");
+        args["to"] = json!("2");
+        let result = handle_tool_call(TOOL_SEND_MESSAGE, &args, 0, &state);
+        assert!(!result.is_error);
+        let msgs = state.lock().unwrap().get_messages(2, false);
+        assert_eq!(msgs.len(), 1);
     }
 }
