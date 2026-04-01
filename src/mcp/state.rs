@@ -52,6 +52,14 @@ pub struct PaneRole {
     pub description: String,
 }
 
+/// A role defined in `roles.toml` that can be claimed by a pane.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DefinedRole {
+    pub name: String,
+    pub description: String,
+    pub claimed_by: Option<u64>,
+}
+
 /// Result of attempting to claim a role.
 #[derive(Debug, Clone, PartialEq)]
 pub enum RoleClaimResult {
@@ -107,6 +115,9 @@ pub struct InterSessionState {
     /// When present, `send_message()` automatically fires a PTY injection
     /// so agents don't have to poll `get_messages()` to see incoming messages.
     pub inject_tx: Option<UnboundedSender<InjectRequest>>,
+
+    /// Defined roles from `roles.toml` that panes can claim.
+    pub defined_roles: Vec<DefinedRole>,
 
     /// Pending task events for the main loop to sync to OpenSpec.
     /// Drained by the main loop each tick.
@@ -194,9 +205,20 @@ impl InterSessionState {
 
     /// Find the partner pane ID for `pane_id`.
     ///
-    /// Returns the first known pane that isn't `pane_id`, or `None`.
+    /// With exactly 2 panes, returns the other one. With >2 panes, returns
+    /// `None` because the target is ambiguous — callers must specify explicitly.
     pub fn resolve_partner(&self, pane_id: u64) -> Option<u64> {
-        self.known_panes.iter().find(|&&id| id != pane_id).copied()
+        let others: Vec<u64> = self
+            .known_panes
+            .iter()
+            .filter(|&&id| id != pane_id)
+            .copied()
+            .collect();
+        if others.len() == 1 {
+            Some(others[0])
+        } else {
+            None
+        }
     }
 
     // ── Messaging ─────────────────────────────────────────────────────────────
@@ -306,6 +328,49 @@ impl InterSessionState {
     /// Get the role assigned to a pane, if any.
     pub fn get_role(&self, pane_id: u64) -> Option<&PaneRole> {
         self.roles.get(&pane_id)
+    }
+
+    // ── Defined roles ─────────────────────────────────────────────────────
+
+    /// Seed the defined roles list from `roles.toml` data.
+    pub fn seed_defined_roles(&mut self, roles: Vec<(String, String)>) {
+        self.defined_roles = roles
+            .into_iter()
+            .map(|(name, description)| DefinedRole {
+                name,
+                description,
+                claimed_by: None,
+            })
+            .collect();
+    }
+
+    /// Return defined roles that have not yet been claimed.
+    pub fn get_available_roles(&self) -> Vec<&DefinedRole> {
+        self.defined_roles
+            .iter()
+            .filter(|r| r.claimed_by.is_none())
+            .collect()
+    }
+
+    /// Claim a defined role for a pane. Returns `Err` if not found or already taken.
+    pub fn claim_defined_role(&mut self, pane_id: u64, role_name: &str) -> Result<(), String> {
+        let role = self
+            .defined_roles
+            .iter_mut()
+            .find(|r| r.name.eq_ignore_ascii_case(role_name));
+        match role {
+            None => Err(format!("Defined role '{role_name}' not found")),
+            Some(r) => match r.claimed_by {
+                Some(holder) if holder != pane_id => Err(format!(
+                    "Role '{}' already claimed by pane {holder}",
+                    r.name
+                )),
+                _ => {
+                    r.claimed_by = Some(pane_id);
+                    Ok(())
+                }
+            },
+        }
     }
 
     /// List all currently claimed roles.
@@ -939,11 +1004,95 @@ mod tests {
     }
 
     #[test]
+    fn resolve_partner_with_2_panes_returns_other() {
+        let mut state = make_state();
+        state.register_pane(10);
+        state.register_pane(20);
+        assert_eq!(state.resolve_partner(10), Some(20));
+        assert_eq!(state.resolve_partner(20), Some(10));
+    }
+
+    #[test]
+    fn resolve_partner_with_3_panes_returns_none() {
+        let mut state = make_state();
+        state.register_pane(10);
+        state.register_pane(20);
+        state.register_pane(30);
+        // With >2 panes, resolve_partner should return None (ambiguous).
+        assert_eq!(state.resolve_partner(10), None);
+        assert_eq!(state.resolve_partner(20), None);
+        assert_eq!(state.resolve_partner(30), None);
+    }
+
+    #[test]
     fn register_pane_is_idempotent() {
         let mut state = make_state();
         state.register_pane(0);
         state.register_pane(0);
         state.register_pane(0);
         assert_eq!(state.known_panes.len(), 1);
+    }
+
+    // ── Defined roles ────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_seed_defined_roles() {
+        let mut state = make_state();
+        state.seed_defined_roles(vec![
+            ("architect".into(), "Designs systems".into()),
+            ("implementer".into(), "Builds features".into()),
+        ]);
+        assert_eq!(state.defined_roles.len(), 2);
+        assert_eq!(state.defined_roles[0].name, "architect");
+        assert_eq!(state.defined_roles[1].name, "implementer");
+        assert!(state.defined_roles[0].claimed_by.is_none());
+    }
+
+    #[test]
+    fn test_get_available_roles_filters_claimed() {
+        let mut state = make_state();
+        state.seed_defined_roles(vec![
+            ("architect".into(), "Designs".into()),
+            ("implementer".into(), "Builds".into()),
+            ("tester".into(), "Tests".into()),
+        ]);
+        state.claim_defined_role(10, "architect").unwrap();
+
+        let available = state.get_available_roles();
+        assert_eq!(available.len(), 2);
+        let names: Vec<&str> = available.iter().map(|r| r.name.as_str()).collect();
+        assert!(names.contains(&"implementer"));
+        assert!(names.contains(&"tester"));
+        assert!(!names.contains(&"architect"));
+    }
+
+    #[test]
+    fn test_claim_defined_role_marks_claimed() {
+        let mut state = make_state();
+        state.seed_defined_roles(vec![("architect".into(), "Designs".into())]);
+        let result = state.claim_defined_role(10, "architect");
+        assert!(result.is_ok());
+        assert_eq!(state.defined_roles[0].claimed_by, Some(10));
+    }
+
+    #[test]
+    fn test_claim_defined_role_already_taken() {
+        let mut state = make_state();
+        state.seed_defined_roles(vec![("architect".into(), "Designs".into())]);
+        state.claim_defined_role(10, "architect").unwrap();
+        let result = state.claim_defined_role(20, "architect");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("already claimed"), "got: {err}");
+    }
+
+    #[test]
+    fn test_claim_defined_role_not_found() {
+        let mut state = make_state();
+        state.seed_defined_roles(vec![("architect".into(), "Designs".into())]);
+        let result = state.claim_defined_role(10, "nonexistent");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("not found"), "got: {err}");
     }
 }

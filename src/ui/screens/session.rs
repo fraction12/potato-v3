@@ -110,16 +110,10 @@ pub fn render_session(frame: &mut Frame, area: Rect, state: &mut AppState) {
     if n_panes == 0 {
         // Fall back to legacy single PTY or placeholder.
         render_pty_viewport_legacy(frame, pty_area, state, focus);
-    } else if n_panes == 1 {
-        render_pane_viewport(frame, pty_area, state, 0, active_pane_idx == 0, focus);
     } else {
-        // Split the PTY area horizontally for each pane.
-        let constraints: Vec<Constraint> = (0..n_panes)
-            .map(|_| Constraint::Ratio(1, n_panes as u32))
-            .collect();
-        let pane_areas = Layout::horizontal(constraints).split(pty_area);
-        for i in 0..n_panes {
-            render_pane_viewport(frame, pane_areas[i], state, i, i == active_pane_idx, focus);
+        let pane_rects = compute_pane_grid(pty_area, n_panes);
+        for (i, &rect) in pane_rects.iter().enumerate() {
+            render_pane_viewport(frame, rect, state, i, i == active_pane_idx, focus);
         }
     }
 
@@ -1146,6 +1140,67 @@ fn relative_date(ts: i64) -> String {
     }
 }
 
+// ── Grid layout ──────────────────────────────────────────────────────────────
+
+/// Compute a grid of [`Rect`]s for `n_panes` within `area`.
+///
+/// Layout rules:
+/// - 1 pane: full area
+/// - 2 panes: 2 columns, 1 row
+/// - 3 panes: top row 2 cols, bottom row 1 col (full width)
+/// - 4 panes: 2×2 grid
+/// - 5 panes: top row 3 cols, bottom row 2 cols
+/// - 6 panes: 3×2 grid
+///
+/// Returns an empty vec for `n_panes == 0`.
+fn compute_pane_grid(area: Rect, n_panes: usize) -> Vec<Rect> {
+    if n_panes == 0 {
+        return vec![];
+    }
+    if n_panes == 1 {
+        return vec![area];
+    }
+
+    // Determine row layout: (cols_in_top_row, cols_in_bottom_row)
+    let (top_cols, bottom_cols) = match n_panes {
+        2 => (2, 0),
+        3 => (2, 1),
+        4 => (2, 2),
+        5 => (3, 2),
+        6 => (3, 3),
+        _ => {
+            // Fallback: all in one row (shouldn't happen with MAX_PANES=6)
+            return Layout::horizontal((0..n_panes).map(|_| Constraint::Ratio(1, n_panes as u32)))
+                .split(area)
+                .iter()
+                .copied()
+                .collect();
+        }
+    };
+
+    let n_rows = if bottom_cols == 0 { 1 } else { 2 };
+    let rows =
+        Layout::vertical((0..n_rows).map(|_| Constraint::Ratio(1, n_rows as u32))).split(area);
+
+    let mut rects = Vec::with_capacity(n_panes);
+
+    // Top row
+    let top_areas =
+        Layout::horizontal((0..top_cols).map(|_| Constraint::Ratio(1, top_cols as u32)))
+            .split(rows[0]);
+    rects.extend(top_areas.iter().copied());
+
+    // Bottom row (if any)
+    if bottom_cols > 0 {
+        let bot_areas =
+            Layout::horizontal((0..bottom_cols).map(|_| Constraint::Ratio(1, bottom_cols as u32)))
+                .split(rows[1]);
+        rects.extend(bot_areas.iter().copied());
+    }
+
+    rects
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -1342,5 +1397,145 @@ mod tests {
     #[test]
     fn wrap_text_empty() {
         assert_eq!(wrap_text("", 10), vec![""]);
+    }
+
+    // ── Grid layout tests ────────────────────────────────────────────────────
+
+    /// Helper: assert no two rects overlap.
+    fn assert_no_overlap(rects: &[Rect]) {
+        for i in 0..rects.len() {
+            for j in (i + 1)..rects.len() {
+                let a = rects[i];
+                let b = rects[j];
+                let overlap_x = a.x < b.x + b.width && b.x < a.x + a.width;
+                let overlap_y = a.y < b.y + b.height && b.y < a.y + a.height;
+                assert!(
+                    !(overlap_x && overlap_y),
+                    "rects {i} and {j} overlap: {a:?} vs {b:?}"
+                );
+            }
+        }
+    }
+
+    /// Helper: assert the rects collectively cover the full width of the area.
+    fn assert_full_width(rects: &[Rect], area: Rect) {
+        // Union of all x-ranges should cover area.x..area.x+area.width.
+        let min_x = rects.iter().map(|r| r.x).min().unwrap();
+        let max_x = rects.iter().map(|r| r.x + r.width).max().unwrap();
+        assert_eq!(min_x, area.x, "rects don't start at area left edge");
+        assert_eq!(
+            max_x,
+            area.x + area.width,
+            "rects don't reach area right edge"
+        );
+    }
+
+    /// Helper: assert the rects collectively cover the full height of the area.
+    fn assert_full_height(rects: &[Rect], area: Rect) {
+        let min_y = rects.iter().map(|r| r.y).min().unwrap();
+        let max_y = rects.iter().map(|r| r.y + r.height).max().unwrap();
+        assert_eq!(min_y, area.y, "rects don't start at area top edge");
+        assert_eq!(
+            max_y,
+            area.y + area.height,
+            "rects don't reach area bottom edge"
+        );
+    }
+
+    const GRID_AREA: Rect = Rect {
+        x: 0,
+        y: 0,
+        width: 200,
+        height: 60,
+    };
+
+    #[test]
+    fn test_grid_0_panes() {
+        let rects = compute_pane_grid(GRID_AREA, 0);
+        assert!(rects.is_empty());
+    }
+
+    #[test]
+    fn test_grid_1_pane() {
+        let rects = compute_pane_grid(GRID_AREA, 1);
+        assert_eq!(rects.len(), 1);
+        assert_eq!(rects[0], GRID_AREA);
+    }
+
+    #[test]
+    fn test_grid_2_panes() {
+        let rects = compute_pane_grid(GRID_AREA, 2);
+        assert_eq!(rects.len(), 2);
+        assert_no_overlap(&rects);
+        assert_full_width(&rects, GRID_AREA);
+        assert_full_height(&rects, GRID_AREA);
+        // Both should be side-by-side (same y, same height)
+        assert_eq!(rects[0].y, rects[1].y);
+        assert_eq!(rects[0].height, rects[1].height);
+        // Each pane should be at least 50 chars wide (200/2 = 100)
+        assert!(rects[0].width >= 50, "pane too narrow: {}", rects[0].width);
+    }
+
+    #[test]
+    fn test_grid_3_panes() {
+        let rects = compute_pane_grid(GRID_AREA, 3);
+        assert_eq!(rects.len(), 3);
+        assert_no_overlap(&rects);
+        assert_full_width(&rects, GRID_AREA);
+        assert_full_height(&rects, GRID_AREA);
+        // Top row: 2 panes side by side
+        assert_eq!(rects[0].y, rects[1].y);
+        // Bottom row: 1 pane full width
+        assert_eq!(rects[2].width, GRID_AREA.width);
+    }
+
+    #[test]
+    fn test_grid_4_panes() {
+        let rects = compute_pane_grid(GRID_AREA, 4);
+        assert_eq!(rects.len(), 4);
+        assert_no_overlap(&rects);
+        assert_full_width(&rects, GRID_AREA);
+        assert_full_height(&rects, GRID_AREA);
+        // 2x2: top row
+        assert_eq!(rects[0].y, rects[1].y);
+        // bottom row
+        assert_eq!(rects[2].y, rects[3].y);
+        // Rows are different
+        assert_ne!(rects[0].y, rects[2].y);
+    }
+
+    #[test]
+    fn test_grid_5_panes() {
+        let rects = compute_pane_grid(GRID_AREA, 5);
+        assert_eq!(rects.len(), 5);
+        assert_no_overlap(&rects);
+        assert_full_width(&rects, GRID_AREA);
+        assert_full_height(&rects, GRID_AREA);
+        // Top row: 3 panes
+        assert_eq!(rects[0].y, rects[1].y);
+        assert_eq!(rects[1].y, rects[2].y);
+        // Bottom row: 2 panes
+        assert_eq!(rects[3].y, rects[4].y);
+        assert_ne!(rects[0].y, rects[3].y);
+    }
+
+    #[test]
+    fn test_grid_6_panes() {
+        let rects = compute_pane_grid(GRID_AREA, 6);
+        assert_eq!(rects.len(), 6);
+        assert_no_overlap(&rects);
+        assert_full_width(&rects, GRID_AREA);
+        assert_full_height(&rects, GRID_AREA);
+        // 3x2: top row has 3
+        assert_eq!(rects[0].y, rects[1].y);
+        assert_eq!(rects[1].y, rects[2].y);
+        // bottom row has 3
+        assert_eq!(rects[3].y, rects[4].y);
+        assert_eq!(rects[4].y, rects[5].y);
+        assert_ne!(rects[0].y, rects[3].y);
+        // Each pane at least 50 wide (200/3 ≈ 66)
+        for r in &rects {
+            assert!(r.width >= 50, "pane too narrow: {}", r.width);
+        }
     }
 }

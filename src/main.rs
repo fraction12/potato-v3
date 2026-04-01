@@ -43,6 +43,7 @@ use uuid::Uuid;
 use crate::pty::{TurnHandle, key_event_to_bytes};
 use adapters::{AgentAdapter, claude::ClaudeAdapter, codex::CodexAdapter, generic::GenericAdapter};
 use app::message::Message;
+use app::pane::MAX_PANES;
 use app::state::{AgentInfo, DashboardState, PathSnapshots};
 use app::state::{AppScreen, AppState, CockpitFocus, DashboardFocus, SnapshotMsg};
 use app::update::update;
@@ -387,7 +388,7 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                         let role_count = roles.len().max(1);
 
                         let default_profile = state.agent_profiles.first().cloned();
-                        for _ in 0..role_count.min(2) {
+                        for _ in 0..role_count.min(MAX_PANES) {
                             match spawn_claude_pane(state, None, default_profile.as_ref()) {
                                 Ok(id) => tracing::info!("Dashboard spawned pane: {}", id),
                                 Err(e) => {

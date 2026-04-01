@@ -10,7 +10,7 @@ use crate::pty::RealPty;
 use super::state::SessionState;
 
 /// Hard maximum number of simultaneous panes (Claude, Codex, OpenCode).
-pub const MAX_PANES: usize = 3;
+pub const MAX_PANES: usize = 6;
 
 /// A single session pane in the cockpit.
 ///
@@ -424,6 +424,30 @@ mod tests {
             pane.role_description.as_deref(),
             Some("Frontend API design")
         );
+    }
+
+    #[test]
+    fn open_six_panes_succeeds() {
+        let mut pm = PaneManager::new();
+        for i in 0..6 {
+            assert!(
+                pm.open(format!("sess-{}", i + 1), "claude").is_some(),
+                "should be able to open pane {}",
+                i + 1
+            );
+        }
+        assert_eq!(pm.len(), 6);
+        assert!(!pm.can_open());
+    }
+
+    #[test]
+    fn seventh_pane_returns_none() {
+        let mut pm = PaneManager::new();
+        for i in 0..6 {
+            pm.open(format!("sess-{}", i + 1), "claude");
+        }
+        assert!(pm.open("sess-7", "claude").is_none());
+        assert_eq!(pm.len(), 6);
     }
 
     #[test]
