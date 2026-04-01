@@ -394,7 +394,9 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                         // tries once and gives up, while Opus retries.
                         if let Some(ref _sock) = state.mcp_socket_path {
                             if let Ok(cwd) = std::env::current_dir() {
-                                if let Err(e) = crate::mcp::config_writer::write_mcp_config(&cwd, &[], "") {
+                                if let Err(e) =
+                                    crate::mcp::config_writer::write_mcp_config(&cwd, &[], "")
+                                {
                                     tracing::warn!("Pre-spawn .mcp.json write failed: {e}");
                                 } else {
                                     tracing::info!("Pre-spawn: wrote .mcp.json before pane launch");
@@ -411,7 +413,11 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                         );
                         for _ in 0..role_count.min(MAX_PANES) {
                             match spawn_claude_pane(state, None, default_profile.as_ref()) {
-                                Ok(id) => tracing::info!("Dashboard spawned pane: {} (total now: {})", id, state.panes.len()),
+                                Ok(id) => tracing::info!(
+                                    "Dashboard spawned pane: {} (total now: {})",
+                                    id,
+                                    state.panes.len()
+                                ),
                                 Err(e) => {
                                     tracing::error!("Dashboard spawn failed: {e}");
                                     state.set_error(format!("Spawn failed: {e}"), 100);
@@ -611,7 +617,8 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                         if pty.child_exited() {
                             tracing::info!(
                                 "Pane idx={} id={} detected dead (child_exited=true, session={:?}, role={:?})",
-                                i, pane.id,
+                                i,
+                                pane.id,
                                 pane.session.claude_session_id,
                                 pane.role_name
                             );
@@ -625,7 +632,11 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
             // Close dead panes (iterate in reverse to preserve indices).
             let had_panes = !dead_indices.is_empty();
             for i in dead_indices.into_iter().rev() {
-                tracing::info!("Closing dead pane idx={} (total before close: {})", i, state.panes.len());
+                tracing::info!(
+                    "Closing dead pane idx={} (total before close: {})",
+                    i,
+                    state.panes.len()
+                );
                 if let Some(closed) = state.panes.close(i) {
                     if let Some(ref iss) = state.inter_session_state {
                         if let Ok(mut st) = iss.lock() {
@@ -702,7 +713,11 @@ fn spawn_claude_pane(
     };
 
     if !state.panes.can_open() {
-        tracing::warn!("spawn_claude_pane: rejected — at capacity ({}/{})", state.panes.len(), MAX_PANES);
+        tracing::warn!(
+            "spawn_claude_pane: rejected — at capacity ({}/{})",
+            state.panes.len(),
+            MAX_PANES
+        );
         return Err("Maximum panes already open".to_string());
     }
 
@@ -714,8 +729,15 @@ fn spawn_claude_pane(
     let pty_rows = term_rows.saturating_sub(10);
     tracing::info!(
         "spawn_claude_pane: term={}x{}, n_panes_after={}, pty_size={}x{}, binary={:?}",
-        term_cols, term_rows, n_panes, pty_cols, pty_rows,
-        profile.and_then(|p| p.binary.as_ref()).map(|b| b.as_str()).unwrap_or("claude (default)")
+        term_cols,
+        term_rows,
+        n_panes,
+        pty_cols,
+        pty_rows,
+        profile
+            .and_then(|p| p.binary.as_ref())
+            .map(|b| b.as_str())
+            .unwrap_or("claude (default)")
     );
 
     let launch_cwd = std::env::current_dir().ok();
@@ -824,13 +846,17 @@ fn spawn_claude_pane(
             st.register_pane(pane_id);
             tracing::info!(
                 "Registered pane id={} with inter-session state (known_panes: {:?})",
-                pane_id, st.known_panes
+                pane_id,
+                st.known_panes
             );
         } else {
             tracing::error!("Failed to lock inter-session state for pane id={}", pane_id);
         }
     } else {
-        tracing::warn!("No inter-session state available when registering pane id={}", pane_id);
+        tracing::warn!(
+            "No inter-session state available when registering pane id={}",
+            pane_id
+        );
     }
 
     // Set up JSONL log tracker.
