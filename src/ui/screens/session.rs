@@ -115,9 +115,16 @@ pub fn render_session(frame: &mut Frame, area: Rect, state: &mut AppState) {
         let pane_rects = compute_pane_grid(pty_area, n_panes);
         tracing::debug!(
             "render_session: n_panes={}, active={}, pty_area={}x{}+({},{}), grid_rects={:?}",
-            n_panes, active_pane_idx,
-            pty_area.width, pty_area.height, pty_area.x, pty_area.y,
-            pane_rects.iter().map(|r| format!("{}x{}+({},{})", r.width, r.height, r.x, r.y)).collect::<Vec<_>>()
+            n_panes,
+            active_pane_idx,
+            pty_area.width,
+            pty_area.height,
+            pty_area.x,
+            pty_area.y,
+            pane_rects
+                .iter()
+                .map(|r| format!("{}x{}+({},{})", r.width, r.height, r.x, r.y))
+                .collect::<Vec<_>>()
         );
         for (i, &rect) in pane_rects.iter().enumerate() {
             render_pane_viewport(frame, rect, state, i, i == active_pane_idx, focus);
@@ -446,8 +453,12 @@ fn render_pane_viewport(
         if let Some(ref pty) = pane.pty {
             tracing::trace!(
                 "render_pane idx={} id={} area={}x{} inner={}x{} role={:?} alive={}",
-                pane_idx, pane.id, area.width, area.height,
-                inner_cols, inner_rows,
+                pane_idx,
+                pane.id,
+                area.width,
+                area.height,
+                inner_cols,
+                inner_rows,
                 pane.role_name,
                 !pty.child_exited()
             );
