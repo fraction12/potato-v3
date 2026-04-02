@@ -63,6 +63,17 @@ pub struct TurnHandle {
     pub event_rx: broadcast::Receiver<AgentEvent>,
     /// Watch the process exit code (`None` = still running).
     pub exit_rx: watch::Receiver<Option<i32>>,
+    /// Kill signal sender — call `kill()` to terminate the turn process
+    /// and its background tasks (stdout reader, stderr reader, exit watcher).
+    kill_tx: watch::Sender<bool>,
+}
+
+impl TurnHandle {
+    /// Send a kill signal to the turn's background tasks.
+    /// Safe to call multiple times (idempotent).
+    pub fn kill(&self) {
+        let _ = self.kill_tx.send(true);
+    }
 }
 
 // ── PtyProcess ────────────────────────────────────────────────────────────────
@@ -351,6 +362,7 @@ impl PtyProcess {
         // Channels.
         let (event_tx, event_rx) = broadcast::channel::<AgentEvent>(1024);
         let (exit_tx, exit_rx) = watch::channel::<Option<i32>>(None);
+        let (kill_tx, kill_rx) = watch::channel::<bool>(false);
 
         // ── Emit AgentStarted ─────────────────────────────────────────────────
         let _ = event_tx.send(AgentEvent::AgentStarted {
@@ -410,21 +422,32 @@ impl PtyProcess {
         // ── Task 1b: stderr reader ────────────────────────────────────────────
         {
             let event_tx_e = event_tx.clone();
+            let mut kill_rx_e = kill_rx.clone();
             let mut stderr_reader = BufReader::new(stderr).lines();
 
             tokio::spawn(async move {
                 loop {
-                    match stderr_reader.next_line().await {
-                        Ok(Some(line)) => {
-                            debug!(stderr = %line, "agent stderr (turn)");
-                            if !line.trim().is_empty() {
-                                let _ = event_tx_e.send(AgentEvent::Warning { message: line });
+                    tokio::select! {
+                        _ = kill_rx_e.changed() => {
+                            if *kill_rx_e.borrow() {
+                                debug!("stderr reader (turn): kill signal received, exiting");
+                                break;
                             }
                         }
-                        Ok(None) => break,
-                        Err(e) => {
-                            warn!(error = %e, "error reading agent stderr (turn)");
-                            break;
+                        result = stderr_reader.next_line() => {
+                            match result {
+                                Ok(Some(line)) => {
+                                    debug!(stderr = %line, "agent stderr (turn)");
+                                    if !line.trim().is_empty() {
+                                        let _ = event_tx_e.send(AgentEvent::Warning { message: line });
+                                    }
+                                }
+                                Ok(None) => break,
+                                Err(e) => {
+                                    warn!(error = %e, "error reading agent stderr (turn)");
+                                    break;
+                                }
+                            }
                         }
                     }
                 }
@@ -454,7 +477,11 @@ impl PtyProcess {
             });
         }
 
-        Ok(TurnHandle { event_rx, exit_rx })
+        Ok(TurnHandle {
+            event_rx,
+            exit_rx,
+            kill_tx,
+        })
     }
 }
 
@@ -1305,8 +1332,13 @@ mod tests {
         // TurnHandle only has event_rx and exit_rx — this is a compile-time check.
         let (event_tx, event_rx) = broadcast::channel::<AgentEvent>(1);
         let (_exit_tx, exit_rx) = watch::channel::<Option<i32>>(None);
+        let (kill_tx, _kill_rx) = watch::channel::<bool>(false);
         drop(event_tx);
-        let _handle = TurnHandle { event_rx, exit_rx };
+        let _handle = TurnHandle {
+            event_rx,
+            exit_rx,
+            kill_tx,
+        };
     }
 
     /// spawn_turn: process receives prompt on stdin (via echo -n piped through sh).

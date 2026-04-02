@@ -208,6 +208,7 @@ impl AgentAdapter for ClaudeAdapter {
                         if !result_text.is_empty() {
                             events.push(AgentEvent::TextDone {
                                 full_text: result_text.to_string(),
+                                turn_id: None,
                             });
                         }
                     }
@@ -517,6 +518,19 @@ mod tests {
             matches!(&events[0], AgentEvent::ToolDone { id, output, success, .. }
                 if id == "t1" && output == "file contents here" && *success),
             "expected ToolDone with correct id/output, got {:?}",
+            events[0]
+        );
+    }
+
+    #[test]
+    fn parse_tool_result_array_content_blocks() {
+        let line = r#"{"type":"tool_result","tool_use_id":"t2","content":[{"type":"text","text":"line one"},{"type":"text","text":"line two"}]}"#;
+        let events = adapter().parse_line(line);
+        assert_eq!(events.len(), 1);
+        assert!(
+            matches!(&events[0], AgentEvent::ToolDone { id, output, success, .. }
+                if id == "t2" && output == "line one\nline two" && *success),
+            "expected ToolDone with concatenated array content, got {:?}",
             events[0]
         );
     }

@@ -8,7 +8,7 @@
 //! Never inject during `approval_pending` state — a stray paste could
 //! accidentally confirm or deny a tool approval.
 
-use crate::app::pane::PaneManager;
+use crate::app::pane::{PaneId, PaneManager};
 use crate::app::state::AgentStatus;
 
 /// A request to inject a message into a target pane's PTY.
@@ -108,7 +108,7 @@ pub fn format_notification(from_pane: u64, from_role: Option<&str>, content: &st
 /// `Err` on I/O failure.
 pub fn inject_into_pane(
     panes: &mut PaneManager,
-    target_pane_id: u64,
+    target_pane_id: PaneId,
     text: &str,
 ) -> Result<bool, String> {
     let index = panes
@@ -318,7 +318,7 @@ mod tests {
     #[test]
     fn inject_into_missing_pane_returns_error() {
         let mut panes = PaneManager::new();
-        let result = inject_into_pane(&mut panes, 99, "test");
+        let result = inject_into_pane(&mut panes, PaneId(99), "test");
         assert!(result.is_err());
     }
 
@@ -330,7 +330,7 @@ mod tests {
         // Close first pane — index 0 now holds the pane with id=1.
         panes.close(0);
         // Injecting by pane_id=1 should find the pane even though its index shifted.
-        let result = inject_into_pane(&mut panes, 1, "test");
+        let result = inject_into_pane(&mut panes, PaneId(1), "test");
         // Will be Err because no PTY, but importantly it should NOT be "not found".
         assert!(
             result.is_err() && result.unwrap_err().contains("no PTY"),

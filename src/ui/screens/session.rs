@@ -806,7 +806,10 @@ fn render_right_rail(frame: &mut Frame, area: Rect, state: &AppState, focus: Coc
         let mut lines = vec![Line::from(Span::raw(""))];
         for (pane_id, name, _desc) in &roles {
             let unread = unread_counts.get(pane_id).copied().unwrap_or(0);
-            let active = state.panes.active_pane().is_some_and(|p| p.id == *pane_id);
+            let active = state
+                .panes
+                .active_pane()
+                .is_some_and(|p| p.id == crate::app::pane::PaneId(*pane_id));
             let indicator = if active {
                 Span::styled(" ● ", Style::default().fg(SPROUT))
             } else {

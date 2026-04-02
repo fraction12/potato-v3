@@ -4,6 +4,8 @@
 //! handles. [`PaneManager`] owns up to [`MAX_PANES`] simultaneous panes and
 //! tracks which one currently has input focus.
 
+use std::fmt;
+
 use crate::claude_log::ClaudeSessionLogTracker;
 use crate::pty::RealPty;
 
@@ -12,6 +14,30 @@ use super::state::SessionState;
 /// Hard maximum number of simultaneous panes (Claude, Codex, OpenCode).
 pub const MAX_PANES: usize = 6;
 
+// ── PaneId newtype ───────────────────────────────────────────────────────────
+
+/// Type-safe wrapper around a pane identifier (T-862).
+///
+/// Distinguishes pane IDs (stable `u64` values assigned at spawn time) from
+/// pane *indices* (`usize` positions in the `PaneManager` vec) at the type
+/// level, preventing accidental confusion between the two.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub struct PaneId(pub u64);
+
+impl fmt::Display for PaneId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl PaneId {
+    /// Return the raw `u64` value.
+    #[must_use]
+    pub fn raw(self) -> u64 {
+        self.0
+    }
+}
+
 /// A single session pane in the cockpit.
 ///
 /// Owns the session state and optional runtime handles (PTY, log tracker).
@@ -19,7 +45,7 @@ pub const MAX_PANES: usize = 6;
 #[derive(Debug)]
 pub struct Pane {
     /// Unique pane id (monotonically increasing within a PaneManager lifetime).
-    pub id: u64,
+    pub id: PaneId,
     /// The session state for this pane.
     pub session: SessionState,
     /// Live PTY wrapping the Claude process, if spawned.
@@ -39,7 +65,7 @@ pub struct Pane {
 
 impl Pane {
     /// Create a new pane with the given `id`, `session_id`, and `agent_name`.
-    pub fn new(id: u64, session_id: impl Into<String>, agent_name: impl Into<String>) -> Self {
+    pub fn new(id: PaneId, session_id: impl Into<String>, agent_name: impl Into<String>) -> Self {
         Self {
             id,
             session: SessionState::new(session_id, agent_name),
@@ -63,11 +89,21 @@ impl Pane {
 /// - `panes` length is always 0..=MAX_PANES.
 /// - `active` is always a valid index into `panes` when `panes` is non-empty.
 /// - When `panes` is empty, `active` is 0.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct PaneManager {
     panes: Vec<Pane>,
     active: usize,
-    next_id: u64,
+    next_id: PaneId,
+}
+
+impl Default for PaneManager {
+    fn default() -> Self {
+        Self {
+            panes: Vec::new(),
+            active: 0,
+            next_id: PaneId(0),
+        }
+    }
 }
 
 impl PaneManager {
@@ -92,7 +128,7 @@ impl PaneManager {
     }
 
     /// The id that will be assigned to the next pane opened.
-    pub fn next_id(&self) -> u64 {
+    pub fn next_id(&self) -> PaneId {
         self.next_id
     }
 
@@ -111,7 +147,7 @@ impl PaneManager {
             return None;
         }
         let id = self.next_id;
-        self.next_id += 1;
+        self.next_id = PaneId(self.next_id.0 + 1);
         let pane = Pane::new(id, session_id, agent_name);
         self.panes.push(pane);
         // New pane gets focus.
@@ -208,7 +244,7 @@ impl PaneManager {
     }
 
     /// Find the pane index whose pane.id matches.
-    pub fn find_by_pane_id(&self, pane_id: u64) -> Option<usize> {
+    pub fn find_by_pane_id(&self, pane_id: PaneId) -> Option<usize> {
         self.panes.iter().position(|p| p.id == pane_id)
     }
 }
@@ -233,7 +269,7 @@ mod tests {
         let mut pm = PaneManager::new();
         let pane = pm.open("sess-1", "claude").unwrap();
         assert_eq!(pane.session.session_id, "sess-1");
-        assert_eq!(pane.id, 0);
+        assert_eq!(pane.id, PaneId(0));
 
         assert_eq!(pm.len(), 1);
         assert!(pm.can_open());
@@ -367,9 +403,9 @@ mod tests {
         pm.open("sess-1", "claude");
         pm.open("sess-2", "claude");
         // ids are 0, 1
-        assert_eq!(pm.find_by_pane_id(0), Some(0));
-        assert_eq!(pm.find_by_pane_id(1), Some(1));
-        assert_eq!(pm.find_by_pane_id(99), None);
+        assert_eq!(pm.find_by_pane_id(PaneId(0)), Some(0));
+        assert_eq!(pm.find_by_pane_id(PaneId(1)), Some(1));
+        assert_eq!(pm.find_by_pane_id(PaneId(99)), None);
     }
 
     #[test]
@@ -378,7 +414,7 @@ mod tests {
         pm.open("sess-1", "claude"); // id 0
         pm.close(0);
         pm.open("sess-2", "claude"); // id 1, not 0
-        assert_eq!(pm.get(0).unwrap().id, 1);
+        assert_eq!(pm.get(0).unwrap().id, PaneId(1));
     }
 
     #[test]

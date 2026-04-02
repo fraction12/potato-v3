@@ -432,7 +432,7 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                                 if let Some(ref iss) = state.inter_session_state {
                                     if let Ok(mut st) = iss.lock() {
                                         st.set_role(
-                                            pane.id,
+                                            pane.id.raw(),
                                             crate::mcp::state::PaneRole {
                                                 name: role.name.clone(),
                                                 description: role.prompt.clone(),
@@ -458,7 +458,7 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                         if let Some(closed) = state.panes.close_active() {
                             if let Some(ref iss) = state.inter_session_state {
                                 if let Ok(mut st) = iss.lock() {
-                                    st.unregister_pane(closed.id);
+                                    st.unregister_pane(closed.id.raw());
                                 }
                             }
                         }
@@ -489,7 +489,7 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                                             any_written = true;
                                             if let Ok(mut pending) = PENDING_ENTERS.lock() {
                                                 pending.push(crate::mcp::injection::PendingEnter {
-                                                    pane_id: pane.id,
+                                                    pane_id: pane.id.raw(),
                                                     written_at_tick: state.tick_count,
                                                     delay_ticks:
                                                         crate::mcp::injection::ENTER_DELAY_TICKS,
@@ -640,7 +640,7 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                 if let Some(closed) = state.panes.close(i) {
                     if let Some(ref iss) = state.inter_session_state {
                         if let Ok(mut st) = iss.lock() {
-                            st.unregister_pane(closed.id);
+                            st.unregister_pane(closed.id.raw());
                         }
                     }
                 }
@@ -675,7 +675,7 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
         }
 
         // Periodic git refresh (~30 s at 250ms tick = every 120 ticks).
-        state.git_refresh_ticks += 1;
+        state.git_refresh_ticks = state.git_refresh_ticks.saturating_add(1);
         if state.git_refresh_ticks >= 120 && !state.git_refresh_in_flight {
             state.git_refresh_ticks = 0;
             state.git_refresh_in_flight = true;
@@ -785,8 +785,8 @@ fn spawn_claude_pane(
     if let Some(ref sock) = state.mcp_socket_path.clone() {
         // Always provide the socket path and the future pane id to every pane.
         // The pane id matches `PaneManager::next_id` — we can read it from the manager.
-        let pane_id: u64 = state.panes.next_id();
-        pane_env.push(("POTATO_PANE_ID".into(), pane_id.to_string()));
+        let next_pane_id = state.panes.next_id();
+        pane_env.push(("POTATO_PANE_ID".into(), next_pane_id.raw().to_string()));
         pane_env.push(("POTATO_SOCKET".into(), sock.to_string_lossy().into_owned()));
     }
 
@@ -797,7 +797,7 @@ fn spawn_claude_pane(
         }
     }
 
-    let real_pty = if pane_env.is_empty() {
+    let mut real_pty = if pane_env.is_empty() {
         crate::pty::RealPty::spawn_in(
             binary.to_str().unwrap_or("claude"),
             &session_args_refs,
@@ -826,7 +826,9 @@ fn spawn_claude_pane(
     let pane_id = pane.id;
     // Forward PTY dirty notifications to the shared AppState channel (T-864).
     {
-        let mut dirty_sub = real_pty.subscribe_dirty();
+        let mut dirty_sub = real_pty
+            .take_dirty_rx()
+            .unwrap_or_else(|| real_pty.subscribe_dirty());
         let dirty_fwd = state.dirty_tx.clone();
         tokio::spawn(async move {
             while dirty_sub.recv().await.is_ok() {
@@ -843,7 +845,7 @@ fn spawn_claude_pane(
     // Register pane with inter-session state for partner resolution.
     if let Some(ref iss) = state.inter_session_state {
         if let Ok(mut st) = iss.lock() {
-            st.register_pane(pane_id);
+            st.register_pane(pane_id.raw());
             tracing::info!(
                 "Registered pane id={} with inter-session state (known_panes: {:?})",
                 pane_id,
@@ -1015,7 +1017,7 @@ fn spawn_agent_pane(
             // ── MCP env vars ──────────────────────────────────────────────────
             let mut pane_env: Vec<(String, String)> = Vec::new();
             if let Some(ref sock) = state.mcp_socket_path {
-                let pane_id: u64 = state.panes.next_id();
+                let pane_id = state.panes.next_id();
                 pane_env.push(("POTATO_PANE_ID".into(), pane_id.to_string()));
                 pane_env.push(("POTATO_SOCKET".into(), sock.to_string_lossy().into_owned()));
             }
@@ -1025,7 +1027,7 @@ fn spawn_agent_pane(
                 }
             }
 
-            let real_pty = if pane_env.is_empty() {
+            let mut real_pty = if pane_env.is_empty() {
                 crate::pty::RealPty::spawn_in(
                     binary.to_str().unwrap_or("codex"),
                     &spawn_args_refs,
@@ -1052,7 +1054,9 @@ fn spawn_agent_pane(
 
             // Forward PTY dirty notifications to the shared AppState channel (T-864).
             {
-                let mut dirty_sub = real_pty.subscribe_dirty();
+                let mut dirty_sub = real_pty
+                    .take_dirty_rx()
+                    .unwrap_or_else(|| real_pty.subscribe_dirty());
                 let dirty_fwd = state.dirty_tx.clone();
                 tokio::spawn(async move {
                     while dirty_sub.recv().await.is_ok() {
@@ -1138,7 +1142,7 @@ fn spawn_agent_pane(
             // ── MCP env vars ──────────────────────────────────────────────────
             let mut pane_env: Vec<(String, String)> = Vec::new();
             if let Some(ref sock) = state.mcp_socket_path {
-                let pane_id: u64 = state.panes.next_id();
+                let pane_id = state.panes.next_id();
                 pane_env.push(("POTATO_PANE_ID".into(), pane_id.to_string()));
                 pane_env.push(("POTATO_SOCKET".into(), sock.to_string_lossy().into_owned()));
             }
@@ -1148,7 +1152,7 @@ fn spawn_agent_pane(
                 }
             }
 
-            let real_pty = if pane_env.is_empty() {
+            let mut real_pty = if pane_env.is_empty() {
                 crate::pty::RealPty::spawn_in(
                     binary.to_str().unwrap_or(other),
                     &[],
@@ -1175,7 +1179,9 @@ fn spawn_agent_pane(
 
             // Forward PTY dirty notifications to the shared AppState channel (T-864).
             {
-                let mut dirty_sub = real_pty.subscribe_dirty();
+                let mut dirty_sub = real_pty
+                    .take_dirty_rx()
+                    .unwrap_or_else(|| real_pty.subscribe_dirty());
                 let dirty_fwd = state.dirty_tx.clone();
                 tokio::spawn(async move {
                     while dirty_sub.recv().await.is_ok() {
@@ -1220,7 +1226,7 @@ fn drain_inject_requests(state: &mut AppState) {
 
             match crate::mcp::injection::inject_into_pane(
                 &mut state.panes,
-                req.to_pane,
+                crate::app::pane::PaneId(req.to_pane),
                 &notification,
             ) {
                 Ok(true) => {
@@ -1255,7 +1261,10 @@ fn drain_inject_requests(state: &mut AppState) {
         pending.retain(|p| {
             if current_tick.wrapping_sub(p.written_at_tick) >= p.delay_ticks {
                 // Time to send Enter — resolve pane ID to current index.
-                if let Some(idx) = state.panes.find_by_pane_id(p.pane_id) {
+                if let Some(idx) = state
+                    .panes
+                    .find_by_pane_id(crate::app::pane::PaneId(p.pane_id))
+                {
                     if let Some(pane) = state.panes.get_mut(idx) {
                         if let Some(ref mut pty) = pane.pty {
                             if !pty.child_exited() {
@@ -1300,7 +1309,10 @@ fn sync_mcp_roles_to_panes(state: &mut AppState) {
     };
 
     for (pane_id, role) in roles {
-        if let Some(idx) = state.panes.find_by_pane_id(pane_id) {
+        if let Some(idx) = state
+            .panes
+            .find_by_pane_id(crate::app::pane::PaneId(pane_id))
+        {
             if let Some(pane) = state.panes.get_mut(idx) {
                 if pane.role_name.as_deref() != Some(&role.name) {
                     pane.role_name = Some(role.name.clone());
@@ -1316,7 +1328,7 @@ fn sync_mcp_roles_to_panes(state: &mut AppState) {
 /// Periodic OpenSpec refresh (~30s / 120 ticks). Spawns a background task
 /// to capture the CLI snapshot; results arrive via the snapshot channel.
 fn sync_openspec(state: &mut AppState) {
-    state.openspec_refresh_ticks += 1;
+    state.openspec_refresh_ticks = state.openspec_refresh_ticks.saturating_add(1);
     if state.openspec_refresh_ticks >= 120 && !state.openspec_refresh_in_flight {
         state.openspec_refresh_ticks = 0;
         state.openspec_refresh_in_flight = true;
@@ -1716,7 +1728,7 @@ async fn main() -> Result<()> {
 
 /// Pane summary for prompt building — decoupled from AppState.
 struct PaneSummary {
-    id: u64,
+    id: crate::app::pane::PaneId,
     agent_name: String,
     role_name: Option<String>,
 }
@@ -1766,6 +1778,7 @@ fn build_collaboration_prompt_from_panes(panes: &[PaneSummary]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::pane::PaneId;
 
     // ── build_collaboration_prompt_from_panes ────────────────────────────
 
@@ -1773,12 +1786,12 @@ mod tests {
     fn collab_prompt_includes_role_names_in_pane_labels() {
         let panes = vec![
             PaneSummary {
-                id: 0,
+                id: PaneId(0),
                 agent_name: "claude".into(),
                 role_name: Some("Planner".into()),
             },
             PaneSummary {
-                id: 1,
+                id: PaneId(1),
                 agent_name: "claude".into(),
                 role_name: Some("Worker".into()),
             },
@@ -1798,12 +1811,12 @@ mod tests {
     fn collab_prompt_with_roles_tells_agents_not_to_pick() {
         let panes = vec![
             PaneSummary {
-                id: 0,
+                id: PaneId(0),
                 agent_name: "claude".into(),
                 role_name: Some("Planner".into()),
             },
             PaneSummary {
-                id: 1,
+                id: PaneId(1),
                 agent_name: "claude".into(),
                 role_name: Some("Worker".into()),
             },
@@ -1827,12 +1840,12 @@ mod tests {
     fn collab_prompt_without_roles_allows_self_selection() {
         let panes = vec![
             PaneSummary {
-                id: 0,
+                id: PaneId(0),
                 agent_name: "claude".into(),
                 role_name: None,
             },
             PaneSummary {
-                id: 1,
+                id: PaneId(1),
                 agent_name: "claude".into(),
                 role_name: None,
             },
@@ -1852,12 +1865,12 @@ mod tests {
     fn collab_prompt_no_role_labels_without_roles() {
         let panes = vec![
             PaneSummary {
-                id: 0,
+                id: PaneId(0),
                 agent_name: "claude".into(),
                 role_name: None,
             },
             PaneSummary {
-                id: 1,
+                id: PaneId(1),
                 agent_name: "codex".into(),
                 role_name: None,
             },
@@ -1873,12 +1886,12 @@ mod tests {
         // If even one pane has a role, use pre-assigned instructions
         let panes = vec![
             PaneSummary {
-                id: 0,
+                id: PaneId(0),
                 agent_name: "claude".into(),
                 role_name: Some("Planner".into()),
             },
             PaneSummary {
-                id: 1,
+                id: PaneId(1),
                 agent_name: "claude".into(),
                 role_name: None,
             },
@@ -1893,7 +1906,7 @@ mod tests {
     #[test]
     fn collab_prompt_includes_stand_by_instruction() {
         let panes = vec![PaneSummary {
-            id: 0,
+            id: PaneId(0),
             agent_name: "claude".into(),
             role_name: Some("X".into()),
         }];

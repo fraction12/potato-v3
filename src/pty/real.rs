@@ -54,6 +54,10 @@ pub struct RealPty {
     /// processed and the screen needs re-rendering.
     pub dirty_tx: broadcast::Sender<()>,
 
+    /// The initial broadcast receiver, kept alive so no notifications are lost
+    /// between spawn and forwarding setup.  Use [`Self::take_dirty_rx`] to claim it.
+    dirty_rx: Option<broadcast::Receiver<()>>,
+
     /// Set to `true` by the reader thread when the child process exits (EOF).
     exited: Arc<std::sync::atomic::AtomicBool>,
 
@@ -165,8 +169,8 @@ impl RealPty {
         // Shared vt100 parser — renderer and reader share this via Arc<Mutex>.
         let screen = Arc::new(Mutex::new(vt100::Parser::new(rows, cols, 10_000)));
 
-        // Dirty-notify channel: capacity 16 is enough — the UI coalesces ticks.
-        let (dirty_tx, _) = broadcast::channel::<()>(16);
+        // Dirty-notify channel: capacity 64 is enough — the UI coalesces ticks.
+        let (dirty_tx, dirty_rx) = broadcast::channel::<()>(64);
 
         let exited = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
@@ -209,6 +213,7 @@ impl RealPty {
             screen,
             writer,
             dirty_tx,
+            dirty_rx: Some(dirty_rx),
             exited,
             _child: child,
             master: pair.master,
@@ -272,9 +277,21 @@ impl RealPty {
         Ok(())
     }
 
+    /// Take the initial dirty notification receiver.  This receiver has been
+    /// alive since spawn, so no notifications are lost between spawn and
+    /// forwarding setup.  Returns `None` if already taken.
+    ///
+    /// Prefer this over [`Self::subscribe_dirty`] for the primary forwarding task.
+    pub fn take_dirty_rx(&mut self) -> Option<broadcast::Receiver<()>> {
+        self.dirty_rx.take()
+    }
+
     /// Subscribe to dirty notifications.  The receiver fires whenever the
     /// vt100 parser has consumed new output and the screen should be
     /// re-rendered.
+    ///
+    /// Note: messages sent before this call are lost.  Use [`Self::take_dirty_rx`]
+    /// for the primary consumer to avoid a gap.
     pub fn subscribe_dirty(&self) -> broadcast::Receiver<()> {
         self.dirty_tx.subscribe()
     }

@@ -48,11 +48,10 @@ pub fn apply_event(session: &mut SessionState, event: AgentEvent, now: DateTime<
             session.status = AgentStatus::Thinking;
         }
 
-        AgentEvent::TextDone { full_text } => {
-            // Patch the assistant entry that was being streamed, identified by
-            // active_turn_seq. Falls back to the last assistant entry if no
-            // active seq is set (T-874).
-            let target_seq = session.active_turn_seq;
+        AgentEvent::TextDone { full_text, turn_id } => {
+            // Prefer the event-embedded turn_id (T-874), fall back to session's
+            // active_turn_seq, and finally to the most recent assistant entry.
+            let target_seq = turn_id.or(session.active_turn_seq);
             let entry = if let Some(seq) = target_seq {
                 session
                     .transcript
@@ -68,8 +67,14 @@ pub fn apply_event(session: &mut SessionState, event: AgentEvent, now: DateTime<
             };
             if let Some(e) = entry {
                 e.content = full_text;
+                // Only clear active_turn_seq when this TextDone actually matched
+                // the active turn. A stale TextDone (wrong turn_id) must not
+                // disrupt tracking for the real active turn.
+                if turn_id.is_none() || turn_id == session.active_turn_seq {
+                    session.active_turn_seq = None;
+                }
             }
-            session.active_turn_seq = None;
+            // If no entry was found, the event is orphaned — don't clear state.
         }
 
         // ── Tool lifecycle ────────────────────────────────────────────────────
@@ -410,6 +415,7 @@ mod tests {
             &mut s,
             AgentEvent::TextDone {
                 full_text: "complete answer".into(),
+                turn_id: None,
             },
             t0(),
         );
@@ -425,6 +431,7 @@ mod tests {
             &mut s,
             AgentEvent::TextDone {
                 full_text: "orphan".into(),
+                turn_id: None,
             },
             t0(),
         );
@@ -853,6 +860,7 @@ mod tests {
             &mut s,
             AgentEvent::TextDone {
                 full_text: "hello, world!".into(),
+                turn_id: None,
             },
             t3,
         );
@@ -924,16 +932,81 @@ mod tests {
         assert_eq!(s.transcript.len(), 1);
         assert_eq!(s.active_turn_seq, Some(0));
 
-        // TextDone for turn 1 should patch the first entry.
+        // TextDone for turn 1 should patch the first entry via turn_id.
         apply_event(
             &mut s,
             AgentEvent::TextDone {
                 full_text: "complete turn 1".into(),
+                turn_id: Some(0),
             },
             t2,
         );
         assert_eq!(s.transcript[0].content, "complete turn 1");
         assert_eq!(s.active_turn_seq, None);
+    }
+
+    #[test]
+    fn text_done_with_stale_turn_id_does_not_overwrite() {
+        let mut s = fresh_session();
+        let t1 = Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 1).unwrap();
+        let t2 = Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 2).unwrap();
+        let t3 = Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 3).unwrap();
+        let t4 = Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 4).unwrap();
+
+        // Turn 0: assistant streams, then a user message separates the turns.
+        apply_event(
+            &mut s,
+            AgentEvent::TextDelta {
+                text: "turn 0 text".into(),
+            },
+            t1,
+        );
+        apply_event(
+            &mut s,
+            AgentEvent::TextDone {
+                full_text: "turn 0 text".into(),
+                turn_id: Some(0),
+            },
+            t1,
+        );
+        // Simulate a user turn so the next TextDelta opens a new assistant entry.
+        s.transcript.push(TranscriptEntry {
+            role: MessageRole::User,
+            content: "user msg".into(),
+            timestamp: t2,
+            tool_call: None,
+            turn_seq: 0,
+        });
+
+        // Turn 1: new assistant entry.
+        apply_event(
+            &mut s,
+            AgentEvent::TextDelta {
+                text: "turn 1 text".into(),
+            },
+            t3,
+        );
+        assert_eq!(s.transcript.len(), 3);
+        assert_eq!(s.transcript[2].content, "turn 1 text");
+
+        // Late TextDone with a stale turn_id (99) — should not patch anything.
+        apply_event(
+            &mut s,
+            AgentEvent::TextDone {
+                full_text: "STALE OVERWRITE".into(),
+                turn_id: Some(99),
+            },
+            t4,
+        );
+        // Neither assistant entry should have been overwritten.
+        assert_eq!(s.transcript[0].content, "turn 0 text");
+        assert_eq!(s.transcript[2].content, "turn 1 text");
+        // active_turn_seq must NOT have been cleared by the stale event.
+        assert_eq!(
+            s.active_turn_seq,
+            Some(1),
+            "stale TextDone must not clear active_turn_seq"
+        );
     }
 
     // ─────────────────────────────────────────────────────────────────────────
