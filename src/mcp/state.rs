@@ -5,6 +5,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
+use std::time::Instant;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -119,6 +120,9 @@ pub struct InterSessionState {
     /// Defined roles from `roles.toml` that panes can claim.
     pub defined_roles: Vec<DefinedRole>,
 
+    /// Timestamp of each pane's last MCP tool call, for team roster freshness.
+    pub last_tool_call: HashMap<u64, Instant>,
+
     /// Pending task events for the main loop to sync to OpenSpec.
     /// Drained by the main loop each tick.
     pub pending_task_events: Vec<TaskEvent>,
@@ -183,6 +187,62 @@ impl InterSessionState {
     /// Drain pending task events (called by the main loop each tick).
     pub fn drain_task_events(&mut self) -> Vec<TaskEvent> {
         std::mem::take(&mut self.pending_task_events)
+    }
+
+    /// Record that a pane just made a tool call (updates last_seen).
+    pub fn record_tool_call(&mut self, pane_id: u64) {
+        self.last_tool_call.insert(pane_id, Instant::now());
+    }
+
+    /// Build a team roster showing all panes except `exclude_pane`.
+    ///
+    /// Each entry includes pane ID, role name, and activity status
+    /// derived from the last tool call timestamp.
+    pub fn build_team_roster(&self, exclude_pane: u64) -> Vec<TeamMember> {
+        let now = Instant::now();
+        self.known_panes
+            .iter()
+            .filter(|&&id| id != exclude_pane)
+            .map(|&id| {
+                let role = self
+                    .roles
+                    .get(&id)
+                    .map(|r| r.name.clone())
+                    .unwrap_or_else(|| "unassigned".to_string());
+
+                let status = match self.last_tool_call.get(&id) {
+                    Some(ts) => {
+                        let elapsed = now.duration_since(*ts);
+                        if elapsed.as_secs() < 30 {
+                            "active".to_string()
+                        } else if elapsed.as_secs() < 300 {
+                            "idle".to_string()
+                        } else {
+                            "disconnected".to_string()
+                        }
+                    }
+                    None => "unknown".to_string(),
+                };
+
+                let last_seen = self.last_tool_call.get(&id).map(|ts| {
+                    let secs = now.duration_since(*ts).as_secs();
+                    if secs < 60 {
+                        format!("{secs}s ago")
+                    } else if secs < 3600 {
+                        format!("{}m ago", secs / 60)
+                    } else {
+                        format!("{}h ago", secs / 3600)
+                    }
+                });
+
+                TeamMember {
+                    pane: id,
+                    role,
+                    status,
+                    last_seen,
+                }
+            })
+            .collect()
     }
 
     /// Register a pane as live.
@@ -510,6 +570,16 @@ pub struct PartnerStatus {
     pub pane_id: u64,
     pub role: PaneRole,
     pub unread_messages: usize,
+}
+
+/// A team member entry for inclusion in every tool response.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamMember {
+    pub pane: u64,
+    pub role: String,
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_seen: Option<String>,
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
