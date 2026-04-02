@@ -255,7 +255,7 @@ pub fn handle_tool_call(
     let mut result = match name {
         TOOL_SEND_MESSAGE => handle_send_message(args, pane_id, &mut st),
         TOOL_GET_MESSAGES => handle_get_messages(args, pane_id, &mut st),
-        TOOL_GET_PARTNER_STATUS => handle_get_partner_status(pane_id, &mut st),
+        TOOL_GET_PARTNER_STATUS => handle_get_partner_status(pane_id, &st),
         TOOL_SHARED_CONTEXT => handle_shared_context(args, &mut st),
         TOOL_CLAIM_TASK => handle_claim_task(args, pane_id, &mut st),
         TOOL_RELEASE_TASK => handle_release_task(args, pane_id, &mut st),
@@ -740,8 +740,8 @@ fn handle_claim_role(args: &Value, pane_id: u64, st: &mut InterSessionState) -> 
     };
     match st.claim_role(pane_id, role) {
         RoleClaimResult::Claimed => {
-            let all_roles = collect_all_roles(&st, None);
-            let available_roles = collect_available_defined_roles(&st);
+            let all_roles = collect_all_roles(st, None);
+            let available_roles = collect_available_defined_roles(st);
             CallToolResult::success(
                 serde_json::to_string_pretty(&json!({
                     "claimed": true,
@@ -753,8 +753,8 @@ fn handle_claim_role(args: &Value, pane_id: u64, st: &mut InterSessionState) -> 
             )
         }
         RoleClaimResult::AlreadyClaimed { held_by } => {
-            let all_roles = collect_all_roles(&st, None);
-            let available_roles = collect_available_defined_roles(&st);
+            let all_roles = collect_all_roles(st, None);
+            let available_roles = collect_available_defined_roles(st);
             CallToolResult::success(serde_json::to_string_pretty(&json!({
                 "claimed": false,
                 "role": role_name,
@@ -770,9 +770,9 @@ fn handle_claim_role(args: &Value, pane_id: u64, st: &mut InterSessionState) -> 
 fn handle_get_role(pane_id: u64, st: &InterSessionState) -> CallToolResult {
     let role = st.get_role(pane_id);
 
-    let all_roles = collect_all_roles(&st, Some(pane_id));
+    let all_roles = collect_all_roles(st, Some(pane_id));
 
-    let available_roles = collect_available_defined_roles(&st);
+    let available_roles = collect_available_defined_roles(st);
     let result = json!({
         "pane_id": pane_id,
         "your_role": role.map(|r| r.name.clone()).unwrap_or_else(|| "unassigned".to_string()),

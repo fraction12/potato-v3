@@ -55,7 +55,7 @@ pub struct RealPty {
     pub dirty_tx: broadcast::Sender<()>,
 
     /// The initial broadcast receiver, kept alive so no notifications are lost
-    /// between spawn and forwarding setup.  Use [`take_dirty_rx`] to claim it.
+    /// between spawn and forwarding setup.  Use [`Self::take_dirty_rx`] to claim it.
     dirty_rx: Option<broadcast::Receiver<()>>,
 
     /// Set to `true` by the reader thread when the child process exits (EOF).
@@ -281,7 +281,7 @@ impl RealPty {
     /// alive since spawn, so no notifications are lost between spawn and
     /// forwarding setup.  Returns `None` if already taken.
     ///
-    /// Prefer this over [`subscribe_dirty`] for the primary forwarding task.
+    /// Prefer this over [`Self::subscribe_dirty`] for the primary forwarding task.
     pub fn take_dirty_rx(&mut self) -> Option<broadcast::Receiver<()>> {
         self.dirty_rx.take()
     }
@@ -290,7 +290,7 @@ impl RealPty {
     /// vt100 parser has consumed new output and the screen should be
     /// re-rendered.
     ///
-    /// Note: messages sent before this call are lost.  Use [`take_dirty_rx`]
+    /// Note: messages sent before this call are lost.  Use [`Self::take_dirty_rx`]
     /// for the primary consumer to avoid a gap.
     pub fn subscribe_dirty(&self) -> broadcast::Receiver<()> {
         self.dirty_tx.subscribe()
