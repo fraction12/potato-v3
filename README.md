@@ -8,7 +8,7 @@ Potato runs real agents like Claude Code and Codex in embedded terminal panes, g
 
 > Potato does **not** replace your agents. It gives them a shared workspace, project context, and a mission control you can actually use.
 
-![Potato demo](docs/assets/potato-first-looks-small.gif)
+![Potato demo](docs/assets/potato-demo-live.gif)
 
 ## Why Potato?
 
