@@ -213,13 +213,22 @@ pub fn tool_definitions() -> Vec<ToolInfo> {
 /// Dispatch a tool call to the appropriate state handler.
 ///
 /// `pane_id` identifies which pane is making the call.
+///
+/// Every successful response is enriched with a `team` array showing all
+/// other active panes, their roles, and last-seen status. This gives agents
+/// ambient awareness of who's available without a dedicated polling tool.
 pub fn handle_tool_call(
     name: &str,
     args: &Value,
     pane_id: u64,
     state: &Arc<Mutex<InterSessionState>>,
 ) -> CallToolResult {
-    match name {
+    // Record this pane's activity for last_seen tracking.
+    if let Ok(mut st) = state.lock() {
+        st.record_tool_call(pane_id);
+    }
+
+    let mut result = match name {
         TOOL_SEND_MESSAGE => handle_send_message(args, pane_id, state),
         TOOL_GET_MESSAGES => handle_get_messages(args, pane_id, state),
         TOOL_GET_PARTNER_STATUS => handle_get_partner_status(pane_id, state),
@@ -229,8 +238,52 @@ pub fn handle_tool_call(
         TOOL_CLAIM_ROLE => handle_claim_role(args, pane_id, state),
         TOOL_GET_ROLE => handle_get_role(pane_id, state),
         TOOL_LIST_TASKS => handle_list_tasks(args, state),
-        unknown => CallToolResult::failure(format!("Unknown tool: {unknown}")),
+        unknown => return CallToolResult::failure(format!("Unknown tool: {unknown}")),
+    };
+
+    // Inject team roster into successful responses.
+    if !result.is_error {
+        if let Ok(st) = state.lock() {
+            let roster = st.build_team_roster(pane_id);
+            result = inject_team_roster(result, &roster);
+        }
     }
+
+    result
+}
+
+/// Inject a `team` array into the first text content of a tool result.
+///
+/// If the text is valid JSON, adds a `team` key. If it's plain text,
+/// wraps it in a JSON object with `result` and `team` keys.
+fn inject_team_roster(
+    mut result: CallToolResult,
+    roster: &[crate::mcp::state::TeamMember],
+) -> CallToolResult {
+    if result.content.is_empty() {
+        return result;
+    }
+
+    let text = &result.content[0].text;
+    let team_json = serde_json::to_value(roster).unwrap_or(json!([]));
+
+    let new_text = if let Ok(mut parsed) = serde_json::from_str::<Value>(text) {
+        // Existing JSON — add team key.
+        if let Some(obj) = parsed.as_object_mut() {
+            obj.insert("team".to_string(), team_json);
+        }
+        serde_json::to_string_pretty(&parsed).unwrap_or_else(|_| text.clone())
+    } else {
+        // Plain text — wrap in JSON envelope.
+        serde_json::to_string_pretty(&json!({
+            "result": text,
+            "team": team_json
+        }))
+        .unwrap_or_else(|_| text.clone())
+    };
+
+    result.content[0].text = new_text;
+    result
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -1643,5 +1696,162 @@ mod tests {
         assert!(!result.is_error);
         let msgs = state.lock().unwrap().get_messages(2, false);
         assert_eq!(msgs.len(), 1);
+    }
+
+    // ── Team roster in tool responses ─────────────────────────────────────────
+
+    /// Helper: parse the text content of a tool result as JSON.
+    fn parse_tool_result_json(result: &CallToolResult) -> Value {
+        let text = result.content[0].text.as_str();
+        serde_json::from_str(text).expect("Tool result should be valid JSON")
+    }
+
+    #[test]
+    fn team_roster_included_in_get_role_response() {
+        let state = make_state_with_roles();
+        let result = handle_tool_call(TOOL_GET_ROLE, &json!({}), 0, &state);
+        let parsed = parse_tool_result_json(&result);
+        let team = parsed["team"].as_array().expect("team array should exist");
+        // Should exclude self (pane 0), only show pane 1
+        assert_eq!(team.len(), 1);
+        assert_eq!(team[0]["pane"], 1);
+        assert_eq!(team[0]["role"], "implementer");
+        assert!(team[0]["status"].is_string());
+    }
+
+    #[test]
+    fn team_roster_included_in_get_messages_response() {
+        let state = make_state_with_roles();
+        let result = handle_tool_call(TOOL_GET_MESSAGES, &json!({}), 0, &state);
+        let parsed = parse_tool_result_json(&result);
+        assert!(
+            parsed["team"].is_array(),
+            "team should be in get_messages response"
+        );
+    }
+
+    #[test]
+    fn team_roster_included_in_claim_role_response() {
+        let state = make_state();
+        let args = json!({"role": "tester", "description": "Tests things"});
+        let result = handle_tool_call(TOOL_CLAIM_ROLE, &args, 0, &state);
+        let parsed = parse_tool_result_json(&result);
+        assert!(
+            parsed["team"].is_array(),
+            "team should be in claim_role response"
+        );
+    }
+
+    #[test]
+    fn team_roster_included_in_send_message_response() {
+        let state = make_state_with_roles();
+        let args = json!({
+            "type": "status",
+            "subject": "test msg",
+            "body": {"summary": "testing roster"},
+            "to": "1"
+        });
+        let result = handle_tool_call(TOOL_SEND_MESSAGE, &args, 0, &state);
+        let parsed = parse_tool_result_json(&result);
+        assert!(
+            parsed["team"].is_array(),
+            "team should be in send_message response"
+        );
+    }
+
+    #[test]
+    fn team_roster_included_in_claim_task_response() {
+        let state = make_state_with_roles();
+        let args = json!({"task_id": "test-task"});
+        let result = handle_tool_call(TOOL_CLAIM_TASK, &args, 0, &state);
+        let parsed = parse_tool_result_json(&result);
+        assert!(
+            parsed["team"].is_array(),
+            "team should be in claim_task response"
+        );
+    }
+
+    #[test]
+    fn team_roster_excludes_calling_pane() {
+        let state = make_state_with_roles();
+        let result = handle_tool_call(TOOL_GET_ROLE, &json!({}), 0, &state);
+        let parsed = parse_tool_result_json(&result);
+        let team = parsed["team"].as_array().unwrap();
+        for member in team {
+            assert_ne!(
+                member["pane"], 0,
+                "team roster should not include calling pane"
+            );
+        }
+    }
+
+    #[test]
+    fn team_roster_shows_all_other_panes() {
+        let state = Arc::new(Mutex::new(InterSessionState::new()));
+        {
+            let mut st = state.lock().unwrap();
+            for id in 0..=5 {
+                st.register_pane(id);
+                st.set_role(
+                    id,
+                    PaneRole {
+                        name: format!("role-{id}"),
+                        description: String::new(),
+                    },
+                );
+            }
+        }
+        let result = handle_tool_call(TOOL_GET_ROLE, &json!({}), 0, &state);
+        let parsed = parse_tool_result_json(&result);
+        let team = parsed["team"].as_array().unwrap();
+        // Should show 5 other panes (excluding self)
+        assert_eq!(team.len(), 5);
+        let pane_ids: Vec<u64> = team.iter().map(|m| m["pane"].as_u64().unwrap()).collect();
+        assert!(!pane_ids.contains(&0));
+        for id in 1..=5 {
+            assert!(pane_ids.contains(&id), "missing pane {id}");
+        }
+    }
+
+    #[test]
+    fn team_roster_shows_unassigned_for_roleless_panes() {
+        let state = make_state(); // panes 0 and 1, no roles
+        let result = handle_tool_call(TOOL_GET_ROLE, &json!({}), 0, &state);
+        let parsed = parse_tool_result_json(&result);
+        let team = parsed["team"].as_array().unwrap();
+        assert_eq!(team.len(), 1);
+        assert_eq!(team[0]["role"], "unassigned");
+    }
+
+    #[test]
+    fn team_roster_updates_last_seen_on_tool_call() {
+        let state = make_state_with_roles();
+
+        // Pane 1 makes a tool call
+        let _ = handle_tool_call(TOOL_GET_ROLE, &json!({}), 1, &state);
+
+        // Pane 0 checks — pane 1 should show as recently active
+        let result = handle_tool_call(TOOL_GET_ROLE, &json!({}), 0, &state);
+        let parsed = parse_tool_result_json(&result);
+        let team = parsed["team"].as_array().unwrap();
+        let pane1 = &team[0];
+        assert_eq!(pane1["status"], "active");
+    }
+
+    #[test]
+    fn team_roster_not_in_error_responses() {
+        let state = make_state();
+        // Call unknown tool — should be error, no team roster
+        let result = handle_tool_call("potato_nonexistent", &json!({}), 0, &state);
+        assert!(result.is_error);
+        // Error responses should NOT have team roster injected
+        let text = &result.content[0].text;
+        let parsed: Result<Value, _> = serde_json::from_str(text);
+        if let Ok(v) = parsed {
+            assert!(
+                v.get("team").is_none(),
+                "error responses should not have team roster"
+            );
+        }
     }
 }
