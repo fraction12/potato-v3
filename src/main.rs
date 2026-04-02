@@ -387,10 +387,37 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                             };
                         let role_count = roles.len().max(1);
 
+                        // ── Pre-write .mcp.json BEFORE spawning any panes ──────────
+                        // Claude Code reads .mcp.json at startup. If we write it after
+                        // spawn, there's a race: Claude may initialize before the file
+                        // exists. Sonnet 4.5 is particularly sensitive to this — it
+                        // tries once and gives up, while Opus retries.
+                        if let Some(ref _sock) = state.mcp_socket_path {
+                            if let Ok(cwd) = std::env::current_dir() {
+                                if let Err(e) =
+                                    crate::mcp::config_writer::write_mcp_config(&cwd, &[], "")
+                                {
+                                    tracing::warn!("Pre-spawn .mcp.json write failed: {e}");
+                                } else {
+                                    tracing::info!("Pre-spawn: wrote .mcp.json before pane launch");
+                                }
+                            }
+                        }
+
                         let default_profile = state.agent_profiles.first().cloned();
+                        tracing::info!(
+                            "Dashboard launch: spawning {} pane(s) (roles: {}, MAX_PANES: {})",
+                            role_count.min(MAX_PANES),
+                            roles.len(),
+                            MAX_PANES
+                        );
                         for _ in 0..role_count.min(MAX_PANES) {
                             match spawn_claude_pane(state, None, default_profile.as_ref()) {
-                                Ok(id) => tracing::info!("Dashboard spawned pane: {}", id),
+                                Ok(id) => tracing::info!(
+                                    "Dashboard spawned pane: {} (total now: {})",
+                                    id,
+                                    state.panes.len()
+                                ),
                                 Err(e) => {
                                     tracing::error!("Dashboard spawn failed: {e}");
                                     state.set_error(format!("Spawn failed: {e}"), 100);
@@ -587,19 +614,29 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
             for i in 0..state.panes.len() {
                 if let Some(pane) = state.panes.get(i) {
                     if let Some(ref pty) = pane.pty {
-                        // Check if the PTY child has exited by trying to read.
-                        // A dead PTY will have its reader return immediately with empty data
-                        // or error. We use the `is_alive` check on the child process.
                         if pty.child_exited() {
+                            tracing::info!(
+                                "Pane idx={} id={} detected dead (child_exited=true, session={:?}, role={:?})",
+                                i,
+                                pane.id,
+                                pane.session.claude_session_id,
+                                pane.role_name
+                            );
                             dead_indices.push(i);
                         }
+                    } else {
+                        tracing::debug!("Pane idx={} id={} has no PTY handle", i, pane.id);
                     }
                 }
             }
             // Close dead panes (iterate in reverse to preserve indices).
             let had_panes = !dead_indices.is_empty();
             for i in dead_indices.into_iter().rev() {
-                tracing::info!("Pane {} PTY exited, closing", i);
+                tracing::info!(
+                    "Closing dead pane idx={} (total before close: {})",
+                    i,
+                    state.panes.len()
+                );
                 if let Some(closed) = state.panes.close(i) {
                     if let Some(ref iss) = state.inter_session_state {
                         if let Ok(mut st) = iss.lock() {
@@ -676,6 +713,11 @@ fn spawn_claude_pane(
     };
 
     if !state.panes.can_open() {
+        tracing::warn!(
+            "spawn_claude_pane: rejected — at capacity ({}/{})",
+            state.panes.len(),
+            MAX_PANES
+        );
         return Err("Maximum panes already open".to_string());
     }
 
@@ -685,6 +727,18 @@ fn spawn_claude_pane(
     let center_cols = (term_cols as u32 * 3 / 4).saturating_sub(2);
     let pty_cols = (center_cols / n_panes as u32).max(20) as u16;
     let pty_rows = term_rows.saturating_sub(10);
+    tracing::info!(
+        "spawn_claude_pane: term={}x{}, n_panes_after={}, pty_size={}x{}, binary={:?}",
+        term_cols,
+        term_rows,
+        n_panes,
+        pty_cols,
+        pty_rows,
+        profile
+            .and_then(|p| p.binary.as_ref())
+            .map(|b| b.as_str())
+            .unwrap_or("claude (default)")
+    );
 
     let launch_cwd = std::env::current_dir().ok();
 
@@ -790,7 +844,19 @@ fn spawn_claude_pane(
     if let Some(ref iss) = state.inter_session_state {
         if let Ok(mut st) = iss.lock() {
             st.register_pane(pane_id);
+            tracing::info!(
+                "Registered pane id={} with inter-session state (known_panes: {:?})",
+                pane_id,
+                st.known_panes
+            );
+        } else {
+            tracing::error!("Failed to lock inter-session state for pane id={}", pane_id);
         }
+    } else {
+        tracing::warn!(
+            "No inter-session state available when registering pane id={}",
+            pane_id
+        );
     }
 
     // Set up JSONL log tracker.
@@ -946,13 +1012,37 @@ fn spawn_agent_pane(
 
             let spawn_args_refs: Vec<&str> = spawn_args_owned.iter().map(|s| s.as_str()).collect();
 
-            let real_pty = crate::pty::RealPty::spawn_in(
-                binary.to_str().unwrap_or("codex"),
-                &spawn_args_refs,
-                pty_cols.max(20),
-                pty_rows.max(5),
-                launch_cwd.as_deref(),
-            )
+            // ── MCP env vars ──────────────────────────────────────────────────
+            let mut pane_env: Vec<(String, String)> = Vec::new();
+            if let Some(ref sock) = state.mcp_socket_path {
+                let pane_id: u64 = state.panes.next_id();
+                pane_env.push(("POTATO_PANE_ID".into(), pane_id.to_string()));
+                pane_env.push(("POTATO_SOCKET".into(), sock.to_string_lossy().into_owned()));
+            }
+            if let Some(prof) = profile {
+                for (k, v) in &prof.env {
+                    pane_env.push((k.clone(), v.clone()));
+                }
+            }
+
+            let real_pty = if pane_env.is_empty() {
+                crate::pty::RealPty::spawn_in(
+                    binary.to_str().unwrap_or("codex"),
+                    &spawn_args_refs,
+                    pty_cols.max(20),
+                    pty_rows.max(5),
+                    launch_cwd.as_deref(),
+                )
+            } else {
+                crate::pty::RealPty::spawn_with_env(
+                    binary.to_str().unwrap_or("codex"),
+                    &spawn_args_refs,
+                    pty_cols.max(20),
+                    pty_rows.max(5),
+                    launch_cwd.as_deref(),
+                    &pane_env,
+                )
+            }
             .map_err(|e| format!("PTY spawn failed: {e}"))?;
 
             let pane = state
@@ -960,6 +1050,18 @@ fn spawn_agent_pane(
                 .open(&session_id, "codex")
                 .ok_or_else(|| "Failed to open pane".to_string())?;
 
+            // Forward PTY dirty notifications to the shared AppState channel (T-864).
+            {
+                let mut dirty_sub = real_pty.subscribe_dirty();
+                let dirty_fwd = state.dirty_tx.clone();
+                tokio::spawn(async move {
+                    while dirty_sub.recv().await.is_ok() {
+                        if dirty_fwd.send(()).is_err() {
+                            break;
+                        }
+                    }
+                });
+            }
             pane.pty = Some(real_pty);
             pane.session.status = crate::app::state::AgentStatus::Idle;
             pane.session.claude_session_id = Some(session_id.clone());
@@ -1033,13 +1135,37 @@ fn spawn_agent_pane(
             let launch_cwd = std::env::current_dir().ok();
             let session_id = uuid::Uuid::new_v4().to_string();
 
-            let real_pty = crate::pty::RealPty::spawn_in(
-                binary.to_str().unwrap_or(other),
-                &[],
-                pty_cols.max(20),
-                pty_rows.max(5),
-                launch_cwd.as_deref(),
-            )
+            // ── MCP env vars ──────────────────────────────────────────────────
+            let mut pane_env: Vec<(String, String)> = Vec::new();
+            if let Some(ref sock) = state.mcp_socket_path {
+                let pane_id: u64 = state.panes.next_id();
+                pane_env.push(("POTATO_PANE_ID".into(), pane_id.to_string()));
+                pane_env.push(("POTATO_SOCKET".into(), sock.to_string_lossy().into_owned()));
+            }
+            if let Some(prof) = profile {
+                for (k, v) in &prof.env {
+                    pane_env.push((k.clone(), v.clone()));
+                }
+            }
+
+            let real_pty = if pane_env.is_empty() {
+                crate::pty::RealPty::spawn_in(
+                    binary.to_str().unwrap_or(other),
+                    &[],
+                    pty_cols.max(20),
+                    pty_rows.max(5),
+                    launch_cwd.as_deref(),
+                )
+            } else {
+                crate::pty::RealPty::spawn_with_env(
+                    binary.to_str().unwrap_or(other),
+                    &[],
+                    pty_cols.max(20),
+                    pty_rows.max(5),
+                    launch_cwd.as_deref(),
+                    &pane_env,
+                )
+            }
             .map_err(|e| format!("PTY spawn failed: {e}"))?;
 
             let pane = state
@@ -1047,6 +1173,18 @@ fn spawn_agent_pane(
                 .open(&session_id, other)
                 .ok_or_else(|| "Failed to open pane".to_string())?;
 
+            // Forward PTY dirty notifications to the shared AppState channel (T-864).
+            {
+                let mut dirty_sub = real_pty.subscribe_dirty();
+                let dirty_fwd = state.dirty_tx.clone();
+                tokio::spawn(async move {
+                    while dirty_sub.recv().await.is_ok() {
+                        if dirty_fwd.send(()).is_err() {
+                            break;
+                        }
+                    }
+                });
+            }
             pane.pty = Some(real_pty);
             pane.session.status = crate::app::state::AgentStatus::Idle;
             pane.session.claude_session_id = Some(session_id.clone());

@@ -64,11 +64,6 @@ static TERMINAL_ENTRIES: &[KeyEntry] = &[
     KeyEntry::new("*", "All other keys → agent PTY"),
 ];
 
-static NAVIGATION_ENTRIES: &[KeyEntry] = &[
-    KeyEntry::new("Tab", "Next focus panel"),
-    KeyEntry::new("Shift+Tab", "Previous focus panel"),
-];
-
 static SECTIONS: &[Section] = &[
     Section {
         title: "Global",
@@ -81,10 +76,6 @@ static SECTIONS: &[Section] = &[
     Section {
         title: "Terminal",
         entries: TERMINAL_ENTRIES,
-    },
-    Section {
-        title: "Navigation",
-        entries: NAVIGATION_ENTRIES,
     },
 ];
 
