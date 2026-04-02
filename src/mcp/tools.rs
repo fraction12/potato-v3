@@ -223,30 +223,52 @@ pub fn handle_tool_call(
     pane_id: u64,
     state: &Arc<Mutex<InterSessionState>>,
 ) -> CallToolResult {
-    // Record this pane's activity for last_seen tracking.
-    if let Ok(mut st) = state.lock() {
-        st.record_tool_call(pane_id);
+    // Unknown tool check before acquiring the lock.
+    if ![
+        TOOL_SEND_MESSAGE,
+        TOOL_GET_MESSAGES,
+        TOOL_GET_PARTNER_STATUS,
+        TOOL_SHARED_CONTEXT,
+        TOOL_CLAIM_TASK,
+        TOOL_RELEASE_TASK,
+        TOOL_CLAIM_ROLE,
+        TOOL_GET_ROLE,
+        TOOL_LIST_TASKS,
+    ]
+    .contains(&name)
+    {
+        return CallToolResult::failure(format!("Unknown tool: {name}"));
     }
 
+    // Single lock acquisition for the entire tool call: record activity,
+    // dispatch to handler, and inject team roster.
+    let mut st = match state.lock() {
+        Ok(g) => g,
+        Err(e) => {
+            tracing::error!("InterSessionState mutex poisoned: {e}");
+            return CallToolResult::failure("State lock poisoned");
+        }
+    };
+
+    st.record_tool_call(pane_id);
+
     let mut result = match name {
-        TOOL_SEND_MESSAGE => handle_send_message(args, pane_id, state),
-        TOOL_GET_MESSAGES => handle_get_messages(args, pane_id, state),
-        TOOL_GET_PARTNER_STATUS => handle_get_partner_status(pane_id, state),
-        TOOL_SHARED_CONTEXT => handle_shared_context(args, state),
-        TOOL_CLAIM_TASK => handle_claim_task(args, pane_id, state),
-        TOOL_RELEASE_TASK => handle_release_task(args, pane_id, state),
-        TOOL_CLAIM_ROLE => handle_claim_role(args, pane_id, state),
-        TOOL_GET_ROLE => handle_get_role(pane_id, state),
-        TOOL_LIST_TASKS => handle_list_tasks(args, state),
-        unknown => return CallToolResult::failure(format!("Unknown tool: {unknown}")),
+        TOOL_SEND_MESSAGE => handle_send_message(args, pane_id, &mut st),
+        TOOL_GET_MESSAGES => handle_get_messages(args, pane_id, &mut st),
+        TOOL_GET_PARTNER_STATUS => handle_get_partner_status(pane_id, &mut st),
+        TOOL_SHARED_CONTEXT => handle_shared_context(args, &mut st),
+        TOOL_CLAIM_TASK => handle_claim_task(args, pane_id, &mut st),
+        TOOL_RELEASE_TASK => handle_release_task(args, pane_id, &mut st),
+        TOOL_CLAIM_ROLE => handle_claim_role(args, pane_id, &mut st),
+        TOOL_GET_ROLE => handle_get_role(pane_id, &st),
+        TOOL_LIST_TASKS => handle_list_tasks(args, &st),
+        _ => unreachable!(), // guarded by the contains check above
     };
 
     // Inject team roster into successful responses.
     if !result.is_error {
-        if let Ok(st) = state.lock() {
-            let roster = st.build_team_roster(pane_id);
-            result = inject_team_roster(result, &roster);
-        }
+        let roster = st.build_team_roster(pane_id);
+        result = inject_team_roster(result, &roster);
     }
 
     result
@@ -288,19 +310,6 @@ fn inject_team_roster(
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-/// Lock the shared state, returning a `CallToolResult::failure` on poison.
-macro_rules! lock_state {
-    ($state:expr) => {
-        match $state.lock() {
-            Ok(g) => g,
-            Err(e) => {
-                tracing::error!("InterSessionState mutex poisoned: {e}");
-                return CallToolResult::failure("State lock poisoned");
-            }
-        }
-    };
-}
-
 /// Build the `all_roles` JSON array from the current state.
 fn collect_all_roles(st: &InterSessionState, self_pane: Option<u64>) -> Vec<Value> {
     st.list_roles()
@@ -334,26 +343,30 @@ fn contains_markdown(s: &str) -> bool {
 }
 
 /// Validate all fields of a structured message, collecting ALL errors.
+///
+/// Returns a `(type, subject, body)` triple on success, or a list of all
+/// validation errors on failure. No sentinel `Option`s or fallible `unwrap()`s
+/// — required fields are tracked as `Result` values and combined at the end.
 fn validate_structured_message(args: &Value) -> Result<(String, String, Value), Vec<String>> {
     let mut errors = Vec::new();
 
     // type — required, must be one of the allowed values.
-    let msg_type = match args.get("type").and_then(Value::as_str) {
-        Some(t) if ["task", "status", "question", "result"].contains(&t) => Some(t.to_string()),
+    let msg_type: Result<String, ()> = match args.get("type").and_then(Value::as_str) {
+        Some(t) if ["task", "status", "question", "result"].contains(&t) => Ok(t.to_string()),
         Some(t) => {
             errors.push(format!(
                 "Invalid type: '{t}'. Must be one of: task, status, question, result"
             ));
-            None
+            Err(())
         }
         None => {
             errors.push("Missing required field: type".to_string());
-            None
+            Err(())
         }
     };
 
     // subject — required, max 200 chars, plain text only.
-    let subject = match args.get("subject").and_then(Value::as_str) {
+    let subject: Result<String, ()> = match args.get("subject").and_then(Value::as_str) {
         Some(s) => {
             if s.len() > 200 {
                 errors.push(format!("subject exceeds 200 chars (got {})", s.len()));
@@ -363,16 +376,16 @@ fn validate_structured_message(args: &Value) -> Result<(String, String, Value), 
                     "subject contains markdown (**, ###, or ```). Plain text only.".to_string(),
                 );
             }
-            Some(s.to_string())
+            Ok(s.to_string())
         }
         None => {
             errors.push("Missing required field: subject".to_string());
-            None
+            Err(())
         }
     };
 
     // body — required object with summary (required) + optional fields.
-    let body = match args.get("body") {
+    let body: Result<Value, ()> = match args.get("body") {
         Some(b) if b.is_object() => {
             // body.summary — required, max 500 chars, plain text.
             match b.get("summary").and_then(Value::as_str) {
@@ -443,15 +456,15 @@ fn validate_structured_message(args: &Value) -> Result<(String, String, Value), 
                 }
             }
 
-            Some(b.clone())
+            Ok(b.clone())
         }
         Some(_) => {
             errors.push("body must be a JSON object".to_string());
-            None
+            Err(())
         }
         None => {
             errors.push("Missing required field: body".to_string());
-            None
+            Err(())
         }
     };
 
@@ -459,7 +472,8 @@ fn validate_structured_message(args: &Value) -> Result<(String, String, Value), 
         return Err(errors);
     }
 
-    // All validated — unwrap is safe because errors would have been pushed above.
+    // All three are Ok when errors is empty — the Err(()) branches always push
+    // at least one error, so reaching here guarantees all three are Ok.
     Ok((msg_type.unwrap(), subject.unwrap(), body.unwrap()))
 }
 
@@ -468,11 +482,7 @@ fn expected_schema_hint() -> &'static str {
     r#"Expected format: { "to": "partner", "type": "task|status|question|result", "subject": "plain text (max 200)", "body": { "summary": "plain text (max 500)", "files": ["path", ...], "steps": ["step (max 200)", ...], "context": "plain text (max 1000)" }, "priority": "normal|urgent" }. No markdown (**, ###, ```) anywhere."#
 }
 
-fn handle_send_message(
-    args: &Value,
-    pane_id: u64,
-    state: &Arc<Mutex<InterSessionState>>,
-) -> CallToolResult {
+fn handle_send_message(args: &Value, pane_id: u64, st: &mut InterSessionState) -> CallToolResult {
     // Validate structured message fields, collecting all errors.
     let (msg_type, subject, body) = match validate_structured_message(args) {
         Ok(validated) => validated,
@@ -502,7 +512,6 @@ fn handle_send_message(
         }
     };
 
-    // Resolve target and send in a single lock acquisition to avoid TOCTOU.
     let to_explicit: Option<u64> = match args.get("to").and_then(Value::as_str) {
         Some("partner") | None => None,
         Some(id_str) => match id_str.parse::<u64>() {
@@ -519,7 +528,6 @@ fn handle_send_message(
     });
     let content_json = serde_json::to_string(&structured_content).unwrap_or_default();
 
-    let mut st = lock_state!(state);
     let to_pane = match to_explicit {
         Some(id) => id,
         None => match st.resolve_partner(pane_id) {
@@ -565,17 +573,12 @@ fn handle_send_message(
     ))
 }
 
-fn handle_get_messages(
-    args: &Value,
-    pane_id: u64,
-    state: &Arc<Mutex<InterSessionState>>,
-) -> CallToolResult {
+fn handle_get_messages(args: &Value, pane_id: u64, st: &mut InterSessionState) -> CallToolResult {
     let mark_read = args
         .get("mark_read")
         .and_then(Value::as_bool)
         .unwrap_or(true);
 
-    let mut st = lock_state!(state);
     let messages = st.get_messages(pane_id, mark_read);
 
     if messages.is_empty() {
@@ -598,11 +601,7 @@ fn handle_get_messages(
     CallToolResult::success(serde_json::to_string_pretty(&msg_json).unwrap_or_default())
 }
 
-fn handle_get_partner_status(
-    pane_id: u64,
-    state: &Arc<Mutex<InterSessionState>>,
-) -> CallToolResult {
-    let st = lock_state!(state);
+fn handle_get_partner_status(pane_id: u64, st: &InterSessionState) -> CallToolResult {
     let partners = st.get_partner_status(pane_id);
 
     if partners.is_empty() {
@@ -625,7 +624,7 @@ fn handle_get_partner_status(
     CallToolResult::success(serde_json::to_string_pretty(&result).unwrap_or_default())
 }
 
-fn handle_shared_context(args: &Value, state: &Arc<Mutex<InterSessionState>>) -> CallToolResult {
+fn handle_shared_context(args: &Value, st: &mut InterSessionState) -> CallToolResult {
     let op = match args.get("op").and_then(Value::as_str) {
         Some(o) => o,
         None => return CallToolResult::failure("Missing required field: op"),
@@ -636,10 +635,6 @@ fn handle_shared_context(args: &Value, state: &Arc<Mutex<InterSessionState>>) ->
             let key = match args.get("key").and_then(Value::as_str) {
                 Some(k) => k,
                 None => return CallToolResult::failure("Missing required field: key (for op=get)"),
-            };
-            let st = match state.lock() {
-                Ok(g) => g,
-                Err(_) => return CallToolResult::failure("State lock poisoned"),
             };
             match st.shared_context_get(key) {
                 Some(val) => CallToolResult::success(val.to_string()),
@@ -657,10 +652,6 @@ fn handle_shared_context(args: &Value, state: &Arc<Mutex<InterSessionState>>) ->
                     return CallToolResult::failure("Missing required field: value (for op=set)");
                 }
             };
-            let mut st = match state.lock() {
-                Ok(g) => g,
-                Err(_) => return CallToolResult::failure("State lock poisoned"),
-            };
             st.shared_context_set(key, value);
             CallToolResult::success(format!("Set '{key}'."))
         }
@@ -671,10 +662,6 @@ fn handle_shared_context(args: &Value, state: &Arc<Mutex<InterSessionState>>) ->
                     return CallToolResult::failure("Missing required field: key (for op=delete)");
                 }
             };
-            let mut st = match state.lock() {
-                Ok(g) => g,
-                Err(_) => return CallToolResult::failure("State lock poisoned"),
-            };
             if st.shared_context_delete(key) {
                 CallToolResult::success(format!("Deleted '{key}'."))
             } else {
@@ -682,10 +669,6 @@ fn handle_shared_context(args: &Value, state: &Arc<Mutex<InterSessionState>>) ->
             }
         }
         "list" => {
-            let st = match state.lock() {
-                Ok(g) => g,
-                Err(_) => return CallToolResult::failure("State lock poisoned"),
-            };
             let keys = st.shared_context_list();
             if keys.is_empty() {
                 CallToolResult::success("No keys in shared context.")
@@ -699,11 +682,7 @@ fn handle_shared_context(args: &Value, state: &Arc<Mutex<InterSessionState>>) ->
     }
 }
 
-fn handle_claim_task(
-    args: &Value,
-    pane_id: u64,
-    state: &Arc<Mutex<InterSessionState>>,
-) -> CallToolResult {
+fn handle_claim_task(args: &Value, pane_id: u64, st: &mut InterSessionState) -> CallToolResult {
     let task_id = match args.get("task_id").and_then(Value::as_str) {
         Some(id) => id.to_string(),
         None => return CallToolResult::failure("Missing required field: task_id"),
@@ -714,7 +693,6 @@ fn handle_claim_task(
         .unwrap_or("")
         .to_string();
 
-    let mut st = lock_state!(state);
     match st.claim_task(&task_id, &description, pane_id) {
         ClaimResult::Claimed => {
             CallToolResult::success(serde_json::to_string(&json!({"claimed": true})).unwrap())
@@ -730,17 +708,12 @@ fn handle_claim_task(
     }
 }
 
-fn handle_release_task(
-    args: &Value,
-    pane_id: u64,
-    state: &Arc<Mutex<InterSessionState>>,
-) -> CallToolResult {
+fn handle_release_task(args: &Value, pane_id: u64, st: &mut InterSessionState) -> CallToolResult {
     let task_id = match args.get("task_id").and_then(Value::as_str) {
         Some(id) => id,
         None => return CallToolResult::failure("Missing required field: task_id"),
     };
 
-    let mut st = lock_state!(state);
     if st.release_task(task_id, pane_id) {
         CallToolResult::success(format!("Released task '{task_id}'."))
     } else {
@@ -750,11 +723,7 @@ fn handle_release_task(
     }
 }
 
-fn handle_claim_role(
-    args: &Value,
-    pane_id: u64,
-    state: &Arc<Mutex<InterSessionState>>,
-) -> CallToolResult {
+fn handle_claim_role(args: &Value, pane_id: u64, st: &mut InterSessionState) -> CallToolResult {
     let role_name = match args.get("role").and_then(Value::as_str) {
         Some(r) => r.to_string(),
         None => return CallToolResult::failure("Missing required field: role"),
@@ -764,8 +733,6 @@ fn handle_claim_role(
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_string();
-
-    let mut st = lock_state!(state);
 
     let role = PaneRole {
         name: role_name.clone(),
@@ -800,8 +767,7 @@ fn handle_claim_role(
     }
 }
 
-fn handle_get_role(pane_id: u64, state: &Arc<Mutex<InterSessionState>>) -> CallToolResult {
-    let st = lock_state!(state);
+fn handle_get_role(pane_id: u64, st: &InterSessionState) -> CallToolResult {
     let role = st.get_role(pane_id);
 
     let all_roles = collect_all_roles(&st, Some(pane_id));
@@ -818,8 +784,7 @@ fn handle_get_role(pane_id: u64, state: &Arc<Mutex<InterSessionState>>) -> CallT
     CallToolResult::success(serde_json::to_string_pretty(&result).unwrap_or_default())
 }
 
-fn handle_list_tasks(args: &Value, state: &Arc<Mutex<InterSessionState>>) -> CallToolResult {
-    let st = lock_state!(state);
+fn handle_list_tasks(args: &Value, st: &InterSessionState) -> CallToolResult {
     let status_filter = args.get("status").and_then(|v| v.as_str());
 
     let tasks: Vec<&crate::mcp::state::OpenSpecTaskSnapshot> = st

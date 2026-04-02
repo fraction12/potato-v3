@@ -612,7 +612,7 @@ pub struct AppState {
     /// OpenSpec CLI snapshot — periodic summary of changes and artifacts.
     pub openspec_snapshot: crate::openspec::snapshot::OpenSpecSnapshot,
     /// Tick counter for periodic OpenSpec refresh (~30s / 120 ticks).
-    pub openspec_refresh_ticks: u16,
+    pub openspec_refresh_ticks: u32,
 
     /// Merged agent profiles (defaults < global < project `.potato/agents.toml`).
     /// Stored at top level so profiles survive dashboard → session transitions.
@@ -635,6 +635,8 @@ pub struct AppState {
 
 impl Default for AppState {
     fn default() -> Self {
+        let (dirty_tx, dirty_rx) = mpsc::unbounded_channel();
+        let (snapshot_tx, snapshot_rx) = mpsc::unbounded_channel();
         Self {
             should_quit: false,
             screen: AppScreen::default(),
@@ -659,20 +661,14 @@ impl Default for AppState {
             persisted_event_count: 0,
             mcp_socket_path: None,
             inter_session_state: None,
-            dirty_tx: {
-                let (tx, _) = mpsc::unbounded_channel();
-                tx
-            },
-            dirty_rx: None,
+            dirty_tx,
+            dirty_rx: Some(dirty_rx),
             inject_rx: None,
             openspec_snapshot: crate::openspec::snapshot::OpenSpecSnapshot::default(),
             openspec_refresh_ticks: 0,
             agent_profiles: Vec::new(),
-            snapshot_tx: {
-                let (tx, _) = mpsc::unbounded_channel();
-                tx
-            },
-            snapshot_rx: None,
+            snapshot_tx,
+            snapshot_rx: Some(snapshot_rx),
             git_refresh_in_flight: false,
             openspec_refresh_in_flight: false,
             rail_refresh_in_flight: false,

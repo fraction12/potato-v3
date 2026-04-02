@@ -262,41 +262,35 @@ impl SessionStore {
         if old_id == new_id {
             return Ok(());
         }
-        // Temporarily disable FK enforcement so we can reparent child rows
-        // before updating the parent PK.
-        self.conn.execute_batch("PRAGMA foreign_keys = OFF")?;
-        let result = (|| -> Result<()> {
-            let tx = self.conn.unchecked_transaction()?;
-            // Update child tables first (foreign key references).
+        let tx = self.conn.unchecked_transaction()?;
+        // Defer FK checks until commit — transaction-scoped, cannot leak.
+        tx.execute_batch("PRAGMA defer_foreign_keys = ON")?;
+        // Update child tables first (foreign key references).
+        tx.execute(
+            "UPDATE session_events SET session_id = ?1 WHERE session_id = ?2",
+            params![new_id, old_id],
+        )?;
+        tx.execute(
+            "UPDATE messages SET session_id = ?1 WHERE session_id = ?2",
+            params![new_id, old_id],
+        )?;
+        // Delete the old session row if the new_id already exists.
+        // Otherwise rename the primary key.
+        let new_exists: bool = tx.query_row(
+            "SELECT COUNT(*) FROM sessions WHERE id = ?1",
+            params![new_id],
+            |row| row.get::<_, i64>(0),
+        )? > 0;
+        if new_exists {
+            tx.execute("DELETE FROM sessions WHERE id = ?1", params![old_id])?;
+        } else {
             tx.execute(
-                "UPDATE session_events SET session_id = ?1 WHERE session_id = ?2",
+                "UPDATE sessions SET id = ?1 WHERE id = ?2",
                 params![new_id, old_id],
             )?;
-            tx.execute(
-                "UPDATE messages SET session_id = ?1 WHERE session_id = ?2",
-                params![new_id, old_id],
-            )?;
-            // Delete the old session row if the new_id already exists.
-            // Otherwise rename the primary key.
-            let new_exists: bool = tx.query_row(
-                "SELECT COUNT(*) FROM sessions WHERE id = ?1",
-                params![new_id],
-                |row| row.get::<_, i64>(0),
-            )? > 0;
-            if new_exists {
-                tx.execute("DELETE FROM sessions WHERE id = ?1", params![old_id])?;
-            } else {
-                tx.execute(
-                    "UPDATE sessions SET id = ?1 WHERE id = ?2",
-                    params![new_id, old_id],
-                )?;
-            }
-            tx.commit()?;
-            Ok(())
-        })();
-        // Always re-enable FK enforcement.
-        let _ = self.conn.execute_batch("PRAGMA foreign_keys = ON");
-        result
+        }
+        tx.commit()?;
+        Ok(())
     }
 
     /// List all sessions ordered by `updated_at` DESC (newest first).

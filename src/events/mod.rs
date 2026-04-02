@@ -13,7 +13,16 @@ pub enum AgentEvent {
     /// A partial text token was streamed from the agent.
     TextDelta { text: String },
     /// A complete assistant message was received.
-    TextDone { full_text: String },
+    ///
+    /// `turn_id` tags this event with the turn it belongs to. When `Some(id)`,
+    /// the session reducer only patches the transcript entry whose `turn_seq`
+    /// matches `id`, preventing a late `TextDone` from overwriting a newer
+    /// turn's content. When `None`, falls back to the most recent assistant
+    /// entry (legacy/untagged behavior).
+    TextDone {
+        full_text: String,
+        turn_id: Option<u64>,
+    },
     /// The agent started a tool invocation.
     ToolStart {
         id: String,

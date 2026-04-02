@@ -38,3 +38,26 @@
 - [x] T-885: [LOW] Remove unused pane_index_after_open computation — computed but never read in main.rs (OBSOLETE — removed)
 - [x] T-886: [LOW] Fix duplicate keybind entries in help overlay — removed redundant Navigation section
 - [x] T-887: [LOW] Fix TokenSparkline::push uses O(n) Vec::remove(0) — should use VecDeque for O(1) pop_front
+
+## Round 2 — New bugs from audit
+
+- [x] T-890: [HIGH] Fix rename_session disables FK enforcement globally — ALREADY FIXED: uses PRAGMA defer_foreign_keys = ON inside unchecked_transaction(). Verified by RUSure.
+- [x] T-891: [HIGH] Fix openspec_refresh_ticks u16 overflow — changed to u32, git_refresh_ticks is u64, both safe. Verified by RUSure.
+- [x] T-892: [HIGH] Fix handle_tool_call triple-locks MCP state per call — consolidated to single lock, handlers take &mut InterSessionState.
+- [x] T-893: [MEDIUM] Fix validate_structured_message fragile unwrap — replaced Option sentinels with Result<T, ()>.
+- [x] T-894: [MEDIUM] Fix AppState::default() creates dead channels — channels now wired correctly, receivers stored.
+
+## Round 2 — Still-open from Round 1
+
+- [x] T-858: [HIGH] Fix no log rotation detection — ALREADY FIXED: both trackers check file_len < offset, reset offset and clear carry. Tests exist.
+- [x] T-862: [HIGH] Fix inject_into_pane index vs ID confusion — PaneId newtype in pane.rs, boundary conversion at MCP. All tests wrapped.
+- [x] T-863: [HIGH] Fix double raw-mode setup/teardown — ALREADY FIXED: no enable_raw_mode in main.rs. Verified by RUSure.
+- [x] T-864: [HIGH] Fix _dirty_rx immediately dropped — broadcast channel 64, take_dirty_rx returns initial rx, no gap. Verified by RUSure.
+- [x] T-868: [MEDIUM] Fix PTY stderr reader ignores kill signal — kill_tx watch channel added to TurnHandle, matches spawn_with_env pattern.
+- [x] T-869: [MEDIUM] Fix KeybindConfig raw strings no validation — ALREADY FIXED: validate() + is_valid_key_expr() at load time.
+- [x] T-874: [MEDIUM] Fix TextDone can overwrite wrong turn — turn_id: Option<u64> added, reducer matches on it. 829 tests pass.
+- [x] T-875: [MEDIUM] Fix UUID session row orphaned on SessionBound — ALREADY FIXED: rename_session handles orphans.
+- [x] T-880: [LOW] Deduplicate truncate_str — ALREADY FIXED: all modules use crate::util::truncate_str.
+- [x] T-881: [LOW] Fix compact_json byte/char truncation — ALREADY FIXED: uses chars().take().
+- [x] T-884: [LOW] Fix tool_result.content only handles string — ALREADY FIXED: array content blocks handled, test added.
+- [x] T-886: [LOW] Fix duplicate keybind entries in help overlay — ALREADY FIXED: duplicate Navigation section removed.

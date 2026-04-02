@@ -174,7 +174,10 @@ impl AgentAdapter for CodexAdapter {
                                 payload: trimmed.to_string(),
                             }]
                         } else {
-                            vec![AgentEvent::TextDone { full_text: text }]
+                            vec![AgentEvent::TextDone {
+                                full_text: text,
+                                turn_id: None,
+                            }]
                         }
                     }
                     _ => {
@@ -586,7 +589,7 @@ mod tests {
         let events = adapter().parse_line(line);
         assert_eq!(events.len(), 1);
         assert!(
-            matches!(&events[0], AgentEvent::TextDone { full_text } if full_text == "I've finished the task."),
+            matches!(&events[0], AgentEvent::TextDone { full_text, .. } if full_text == "I've finished the task."),
             "expected TextDone, got {:?}",
             events[0]
         );
