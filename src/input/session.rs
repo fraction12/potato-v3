@@ -159,7 +159,7 @@ pub fn handle(state: &mut AppState, key: &KeyEvent) -> KeyAction {
     match current_focus {
         CockpitFocus::Terminal => super::terminal::handle(state, key),
         CockpitFocus::Input => super::text_input::handle(state, key),
-        CockpitFocus::Agents | CockpitFocus::Git | CockpitFocus::Sidebar => {
+        CockpitFocus::Agents | CockpitFocus::Git | CockpitFocus::Tools | CockpitFocus::Sidebar => {
             super::panels::handle(state, key, current_focus)
         }
     }

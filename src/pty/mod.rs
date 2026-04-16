@@ -322,22 +322,20 @@ impl PtyProcess {
     /// `stdin_tx` because stdin is closed after the initial write.
     pub async fn spawn_turn(
         adapter: Arc<dyn AgentAdapter>,
-        config: AdapterConfig,
+        mut config: AdapterConfig,
         prompt: String,
         session_id: Option<String>,
     ) -> Result<TurnHandle> {
+        if config.resume_session_id.is_none() {
+            config.resume_session_id = session_id;
+        }
+
         let working_dir = config.working_dir.display().to_string();
         let adapter_name = adapter.name().to_string();
         let model = config.model.clone();
 
-        // Build the base command from the adapter (includes --print --output-format stream-json --verbose).
+        // Build the base command from the adapter.
         let mut cmd = adapter.build_command(&config);
-
-        // Add --resume if we have a prior session id to continue the thread.
-        if let Some(ref sid) = session_id {
-            cmd.arg("--resume");
-            cmd.arg(sid);
-        }
 
         // Piped I/O — we write the prompt to stdin then close it.
         cmd.stdin(std::process::Stdio::piped())

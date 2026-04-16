@@ -253,6 +253,18 @@ impl CodexSessionLogTracker {
                         }
                     }
 
+                    "token_count" => {
+                        let usage = payload.get("info").and_then(|info| {
+                            info.get("last_token_usage")
+                                .or_else(|| info.get("total_token_usage"))
+                        });
+                        if let Some(usage) = usage {
+                            if self.apply_usage(usage) {
+                                changed = true;
+                            }
+                        }
+                    }
+
                     "item_started" => {
                         let item = &payload["item"];
                         if item["type"].as_str() == Some("command_execution") {
@@ -317,10 +329,12 @@ impl CodexSessionLogTracker {
             .usage
             .input_tokens
             .saturating_add(usage["input_tokens"].as_u64().unwrap_or(0));
-        self.usage.cached_input_tokens = self
-            .usage
-            .cached_input_tokens
-            .saturating_add(usage["cached_input_tokens"].as_u64().unwrap_or(0));
+        self.usage.cached_input_tokens = self.usage.cached_input_tokens.saturating_add(
+            usage["cached_input_tokens"]
+                .as_u64()
+                .or_else(|| usage["cache_creation_input_tokens"].as_u64())
+                .unwrap_or(0),
+        );
         self.usage.output_tokens = self
             .usage
             .output_tokens
@@ -400,6 +414,19 @@ mod tests {
 
     fn tracker() -> CodexSessionLogTracker {
         CodexSessionLogTracker::default()
+    }
+
+    #[test]
+    fn token_count_updates_usage_totals() {
+        let mut t = tracker();
+        let changed = t.process_line(
+            r#"{"timestamp":"2026-03-04T00:53:04.000Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":120,"cached_input_tokens":30,"output_tokens":45}}}}"#,
+        );
+        assert!(changed);
+        let snap = t.snapshot();
+        assert_eq!(snap.usage.input_tokens, 120);
+        assert_eq!(snap.usage.cached_input_tokens, 30);
+        assert_eq!(snap.usage.output_tokens, 45);
     }
 
     // ── process_line: session_meta ────────────────────────────────────────────

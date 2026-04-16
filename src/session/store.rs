@@ -9,6 +9,21 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result};
 use rusqlite::{Connection, params};
 
+#[derive(Debug, Clone)]
+pub struct SessionUpsert<'a> {
+    pub id: &'a str,
+    pub project_dir: &'a str,
+    pub agent: &'a str,
+    pub model: Option<&'a str>,
+    pub title: &'a str,
+    pub cwd: Option<&'a str>,
+    pub total_input_tokens: u64,
+    pub total_output_tokens: u64,
+    pub turn_count: u64,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
 // ── Public data types ─────────────────────────────────────────────────────────
 
 /// A single persisted message row (kept for backward compatibility).
@@ -204,21 +219,7 @@ impl SessionStore {
 
     /// Upsert a session row. Creates it if absent; updates totals and timestamp
     /// if it already exists but the incoming data has higher token counts.
-    #[allow(clippy::too_many_arguments)]
-    pub fn upsert_session(
-        &self,
-        id: &str,
-        project_dir: &str,
-        agent: &str,
-        model: Option<&str>,
-        title: &str,
-        cwd: Option<&str>,
-        total_input_tokens: u64,
-        total_output_tokens: u64,
-        turn_count: u64,
-        created_at: i64,
-        updated_at: i64,
-    ) -> Result<()> {
+    pub fn upsert_session(&self, session: &SessionUpsert<'_>) -> Result<()> {
         self.conn.execute(
             "INSERT INTO sessions
                 (id, project_dir, agent, model, title, cwd,
@@ -234,17 +235,17 @@ impl SessionStore {
                 turn_count           = MAX(excluded.turn_count, turn_count),
                 updated_at           = MAX(excluded.updated_at, updated_at)",
             params![
-                id,
-                project_dir,
-                agent,
-                model,
-                title,
-                cwd,
-                total_input_tokens as i64,
-                total_output_tokens as i64,
-                turn_count as i64,
-                created_at,
-                updated_at,
+                session.id,
+                session.project_dir,
+                session.agent,
+                session.model,
+                session.title,
+                session.cwd,
+                session.total_input_tokens as i64,
+                session.total_output_tokens as i64,
+                session.turn_count as i64,
+                session.created_at,
+                session.updated_at,
             ],
         )
         .context("failed to upsert session")?;
@@ -378,7 +379,19 @@ impl SessionStore {
     pub fn create_session(&self, title: &str) -> Result<String> {
         let id = new_id();
         let now = unix_now();
-        self.upsert_session(&id, "", "claude", None, title, None, 0, 0, 0, now, now)?;
+        self.upsert_session(&SessionUpsert {
+            id: &id,
+            project_dir: "",
+            agent: "claude",
+            model: None,
+            title,
+            cwd: None,
+            total_input_tokens: 0,
+            total_output_tokens: 0,
+            turn_count: 0,
+            created_at: now,
+            updated_at: now,
+        })?;
         Ok(id)
     }
 
@@ -469,34 +482,34 @@ mod tests {
 
         let now = unix_now();
         store
-            .upsert_session(
-                "uuid-1",
-                "proj-a",
-                "claude",
-                Some("claude-3-5"),
-                "Hello world",
-                None,
-                100,
-                200,
-                3,
-                now,
-                now,
-            )
+            .upsert_session(&SessionUpsert {
+                id: "uuid-1",
+                project_dir: "proj-a",
+                agent: "claude",
+                model: Some("claude-3-5"),
+                title: "Hello world",
+                cwd: None,
+                total_input_tokens: 100,
+                total_output_tokens: 200,
+                turn_count: 3,
+                created_at: now,
+                updated_at: now,
+            })
             .expect("upsert 1");
         store
-            .upsert_session(
-                "uuid-2",
-                "proj-b",
-                "claude",
-                None,
-                "Another session",
-                None,
-                0,
-                0,
-                0,
-                now - 10,
-                now - 5,
-            )
+            .upsert_session(&SessionUpsert {
+                id: "uuid-2",
+                project_dir: "proj-b",
+                agent: "claude",
+                model: None,
+                title: "Another session",
+                cwd: None,
+                total_input_tokens: 0,
+                total_output_tokens: 0,
+                turn_count: 0,
+                created_at: now - 10,
+                updated_at: now - 5,
+            })
             .expect("upsert 2");
 
         let sessions = store.list_sessions().expect("list");
@@ -514,25 +527,35 @@ mod tests {
         let store = fresh_store();
         let now = unix_now();
         store
-            .upsert_session(
-                "uuid-1", "proj", "claude", None, "", None, 50, 80, 1, now, now,
-            )
+            .upsert_session(&SessionUpsert {
+                id: "uuid-1",
+                project_dir: "proj",
+                agent: "claude",
+                model: None,
+                title: "",
+                cwd: None,
+                total_input_tokens: 50,
+                total_output_tokens: 80,
+                turn_count: 1,
+                created_at: now,
+                updated_at: now,
+            })
             .expect("first upsert");
         // Second call with higher totals — should update.
         store
-            .upsert_session(
-                "uuid-1",
-                "proj",
-                "claude",
-                Some("claude-3-5"),
-                "First prompt",
-                None,
-                150,
-                200,
-                4,
-                now,
-                now + 5,
-            )
+            .upsert_session(&SessionUpsert {
+                id: "uuid-1",
+                project_dir: "proj",
+                agent: "claude",
+                model: Some("claude-3-5"),
+                title: "First prompt",
+                cwd: None,
+                total_input_tokens: 150,
+                total_output_tokens: 200,
+                turn_count: 4,
+                created_at: now,
+                updated_at: now + 5,
+            })
             .expect("second upsert");
 
         let sessions = store.list_sessions().expect("list");
@@ -548,9 +571,19 @@ mod tests {
         let store = fresh_store();
         let now = unix_now();
         store
-            .upsert_session(
-                "uuid-1", "proj", "claude", None, "", None, 0, 0, 0, now, now,
-            )
+            .upsert_session(&SessionUpsert {
+                id: "uuid-1",
+                project_dir: "proj",
+                agent: "claude",
+                model: None,
+                title: "",
+                cwd: None,
+                total_input_tokens: 0,
+                total_output_tokens: 0,
+                turn_count: 0,
+                created_at: now,
+                updated_at: now,
+            })
             .expect("upsert");
 
         assert_eq!(store.event_count("uuid-1").expect("count"), 0);
@@ -585,19 +618,19 @@ mod tests {
         let store = fresh_store();
         let now = unix_now();
         store
-            .upsert_session(
-                "uuid-del",
-                "proj",
-                "claude",
-                None,
-                "Delete me",
-                None,
-                0,
-                0,
-                0,
-                now,
-                now,
-            )
+            .upsert_session(&SessionUpsert {
+                id: "uuid-del",
+                project_dir: "proj",
+                agent: "claude",
+                model: None,
+                title: "Delete me",
+                cwd: None,
+                total_input_tokens: 0,
+                total_output_tokens: 0,
+                turn_count: 0,
+                created_at: now,
+                updated_at: now,
+            })
             .expect("upsert");
         assert_eq!(store.list_sessions().expect("list").len(), 1);
 
@@ -638,7 +671,19 @@ mod tests {
         let now = unix_now();
         let store = fresh_store();
         store
-            .upsert_session("x", "p", "claude", None, "t", None, 300, 700, 5, now, now)
+            .upsert_session(&SessionUpsert {
+                id: "x",
+                project_dir: "p",
+                agent: "claude",
+                model: None,
+                title: "t",
+                cwd: None,
+                total_input_tokens: 300,
+                total_output_tokens: 700,
+                turn_count: 5,
+                created_at: now,
+                updated_at: now,
+            })
             .expect("upsert");
         let sessions = store.list_sessions().expect("list");
         assert_eq!(sessions[0].total_tokens(), 1000);
@@ -649,9 +694,19 @@ mod tests {
         let store = fresh_store();
         let now = unix_now();
         store
-            .upsert_session(
-                "old-uuid", "proj", "claude", None, "Title", None, 10, 20, 1, now, now,
-            )
+            .upsert_session(&SessionUpsert {
+                id: "old-uuid",
+                project_dir: "proj",
+                agent: "claude",
+                model: None,
+                title: "Title",
+                cwd: None,
+                total_input_tokens: 10,
+                total_output_tokens: 20,
+                turn_count: 1,
+                created_at: now,
+                updated_at: now,
+            })
             .expect("upsert");
         store
             .append_event(&SessionEvent {
@@ -684,7 +739,19 @@ mod tests {
         let store = fresh_store();
         let now = unix_now();
         store
-            .upsert_session("same", "proj", "claude", None, "T", None, 0, 0, 0, now, now)
+            .upsert_session(&SessionUpsert {
+                id: "same",
+                project_dir: "proj",
+                agent: "claude",
+                model: None,
+                title: "T",
+                cwd: None,
+                total_input_tokens: 0,
+                total_output_tokens: 0,
+                turn_count: 0,
+                created_at: now,
+                updated_at: now,
+            })
             .expect("upsert");
         store.rename_session("same", "same").expect("noop");
         assert_eq!(store.list_sessions().expect("list").len(), 1);
