@@ -371,15 +371,15 @@ pub fn parse_codex_jsonl_file(path: &Path) -> Result<ParsedSession> {
                 }
                 "event_msg" => {
                     let payload = &v["payload"];
-                    if payload.get("type").and_then(Value::as_str) == Some("token_count") {
-                        if model.is_none() {
-                            model = payload
-                                .get("model")
-                                .or_else(|| payload.get("info").and_then(|info| info.get("model")))
-                                .and_then(Value::as_str)
-                                .filter(|s| !s.is_empty())
-                                .map(ToOwned::to_owned);
-                        }
+                    if payload.get("type").and_then(Value::as_str) == Some("token_count")
+                        && model.is_none()
+                    {
+                        model = payload
+                            .get("model")
+                            .or_else(|| payload.get("info").and_then(|info| info.get("model")))
+                            .and_then(Value::as_str)
+                            .filter(|s| !s.is_empty())
+                            .map(ToOwned::to_owned);
                     }
                 }
                 _ => {}
