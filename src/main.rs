@@ -48,7 +48,10 @@ use app::state::{AgentInfo, DashboardState, PathSnapshots};
 use app::state::{AppScreen, AppState, CockpitFocus, DashboardFocus, SnapshotMsg};
 use app::update::update;
 use config::load_config;
-use session::{SessionStore, discover_historical_sessions, unix_now};
+use session::{
+    AgentSessionLogTracker, SessionStore, SessionUpsert, codex_session_log_path,
+    discover_historical_sessions, provider_project_dir_name, session_log_path_for, unix_now,
+};
 use terminal::events::event_stream;
 use terminal::panic_hook::install_panic_hook;
 use ui::screens::{dashboard::render_dashboard, session::render_session};
@@ -59,7 +62,7 @@ use ui::screens::{dashboard::render_dashboard, session::render_session};
 #[derive(Parser, Debug)]
 #[command(name = "potato", version, about)]
 struct Cli {
-    /// Agent adapter to launch (claude|generic). Overrides dashboard selection.
+    /// Agent adapter to launch (claude|codex|generic). Overrides dashboard selection.
     #[arg(short, long)]
     agent: Option<String>,
 
@@ -83,7 +86,7 @@ struct Cli {
 /// Optional subcommands for Potato.
 #[derive(Subcommand, Debug)]
 enum PotatoCommand {
-    /// Run as a per-pane MCP stdio server (launched by Claude via .mcp.json).
+    /// Run as a per-pane MCP stdio server (launched by an agent via .mcp.json).
     ///
     /// Reads JSON-RPC lines from stdin, forwards them to the main Potato
     /// process over a Unix domain socket, and writes responses to stdout.
@@ -129,7 +132,7 @@ async fn run_mcp_server() -> Result<()> {
     loop {
         line.clear();
         match stdin_reader.read_line(&mut line).await {
-            Ok(0) => break, // EOF from Claude — session ending.
+            Ok(0) => break, // EOF from the agent MCP client — session ending.
             Err(e) => {
                 eprintln!("potato mcp-server: stdin error: {e}");
                 break;
@@ -211,7 +214,7 @@ impl Drop for TerminalGuard {
 fn detect_agents() -> Vec<AgentInfo> {
     let mut agents = vec![];
 
-    // Claude Code
+    // Claude Code adapter
     let claude = ClaudeAdapter;
     let claude_path = claude.detect();
     agents.push(AgentInfo {
@@ -278,9 +281,9 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
     let mut event_rx = event_stream();
     let tick_duration = Duration::from_millis(50);
 
-    // Per-turn handle for the current Claude process (None when not processing a turn).
-    // Each user message spawns a new process; this is replaced each turn.
-    let mut turn_handle: Option<TurnHandle> = None;
+    // Per-turn handle for the current exec-backed agent turn.
+    // The PaneId tags which pane should receive the event stream.
+    let mut turn_handle: Option<(app::pane::PaneId, TurnHandle)> = None;
 
     loop {
         // ── Background-thread panic recovery (T-907) ──────────────────────────
@@ -328,10 +331,10 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
         })?;
 
         // ── PTY event drain ───────────────────────────────────────────────────
-        if let Some(ref mut handle) = turn_handle {
+        if let Some((pane_id, handle)) = turn_handle.as_mut() {
             // Drain any pending PTY events without blocking.
             while let Ok(event) = handle.event_rx.try_recv() {
-                apply_pty_event(state, event);
+                apply_pty_event(state, Some(*pane_id), event);
             }
             // Check if the turn process has exited — clear the handle when done.
             if handle.exit_rx.borrow().is_some() {
@@ -339,7 +342,7 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
             }
         }
 
-        // ── Claude session log drain (direct sidebar source-of-truth) ───────
+        // ── Agent session log drain (direct sidebar source-of-truth) ────────
         sync_all_panes(state);
 
         // ── MCP injection drain ──────────────────────────────────────────────
@@ -377,7 +380,7 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                         break;
                     }
                     input::KeyAction::SpawnDashboard => {
-                        // Snapshot roles BEFORE spawning — spawn_claude_pane
+                        // Snapshot roles BEFORE spawning, because pane spawn switches to Session
                         // switches screen to Session, making Dashboard inaccessible.
                         let roles: Vec<crate::app::state::RoleDefinition> =
                             if let AppScreen::Dashboard(ref dash) = state.screen {
@@ -388,8 +391,8 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                         let role_count = roles.len().max(1);
 
                         // ── Pre-write .mcp.json BEFORE spawning any panes ──────────
-                        // Claude Code reads .mcp.json at startup. If we write it after
-                        // spawn, there's a race: Claude may initialize before the file
+                        // Claude Code adapter reads .mcp.json at startup. If we write it after
+                        // spawn, there's a race: the agent may initialize before the file
                         // exists. Sonnet 4.5 is particularly sensitive to this — it
                         // tries once and gives up, while Opus retries.
                         if let Some(ref _sock) = state.mcp_socket_path {
@@ -412,7 +415,12 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                             MAX_PANES
                         );
                         for _ in 0..role_count.min(MAX_PANES) {
-                            match spawn_claude_pane(state, None, default_profile.as_ref()) {
+                            match spawn_pty_agent_pane(
+                                state,
+                                "claude",
+                                None,
+                                default_profile.as_ref(),
+                            ) {
                                 Ok(id) => tracing::info!(
                                     "Dashboard spawned pane: {} (total now: {})",
                                     id,
@@ -463,7 +471,9 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                             }
                         }
 
-                        turn_handle = None;
+                        if let Some((_, handle)) = turn_handle.take() {
+                            handle.kill();
+                        }
 
                         if state.panes.is_empty() {
                             if let Ok(cwd) = std::env::current_dir() {
@@ -479,27 +489,109 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                     input::KeyAction::Broadcast(text) => {
                         let n_panes = state.panes.len();
                         let mut any_written = false;
+                        let mut deferred_codex_turn: Option<(app::pane::PaneId, Option<String>)> =
+                            None;
+                        let mut multiple_exec_codex_panes = false;
+
                         for i in 0..n_panes {
+                            let pane_snapshot = state.panes.get(i).map(|pane| {
+                                (
+                                    pane.id,
+                                    pane.session.agent_name.clone(),
+                                    pane.session.agent_session_id.clone(),
+                                    pane.pty.is_some(),
+                                    pane.pty
+                                        .as_ref()
+                                        .map(|pty| pty.child_exited())
+                                        .unwrap_or(false),
+                                )
+                            });
+
+                            let Some((
+                                pane_id,
+                                agent_name,
+                                agent_session_id,
+                                has_pty,
+                                child_exited,
+                            )) = pane_snapshot
+                            else {
+                                continue;
+                            };
+
+                            if agent_name == "codex" && !has_pty {
+                                if deferred_codex_turn.is_some() {
+                                    multiple_exec_codex_panes = true;
+                                    continue;
+                                }
+                                deferred_codex_turn = Some((pane_id, agent_session_id));
+                                any_written = true;
+                                continue;
+                            }
+
+                            if child_exited {
+                                continue;
+                            }
+
                             if let Some(pane) = state.panes.get_mut(i) {
                                 if let Some(ref mut pty) = pane.pty {
-                                    if !pty.child_exited() {
-                                        if let Err(e) = pty.write_input(text.as_bytes()) {
-                                            tracing::warn!("Broadcast text to pane {i}: {e}");
-                                        } else {
-                                            any_written = true;
-                                            if let Ok(mut pending) = PENDING_ENTERS.lock() {
-                                                pending.push(crate::mcp::injection::PendingEnter {
-                                                    pane_id: pane.id.raw(),
-                                                    written_at_tick: state.tick_count,
-                                                    delay_ticks:
-                                                        crate::mcp::injection::ENTER_DELAY_TICKS,
-                                                });
-                                            }
+                                    if let Err(e) = pty.write_input(text.as_bytes()) {
+                                        tracing::warn!("Broadcast text to pane {i}: {e}");
+                                    } else {
+                                        any_written = true;
+                                        if let Ok(mut pending) = PENDING_ENTERS.lock() {
+                                            pending.push(crate::mcp::injection::PendingEnter {
+                                                pane_id: pane.id.raw(),
+                                                written_at_tick: state.tick_count,
+                                                delay_ticks:
+                                                    crate::mcp::injection::ENTER_DELAY_TICKS,
+                                            });
                                         }
                                     }
                                 }
                             }
                         }
+
+                        if multiple_exec_codex_panes {
+                            state.set_error(
+                                "Only one exec-backed Codex pane can receive a broadcast turn right now",
+                                100,
+                            );
+                        }
+
+                        if let Some((pane_id, agent_session_id)) = deferred_codex_turn {
+                            if turn_handle.is_some() {
+                                state.set_error(
+                                    "Another exec-backed agent turn is already running",
+                                    100,
+                                );
+                            } else {
+                                let config = adapters::AdapterConfig {
+                                    working_dir: std::env::current_dir()
+                                        .unwrap_or_else(|_| PathBuf::from(".")),
+                                    model: None,
+                                    resume_session_id: agent_session_id.clone(),
+                                    extra_flags: vec![],
+                                };
+
+                                match crate::pty::PtyProcess::spawn_turn(
+                                    Arc::new(CodexAdapter),
+                                    config,
+                                    text.clone(),
+                                    agent_session_id,
+                                )
+                                .await
+                                {
+                                    Ok(handle) => {
+                                        turn_handle = Some((pane_id, handle));
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!("Failed to start Codex exec turn: {e}");
+                                        state.set_error(format!("Codex turn failed: {e}"), 100);
+                                    }
+                                }
+                            }
+                        }
+
                         if !any_written {
                             tracing::warn!("No panes to broadcast to");
                         }
@@ -575,7 +667,7 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
         // ── Resume a historical session (deferred from key handler) ───────
         if let Some(resume_id) = pending_session_resume.take() {
             let prev_selected = state.session().map(|s| s.selected_session).unwrap_or(0);
-            match spawn_claude_pane(state, Some(&resume_id), None) {
+            match spawn_pty_agent_pane(state, "claude", Some(&resume_id), None) {
                 Ok(_) => {
                     // Restore rail selection.
                     if let Some(ref mut session) = state.session_mut() {
@@ -608,7 +700,7 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
             }
         }
 
-        // ── Detect dead panes (Claude exited) and close them ──────────────
+        // ── Detect dead PTY-backed panes and close them ─────────────────
         {
             let mut dead_indices: Vec<usize> = Vec::new();
             for i in 0..state.panes.len() {
@@ -619,7 +711,7 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
                                 "Pane idx={} id={} detected dead (child_exited=true, session={:?}, role={:?})",
                                 i,
                                 pane.id,
-                                pane.session.claude_session_id,
+                                pane.session.agent_session_id,
                                 pane.role_name
                             );
                             dead_indices.push(i);
@@ -694,14 +786,15 @@ async fn run_async(terminal: &mut DefaultTerminal, state: &mut AppState) -> Resu
     Ok(())
 }
 
-/// Spawn a Claude PTY session into the pane manager.
+/// Spawn a PTY-backed agent session into the pane manager.
 ///
-/// If `resume_id` is `Some`, resumes an existing session via `--resume <id>`.
-/// Otherwise creates a new session with `--session-id <uuid>`.
+/// If `resume_id` is `Some`, resumes an existing session using the adapter's resume flow.
+/// Otherwise creates a new provider-native interactive session.
 ///
 /// Returns the session id on success.
-fn spawn_claude_pane(
+fn spawn_pty_agent_pane(
     state: &mut AppState,
+    agent: &str,
     resume_id: Option<&str>,
     profile: Option<&crate::config::profiles::AgentProfile>,
 ) -> Result<String, String> {
@@ -709,12 +802,12 @@ fn spawn_claude_pane(
     let binary = if let Some(bin) = profile.and_then(|p| p.binary.as_ref()) {
         std::path::PathBuf::from(bin)
     } else {
-        which::which("claude").map_err(|_| "Claude binary not found".to_string())?
+        which::which(agent).map_err(|_| format!("{agent} binary not found"))?
     };
 
     if !state.panes.can_open() {
         tracing::warn!(
-            "spawn_claude_pane: rejected — at capacity ({}/{})",
+            "spawn_pty_agent_pane: rejected — at capacity ({}/{})",
             state.panes.len(),
             MAX_PANES
         );
@@ -728,7 +821,8 @@ fn spawn_claude_pane(
     let pty_cols = (center_cols / n_panes as u32).max(20) as u16;
     let pty_rows = term_rows.saturating_sub(10);
     tracing::info!(
-        "spawn_claude_pane: term={}x{}, n_panes_after={}, pty_size={}x{}, binary={:?}",
+        "spawn_pty_agent_pane({}): term={}x{}, n_panes_after={}, pty_size={}x{}, binary={:?}",
+        agent,
         term_cols,
         term_rows,
         n_panes,
@@ -737,27 +831,33 @@ fn spawn_claude_pane(
         profile
             .and_then(|p| p.binary.as_ref())
             .map(|b| b.as_str())
-            .unwrap_or("claude (default)")
+            .unwrap_or("adapter default")
     );
 
     let launch_cwd = std::env::current_dir().ok();
 
     let (session_id, mut session_args_owned): (String, Vec<String>) = if let Some(rid) = resume_id {
-        (
-            rid.to_string(),
-            vec![
-                "--resume".into(),
-                rid.into(),
-                "--dangerously-skip-permissions".into(),
-            ],
-        )
+        match agent {
+            "claude" => (
+                rid.to_string(),
+                vec![
+                    "--resume".into(),
+                    rid.into(),
+                    "--dangerously-skip-permissions".into(),
+                ],
+            ),
+            _ => (rid.to_string(), vec!["resume".into(), rid.into()]),
+        }
     } else {
         let id = uuid::Uuid::new_v4().to_string();
-        let args = vec![
-            "--session-id".into(),
-            id.clone(),
-            "--dangerously-skip-permissions".into(),
-        ];
+        let args = match agent {
+            "claude" => vec![
+                "--session-id".into(),
+                id.clone(),
+                "--dangerously-skip-permissions".into(),
+            ],
+            _ => vec![],
+        };
         (id, args)
     };
 
@@ -779,7 +879,7 @@ fn spawn_claude_pane(
 
     // ── MCP env vars ──────────────────────────────────────────────────────────
     // Set POTATO_PANE_ID and POTATO_SOCKET on every pane's PTY process.
-    // The MCP server inherits these from its parent (Claude PTY), so
+    // The MCP server inherits these from its parent agent process, so
     // .mcp.json only needs a single shared "potato" entry.
     let mut pane_env: Vec<(String, String)> = Vec::new();
     if let Some(ref sock) = state.mcp_socket_path.clone() {
@@ -799,7 +899,7 @@ fn spawn_claude_pane(
 
     let mut real_pty = if pane_env.is_empty() {
         crate::pty::RealPty::spawn_in(
-            binary.to_str().unwrap_or("claude"),
+            binary.to_str().unwrap_or(agent),
             &session_args_refs,
             pty_cols.max(20),
             pty_rows.max(5),
@@ -807,7 +907,7 @@ fn spawn_claude_pane(
         )
     } else {
         crate::pty::RealPty::spawn_with_env(
-            binary.to_str().unwrap_or("claude"),
+            binary.to_str().unwrap_or(agent),
             &session_args_refs,
             pty_cols.max(20),
             pty_rows.max(5),
@@ -820,7 +920,7 @@ fn spawn_claude_pane(
     // Open pane in manager.
     let pane = state
         .panes
-        .open(&session_id, "claude")
+        .open(&session_id, agent)
         .ok_or_else(|| "Failed to open pane".to_string())?;
 
     let pane_id = pane.id;
@@ -840,7 +940,7 @@ fn spawn_claude_pane(
     }
     pane.pty = Some(real_pty);
     pane.session.status = crate::app::state::AgentStatus::Idle;
-    pane.session.claude_session_id = Some(session_id.clone());
+    pane.session.agent_session_id = Some(session_id.clone());
 
     // Register pane with inter-session state for partner resolution.
     if let Some(ref iss) = state.inter_session_state {
@@ -864,58 +964,59 @@ fn spawn_claude_pane(
     // Set up JSONL log tracker.
     if let Some(home) = dirs::home_dir() {
         let cwd = launch_cwd.as_deref().unwrap_or(&home);
-        let path = crate::claude_log::session_log_path(&home, cwd, &session_id);
-        tracing::info!("Claude session log: {}", path.display());
-        pane.log = Some(crate::claude_log::ClaudeSessionLogTracker::new(path));
+        if let Some(path) = session_log_path_for(&home, cwd, agent, &session_id) {
+            tracing::info!("{} session log: {}", agent, path.display());
+            pane.log = Some(AgentSessionLogTracker::claude(path));
+        }
     }
 
     // Ensure we're on the session screen.
     if !matches!(state.screen, AppScreen::Session(_)) {
-        state.enter_session(&session_id, "claude");
+        state.enter_session(&session_id, agent);
     }
     if let Some(ref mut session) = state.session_mut() {
         session.status = crate::app::state::AgentStatus::Idle;
-        session.claude_session_id = Some(session_id.clone());
+        session.agent_session_id = Some(session_id.clone());
     }
 
     // Persist to SQLite.
     if let Some(ref store) = state.store.clone() {
         let project_dir = launch_cwd
             .as_deref()
-            .map(crate::claude_log::project_dir_name)
+            .map(provider_project_dir_name)
             .unwrap_or_default();
         let cwd_str = launch_cwd
             .as_deref()
             .and_then(|p| p.to_str())
             .map(str::to_string);
         let now = unix_now();
-        if let Err(e) = store.upsert_session(
-            &session_id,
-            &project_dir,
-            "claude",
-            None,
-            "",
-            cwd_str.as_deref(),
-            0,
-            0,
-            0,
-            now,
-            now,
-        ) {
+        if let Err(e) = store.upsert_session(&SessionUpsert {
+            id: &session_id,
+            project_dir: &project_dir,
+            agent,
+            model: None,
+            title: "",
+            cwd: cwd_str.as_deref(),
+            total_input_tokens: 0,
+            total_output_tokens: 0,
+            turn_count: 0,
+            created_at: now,
+            updated_at: now,
+        }) {
             tracing::warn!("Failed to create session row: {e}");
         }
         refresh_rail_async(state);
     }
 
     // ── Write .mcp.json ────────────────────────────────────────────────────────
-    // Always keep .mcp.json in sync with current panes so Claude discovers
+    // Always keep .mcp.json in sync with current panes so PTY-backed agents discover
     // Potato MCP tools. Written on every pane spawn (not just the 2nd) so
-    // that pane 0 has the config available if a 2nd pane is opened later
-    // and Claude re-reads it on the next conversation turn.
+    // that pane 0 has the config available if a later pane is opened
+    // and the agent can pick it up on the next interaction turn.
     let wrote_mcp = if !state.panes.is_empty() {
         if let Some(ref _sock) = state.mcp_socket_path.clone() {
             if let Some(ref cwd) = launch_cwd {
-                // Single shared "potato" MCP entry. Each Claude PTY inherits
+                // Single shared "potato" MCP entry. Each PTY-backed agent inherits
                 // POTATO_PANE_ID + POTATO_SOCKET from its env, so the spawned
                 // MCP server process knows which pane it belongs to.
                 if let Err(e) = crate::mcp::config_writer::write_mcp_config(cwd, &[], "") {
@@ -947,7 +1048,7 @@ fn spawn_claude_pane(
         }
     }
 
-    tracing::info!("Opened Claude pane for session: {}", session_id);
+    tracing::info!("Opened {} pane for session: {}", agent, session_id);
     Ok(session_id)
 }
 
@@ -970,8 +1071,8 @@ fn build_collaboration_prompt(state: &AppState) -> String {
 
 /// Spawn a PTY session for any supported agent adapter.
 ///
-/// Delegates to `spawn_claude_pane` for the `"claude"` adapter.
-/// For `"codex"`, spawns Codex in interactive PTY mode.
+/// Delegates to `spawn_pty_agent_pane` for PTY-backed adapters with provider-specific args.
+/// For `"codex"`, keeps the current mixed model: exec-backed fresh turns, PTY-backed resume.
 /// For anything else, uses a generic PTY spawn.
 ///
 /// Returns the session id on success.
@@ -982,7 +1083,7 @@ fn spawn_agent_pane(
     profile: Option<&crate::config::profiles::AgentProfile>,
 ) -> Result<String, String> {
     match adapter {
-        "claude" => spawn_claude_pane(state, resume_id, profile),
+        "claude" => spawn_pty_agent_pane(state, "claude", resume_id, profile),
         "codex" => {
             use crate::adapters::AgentAdapter;
             use crate::adapters::codex::CodexAdapter;
@@ -1003,6 +1104,55 @@ fn spawn_agent_pane(
             let pty_rows = term_rows.saturating_sub(10);
 
             let launch_cwd = std::env::current_dir().ok();
+
+            if resume_id.is_none() {
+                let session_id = uuid::Uuid::new_v4().to_string();
+                let pane = state
+                    .panes
+                    .open(&session_id, "codex")
+                    .ok_or_else(|| "Failed to open pane".to_string())?;
+
+                pane.session.status = crate::app::state::AgentStatus::Idle;
+                pane.session.agent_session_id = None;
+
+                if !matches!(state.screen, AppScreen::Session(_)) {
+                    state.enter_session(&session_id, "codex");
+                }
+                if let Some(ref mut session) = state.session_mut() {
+                    session.status = crate::app::state::AgentStatus::Idle;
+                    session.agent_session_id = None;
+                }
+
+                if let Some(ref store) = state.store.clone() {
+                    let project_dir = launch_cwd
+                        .as_deref()
+                        .map(provider_project_dir_name)
+                        .unwrap_or_default();
+                    let now = crate::session::unix_now();
+                    if let Err(e) = store.upsert_session(&SessionUpsert {
+                        id: &session_id,
+                        project_dir: &project_dir,
+                        agent: "codex",
+                        model: None,
+                        title: "",
+                        cwd: launch_cwd.as_deref().and_then(|p| p.to_str()),
+                        total_input_tokens: 0,
+                        total_output_tokens: 0,
+                        turn_count: 0,
+                        created_at: now,
+                        updated_at: now,
+                    }) {
+                        tracing::warn!("Failed to create deferred codex session row: {e}");
+                    }
+                    refresh_rail_async(state);
+                }
+
+                tracing::info!(
+                    "Opened exec-backed Codex pane for local session: {}",
+                    session_id
+                );
+                return Ok(session_id);
+            }
 
             let (session_id, spawn_args_owned): (String, Vec<String>) = if let Some(rid) = resume_id
             {
@@ -1068,15 +1218,16 @@ fn spawn_agent_pane(
             }
             pane.pty = Some(real_pty);
             pane.session.status = crate::app::state::AgentStatus::Idle;
-            pane.session.claude_session_id = Some(session_id.clone());
+            pane.session.agent_session_id = Some(session_id.clone());
 
             // Set up Codex JSONL log tracker.
             if let Some(home) = dirs::home_dir() {
-                if let Some(path) = crate::codex_log::find_session_log(&home, &session_id) {
+                if let Some(path) = codex_session_log_path(&home, &session_id) {
                     tracing::info!("Codex session log: {}", path.display());
+                    pane.log = Some(AgentSessionLogTracker::codex(path));
                 }
-                // Note: Codex session file is created after first prompt, so we
-                // can't set up the tracker here. It will be discovered on next poll.
+                // Note: Codex session file is often created after first prompt, so we
+                // may still discover and attach the tracker later during sync.
             }
 
             // Transition to session screen.
@@ -1085,29 +1236,29 @@ fn spawn_agent_pane(
             }
             if let Some(ref mut session) = state.session_mut() {
                 session.status = crate::app::state::AgentStatus::Idle;
-                session.claude_session_id = Some(session_id.clone());
+                session.agent_session_id = Some(session_id.clone());
             }
 
             // Persist to SQLite.
             if let Some(ref store) = state.store.clone() {
                 let project_dir = launch_cwd
                     .as_deref()
-                    .map(crate::claude_log::project_dir_name)
+                    .map(provider_project_dir_name)
                     .unwrap_or_default();
                 let now = crate::session::unix_now();
-                if let Err(e) = store.upsert_session(
-                    &session_id,
-                    &project_dir,
-                    "codex",
-                    None,
-                    "",
-                    launch_cwd.as_deref().and_then(|p| p.to_str()),
-                    0,
-                    0,
-                    0,
-                    now,
-                    now,
-                ) {
+                if let Err(e) = store.upsert_session(&SessionUpsert {
+                    id: &session_id,
+                    project_dir: &project_dir,
+                    agent: "codex",
+                    model: None,
+                    title: "",
+                    cwd: launch_cwd.as_deref().and_then(|p| p.to_str()),
+                    total_input_tokens: 0,
+                    total_output_tokens: 0,
+                    turn_count: 0,
+                    created_at: now,
+                    updated_at: now,
+                }) {
                     tracing::warn!("Failed to create codex session row: {e}");
                 }
                 refresh_rail_async(state);
@@ -1193,7 +1344,7 @@ fn spawn_agent_pane(
             }
             pane.pty = Some(real_pty);
             pane.session.status = crate::app::state::AgentStatus::Idle;
-            pane.session.claude_session_id = Some(session_id.clone());
+            pane.session.agent_session_id = Some(session_id.clone());
 
             if !matches!(state.screen, AppScreen::Session(_)) {
                 state.enter_session(&session_id, other);
@@ -1207,7 +1358,7 @@ fn spawn_agent_pane(
 
 /// Sync all pane JSONL trackers and update sidebar metrics.
 /// Drain pending injection requests from the MCP bridge and write formatted
-/// notifications into target pane PTYs so agents actually "see" messages.
+/// notifications into target pane terminals so agents actually "see" messages.
 /// Pending `\r` submissions awaiting their delay.
 static PENDING_ENTERS: std::sync::Mutex<Vec<crate::mcp::injection::PendingEnter>> =
     std::sync::Mutex::new(Vec::new());
@@ -1389,12 +1540,12 @@ fn sync_all_panes(state: &mut AppState) {
         let snapshot = tracker.snapshot();
 
         // Update live sidebar metrics on the pane's session.
-        pane.session.metrics.input_tokens = snapshot.usage.input_tokens;
-        pane.session.metrics.output_tokens = snapshot.usage.output_tokens;
-        pane.session.tokens_used = snapshot.usage.total_tokens();
+        pane.session.metrics.input_tokens = snapshot.input_tokens;
+        pane.session.metrics.output_tokens = snapshot.output_tokens;
+        pane.session.tokens_used = snapshot.total_tokens;
 
         // Persist to SQLite.
-        let session_id = match &pane.session.claude_session_id {
+        let session_id = match &pane.session.agent_session_id {
             Some(id) if !id.is_empty() => id.clone(),
             _ => continue,
         };
@@ -1402,7 +1553,7 @@ fn sync_all_panes(state: &mut AppState) {
         if let Some(ref store) = store {
             let project_dir = if let Some(home) = dirs::home_dir() {
                 let cwd = std::env::current_dir().ok().unwrap_or_else(|| home.clone());
-                crate::claude_log::project_dir_name(&cwd)
+                provider_project_dir_name(&cwd)
             } else {
                 String::new()
             };
@@ -1429,22 +1580,22 @@ fn sync_all_panes(state: &mut AppState) {
                 any_title_changed = true;
             }
 
-            if let Err(e) = store.upsert_session(
-                &session_id,
-                &project_dir,
-                "claude",
-                snapshot.model.as_deref(),
-                &title,
-                std::env::current_dir()
+            if let Err(e) = store.upsert_session(&SessionUpsert {
+                id: &session_id,
+                project_dir: &project_dir,
+                agent: &pane.session.agent_name,
+                model: snapshot.model.as_deref(),
+                title: &title,
+                cwd: std::env::current_dir()
                     .ok()
                     .as_deref()
                     .and_then(|p| p.to_str()),
-                snapshot.usage.input_tokens,
-                snapshot.usage.output_tokens,
-                snapshot.turns,
-                now,
-                now,
-            ) {
+                total_input_tokens: snapshot.input_tokens,
+                total_output_tokens: snapshot.output_tokens,
+                turn_count: snapshot.turns,
+                created_at: now,
+                updated_at: now,
+            }) {
                 tracing::warn!("sync pane {}: upsert_session failed: {e}", i);
             }
         }
@@ -1488,8 +1639,43 @@ fn refresh_rail_async(state: &mut AppState) {
     });
 }
 
-fn apply_pty_event(state: &mut AppState, event: crate::events::AgentEvent) {
+fn apply_event_to_target_pane(
+    state: &mut AppState,
+    target_pane_id: Option<app::pane::PaneId>,
+    event: crate::events::AgentEvent,
+    now: chrono::DateTime<chrono::Utc>,
+) {
+    if let Some(pane_id) = target_pane_id {
+        if let Some(idx) = state.panes.find_by_pane_id(pane_id) {
+            if let Some(pane) = state.panes.get_mut(idx) {
+                app::session_reducer::apply_event(&mut pane.session, event, now);
+            }
+        }
+    }
+}
+
+fn apply_event_to_visible_session(
+    state: &mut AppState,
+    target_pane_id: Option<app::pane::PaneId>,
+    event: crate::events::AgentEvent,
+    now: chrono::DateTime<chrono::Utc>,
+) {
+    let active_pane_id = state.panes.active_pane().map(|pane| pane.id);
+    if active_pane_id == target_pane_id || target_pane_id.is_none() {
+        if let Some(session) = state.session_mut() {
+            app::session_reducer::apply_event(session, event, now);
+        }
+    }
+}
+
+fn apply_pty_event(
+    state: &mut AppState,
+    target_pane_id: Option<app::pane::PaneId>,
+    event: crate::events::AgentEvent,
+) {
     use crate::events::AgentEvent;
+
+    let now = chrono::Utc::now();
 
     // Handle side-effectful variants that cannot live in the pure reducer.
     match &event {
@@ -1498,7 +1684,6 @@ fn apply_pty_event(state: &mut AppState, event: crate::events::AgentEvent) {
             return;
         }
         AgentEvent::Raw { payload } => {
-            // Raw lines are appended as assistant text; delegate to reducer.
             let text_event = AgentEvent::TextDelta {
                 text: {
                     let mut s = payload.clone();
@@ -1506,9 +1691,8 @@ fn apply_pty_event(state: &mut AppState, event: crate::events::AgentEvent) {
                     s
                 },
             };
-            if let Some(session) = state.session_mut() {
-                app::session_reducer::apply_event(session, text_event, chrono::Utc::now());
-            }
+            apply_event_to_target_pane(state, target_pane_id, text_event.clone(), now);
+            apply_event_to_visible_session(state, target_pane_id, text_event, now);
             return;
         }
         _ => {}
@@ -1516,8 +1700,13 @@ fn apply_pty_event(state: &mut AppState, event: crate::events::AgentEvent) {
 
     // ── SessionBound: migrate the DB row from placeholder UUID to native ID (T-875).
     if let AgentEvent::SessionBound { agent_session_id } = &event {
-        if let Some(session) = state.session() {
-            let old_id = session.session_id.clone();
+        let old_id = target_pane_id
+            .and_then(|pane_id| state.panes.find_by_pane_id(pane_id))
+            .and_then(|idx| state.panes.get(idx))
+            .map(|pane| pane.session.session_id.clone())
+            .or_else(|| state.session().map(|session| session.session_id.clone()));
+
+        if let Some(old_id) = old_id {
             if old_id != *agent_session_id {
                 if let Some(ref store) = state.store {
                     if let Err(e) = store.rename_session(&old_id, agent_session_id) {
@@ -1538,7 +1727,7 @@ fn apply_pty_event(state: &mut AppState, event: crate::events::AgentEvent) {
                 name: name.clone(),
                 input: input.clone(),
                 output: None,
-                started_at: chrono::Utc::now(),
+                started_at: now,
                 duration_ms: None,
                 success: None,
             };
@@ -1565,9 +1754,8 @@ fn apply_pty_event(state: &mut AppState, event: crate::events::AgentEvent) {
         _ => {}
     }
 
-    if let Some(session) = state.session_mut() {
-        app::session_reducer::apply_event(session, event, chrono::Utc::now());
-    }
+    apply_event_to_target_pane(state, target_pane_id, event.clone(), now);
+    apply_event_to_visible_session(state, target_pane_id, event, now);
 }
 
 // ── Entry point ───────────────────────────────────────────────────────────────
@@ -1609,7 +1797,7 @@ async fn main() -> Result<()> {
     #[allow(clippy::arc_with_non_send_sync)] // Arc used for shared ownership, not threading
     let store = Arc::new(SessionStore::open(&db_path.to_string_lossy())?);
 
-    // Scan ~/.claude/projects/ once at startup and upsert all known sessions.
+    // Scan known native agent history once at startup and upsert what we can.
     if let Some(home) = dirs::home_dir() {
         discover_historical_sessions(&home, &store);
     }
@@ -1621,7 +1809,7 @@ async fn main() -> Result<()> {
         let defaults = default_profiles_from_agents(&agents, false);
         ProfileLoader::load(defaults)
     };
-    // The --model flag is stored in AppState directly (Claude picks its own model;
+    // The --model flag is stored in AppState directly (the launched adapter picks its own model;
     // this is only used for display purposes in the status bar).
     let model = cli.model.unwrap_or_else(|| cfg.default_agent.clone());
 
@@ -1633,6 +1821,9 @@ async fn main() -> Result<()> {
 
     // Capture git repo state once at startup.
     let git_snapshot = git::GitSnapshot::capture();
+
+    // Scan custom tools from `.potato/tools/` once at startup.
+    let custom_tools = app::state::scan_custom_tools();
 
     // Start MCP bridge (UDS listener for inter-session communication).
     // Open project-scoped persistent store at `<cwd>/.potato/state.db`.
@@ -1698,6 +1889,7 @@ async fn main() -> Result<()> {
         rail_sessions: initial_sessions,
         git_snapshot,
         git_refresh_ticks: 0,
+        custom_tools,
         last_rail_refresh: unix_now(),
         mcp_socket_path: Some(mcp_socket_path),
         inter_session_state: Some(inter_state),

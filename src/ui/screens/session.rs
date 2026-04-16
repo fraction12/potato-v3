@@ -1,11 +1,11 @@
-//! Session screen — cockpit layout wrapping a live agent PTY session.
+//! Session screen — cockpit layout wrapping a live agent session.
 //!
 //! Layout (3-column):
 //! ```text
 //! ┌─────────────────┬──────────────────────────────────┬─────────────────┐
-//! │  Sessions       │                                  │  Claude metrics │
-//! │  (left rail)    │   Claude PTY terminal viewport   │  / tools        │
-//! │                 │   (center, fills available h)    │  / skills       │
+//! │  Sessions       │                                  │  Agent summary  │
+//! │  (left rail)    │   Live agent terminal viewport   │  / activity     │
+//! │                 │   (center, fills available h)    │  / context      │
 //! │  ● session-1    │                                  │  / other        │
 //! │                 ├──────────────────────────────────┤                 │
 //! │                 │  ❯ Broadcast bar                 │                 │
@@ -28,7 +28,7 @@
 //!   Tab into a specific terminal to talk to a single agent directly.
 //! - **Terminal** focus: only `Tab` (forward) and `Ctrl+Q` are intercepted;
 //!   *all* other key events are converted to raw byte sequences and written
-//!   to the PTY stdin unchanged. This lets the user interact with Claude's
+//!   to the PTY stdin unchanged. This lets the user interact with the agent's
 //!   native pickers / approvals / menus.
 //! - **Sessions / Sidebar** focus: arrow keys navigate lists; Enter/Esc return
 //!   to Broadcast.
@@ -43,8 +43,9 @@ use ratatui::{
     },
 };
 
-use crate::app::state::{AgentStatus, AppScreen, AppState, CockpitFocus, Overlay, SessionState};
-use crate::claude_log::{ClaudeSidebarData, ClaudeToolStatus};
+use crate::app::state::{
+    AgentStatus, AppScreen, AppState, CockpitFocus, Overlay, SessionState, ToolCallRecord,
+};
 use crate::session::store::unix_now;
 use crate::ui::theme::{AMBER, BG, BRASS, CHARCOAL, CREAM, ROSE, SPROUT, STONE, TAN};
 
@@ -187,18 +188,26 @@ fn render_left_rail(frame: &mut Frame, area: Rect, state: &AppState, focus: Cock
     } else {
         crate::ui::overlays::agent_picker::build_agent_rows_from_profiles(&state.agent_profiles)
     };
-    // Agents section: border (2) + N item rows, capped at 5.
+    // Agents section: border (2) + N item rows, capped at 3.
     let agent_row_count = agent_rows.len().min(3) as u16;
     let agents_height = 2 + agent_row_count; // border top + bottom + rows
+
+    // Split remaining space between Git (40%) and Tools (60%).
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(agents_height), Constraint::Min(4)])
+        .constraints([
+            Constraint::Length(agents_height),
+            Constraint::Percentage(40),
+            Constraint::Percentage(60),
+        ])
         .split(area);
     let agents_area = chunks[0];
-    let sessions_area = chunks[1];
+    let git_area = chunks[1];
+    let tools_area = chunks[2];
 
     render_agents_section(frame, agents_area, state, focus, &agent_rows);
-    render_git_section(frame, sessions_area, state, focus);
+    render_git_section(frame, git_area, state, focus);
+    render_tools_section(frame, tools_area, state, focus);
 }
 
 /// Top part of the left rail — agent list with availability indicators.
@@ -415,6 +424,64 @@ fn render_git_section(frame: &mut Frame, area: Rect, state: &AppState, focus: Co
     frame.render_widget(content, area);
 }
 
+/// Bottom part of the left rail — custom tools from `.potato/tools/`.
+fn render_tools_section(frame: &mut Frame, area: Rect, state: &AppState, focus: CockpitFocus) {
+    let focused = focus == CockpitFocus::Tools;
+    let (border_style, title_style) = focus_styles(focused, TAN);
+
+    let inner_w = area.width.saturating_sub(4) as usize;
+    let tools = &state.custom_tools;
+
+    let mut lines: Vec<Line<'static>> = Vec::new();
+
+    if tools.is_empty() {
+        lines.push(Line::from(Span::styled(
+            " No custom tools",
+            Style::default().fg(STONE),
+        )));
+    } else {
+        for tool in tools {
+            // Tool name line with wrench icon.
+            lines.push(Line::from(vec![
+                Span::styled(" 🔧 ", Style::default().fg(BRASS)),
+                Span::styled(
+                    truncate_str(&tool.name, inner_w.saturating_sub(4)).to_string(),
+                    Style::default().fg(CREAM).add_modifier(Modifier::BOLD),
+                ),
+            ]));
+            // Description line, indented.
+            if !tool.description.is_empty() {
+                lines.push(Line::from(Span::styled(
+                    format!(
+                        "    {}",
+                        truncate_str(&tool.description, inner_w.saturating_sub(4))
+                    ),
+                    Style::default().fg(STONE),
+                )));
+            }
+        }
+    }
+
+    let tools_scroll = state.session().map(|s| s.tools_scroll).unwrap_or(0);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(border_style)
+        .title(Span::styled(" Tools ", title_style));
+
+    let total = lines.len() as u16;
+    let inner = block.inner(area);
+    let max_scroll = total.saturating_sub(inner.height);
+    let scroll = (tools_scroll.min(max_scroll as usize)) as u16;
+
+    let content = Paragraph::new(lines)
+        .scroll((scroll, 0))
+        .block(block)
+        .style(Style::default().fg(STONE).bg(BG));
+
+    frame.render_widget(content, area);
+}
+
 // ── Center — PTY viewport ─────────────────────────────────────────────────────
 
 /// Render a single pane's PTY viewport from the PaneManager.
@@ -466,7 +533,7 @@ fn render_pane_viewport(
             let actual_scroll = pty.set_scrollback(desired_scroll);
 
             let active_marker = if is_active { " ●" } else { "" };
-            let fallback = format!("Claude {}", pane_idx + 1);
+            let fallback = format!("{} {}", pane.session.agent_name, pane_idx + 1);
             let display_name = pane.role_name.as_deref().unwrap_or(&fallback);
             let pane_label = format!(" {display_name}{active_marker} ");
             let title = if actual_scroll > 0 {
@@ -505,7 +572,7 @@ fn render_pane_viewport(
             }
         } else {
             // Pane exists but no PTY — starting up.
-            let fallback_title = format!("Claude {}", pane_idx + 1);
+            let fallback_title = format!("{} {}", pane.session.agent_name, pane_idx + 1);
             let starting_name = pane.role_name.as_deref().unwrap_or(&fallback_title);
             let placeholder = Paragraph::new("  Starting…")
                 .block(
@@ -729,10 +796,22 @@ fn render_right_rail(frame: &mut Frame, area: Rect, state: &AppState, focus: Coc
         .unwrap_or_default();
 
     // ── Adaptive layout ───────────────────────────────────────────────────────
-    // Claude (compact 5 lines) | Team | OpenSpec | Context
+    // Quick actions | agent summary | activity | team | OpenSpec | context
     let has_tasks = !openspec_changes.is_empty() || !task_claims.is_empty();
     let has_context = !ctx_keys.is_empty();
+    let has_approval = state
+        .session()
+        .and_then(|s| s.approval_pending.as_ref())
+        .is_some();
+    let active_tool_count = state.session().map(|s| s.tool_calls.len()).unwrap_or(0);
+    let has_activity = active_tool_count > 0 || has_approval;
 
+    let activity_height = if has_activity {
+        (active_tool_count as u16).clamp(2, 4) + 4
+    } else {
+        5
+    };
+    let team_height = ((roles.len().max(1)) as u16).clamp(1, 3) * 2 + 3;
     let task_height = if has_tasks {
         (openspec_changes.len().max(task_claims.len()) as u16).clamp(3, 8) + 2
     } else {
@@ -745,43 +824,46 @@ fn render_right_rail(frame: &mut Frame, area: Rect, state: &AppState, focus: Coc
     };
 
     // Quick Actions height: 2 (border) + number of actions.
-    let has_approval = state
-        .session()
-        .and_then(|s| s.approval_pending.as_ref())
-        .is_some();
     let qa_count = crate::ui::panels::quick_actions::actions_for_context(true, has_approval).len();
-    let qa_height = (qa_count as u16) + 2; // actions + border
+    let qa_height = (qa_count as u16) + 2;
 
-    let [qa_area, claude_area, team_area, tasks_area, ctx_area] = Layout::vertical([
-        Constraint::Length(qa_height), // Quick Actions
-        Constraint::Length(5),         // Claude compact
-        Constraint::Length(((roles.len().max(1)) as u16) * 2 + 3), // Team
-        Constraint::Length(task_height), // Tasks
-        Constraint::Min(ctx_height),   // Context (fills remaining)
+    let [
+        qa_area,
+        metrics_area,
+        activity_area,
+        team_area,
+        tasks_area,
+        ctx_area,
+    ] = Layout::vertical([
+        Constraint::Length(qa_height),
+        Constraint::Length(6),
+        Constraint::Length(activity_height),
+        Constraint::Length(team_height),
+        Constraint::Length(task_height),
+        Constraint::Min(ctx_height),
     ])
     .areas(area);
 
     // ── Quick Actions ────────────────────────────────────────────────────────
     crate::ui::panels::quick_actions::render(frame, qa_area, state, focused);
 
-    // ── Claude (compact) ──────────────────────────────────────────────────────
-    let model_short = sidebar
-        .model
-        .as_deref()
-        .unwrap_or("—")
-        .strip_prefix("claude-")
-        .unwrap_or(sidebar.model.as_deref().unwrap_or("—"));
-
-    let total_tokens = sidebar.usage.total_tokens();
-    let claude_text = vec![
+    // ── Agent metrics (compact) ───────────────────────────────────────────────
+    let model_short = sidebar.model.as_deref().unwrap_or("—");
+    let total_tokens = sidebar.total_tokens;
+    let status_line = state
+        .session()
+        .map(|s| agent_status_label(&s.status))
+        .unwrap_or_else(|| "Idle".to_string());
+    let metrics_text = vec![
         Line::from(Span::raw("")),
         metric_line(" Model", model_short, label, value),
+        metric_line(" State", &status_line, label, value),
         metric_line(
             " Tkns",
             &format!(
                 "{}↓ {}↑ {}Σ",
-                fmt_tokens(sidebar.usage.input_tokens),
-                fmt_tokens(sidebar.usage.output_tokens),
+                fmt_tokens(sidebar.input_tokens),
+                fmt_tokens(sidebar.output_tokens),
                 fmt_tokens(total_tokens),
             ),
             label,
@@ -790,10 +872,19 @@ fn render_right_rail(frame: &mut Frame, area: Rect, state: &AppState, focus: Coc
     ];
 
     frame.render_widget(
-        Paragraph::new(claude_text)
-            .block(sidebar_block(" Claude ", title_color, border_fg))
+        Paragraph::new(metrics_text)
+            .block(sidebar_block(" Agent ", title_color, border_fg))
             .style(Style::default().bg(BG)),
-        claude_area,
+        metrics_area,
+    );
+
+    // ── Activity ─────────────────────────────────────────────────────────────
+    let activity_lines = render_activity_lines(state, inner_w, label, value);
+    frame.render_widget(
+        Paragraph::new(activity_lines)
+            .block(sidebar_block(" Activity ", title_color, border_fg))
+            .style(Style::default().bg(BG)),
+        activity_area,
     );
 
     // ── Team ──────────────────────────────────────────────────────────────────
@@ -950,6 +1041,81 @@ fn sidebar_block(title: &str, title_color: Color, border_color: Color) -> Block<
         .title(Span::styled(title, Style::default().fg(title_color)))
 }
 
+/// Render a compact activity summary from recent tool calls and approval state.
+fn render_activity_lines(
+    state: &AppState,
+    inner_w: usize,
+    label_style: Style,
+    value_style: Style,
+) -> Vec<Line<'static>> {
+    let Some(session) = state.session() else {
+        return vec![
+            Line::from(Span::raw("")),
+            Line::from(Span::styled(" no recent activity", label_style)),
+        ];
+    };
+
+    let mut lines = vec![Line::from(Span::raw(""))];
+
+    if let Some(pending) = session.approval_pending.as_ref() {
+        let name = truncate_str(&pending.tool_name, inner_w.saturating_sub(12));
+        lines.push(Line::from(vec![
+            Span::styled(" ⚠", Style::default().fg(ROSE)),
+            Span::styled(" approval ", label_style),
+            Span::styled(name.to_string(), value_style),
+        ]));
+    }
+
+    for tool in recent_tool_calls(&session.tool_calls, 2) {
+        let (icon, icon_style, detail) = tool_activity_summary(tool);
+        let max_name = inner_w.saturating_sub(detail.len() + 5);
+        let name = truncate_str(&tool.name, max_name);
+        lines.push(Line::from(vec![
+            Span::styled(icon, icon_style),
+            Span::styled(format!(" {}", name), value_style),
+            Span::styled(format!(" {}", detail), label_style),
+        ]));
+    }
+
+    if lines.len() == 1 {
+        lines.push(Line::from(Span::styled(" no recent activity", label_style)));
+    }
+
+    lines
+}
+
+fn recent_tool_calls(tool_calls: &[ToolCallRecord], limit: usize) -> Vec<&ToolCallRecord> {
+    tool_calls.iter().rev().take(limit).collect()
+}
+
+fn tool_activity_summary(tool: &ToolCallRecord) -> (&'static str, Style, String) {
+    match tool.success {
+        None => (" ◐", Style::default().fg(AMBER), "running".to_string()),
+        Some(true) => (
+            " ✓",
+            Style::default().fg(SPROUT),
+            tool.duration_ms
+                .map(format_duration_compact)
+                .unwrap_or_else(|| "done".to_string()),
+        ),
+        Some(false) => (
+            " ✕",
+            Style::default().fg(ROSE),
+            tool.duration_ms
+                .map(format_duration_compact)
+                .unwrap_or_else(|| "error".to_string()),
+        ),
+    }
+}
+
+fn format_duration_compact(ms: u64) -> String {
+    if ms < 1000 {
+        format!("{}ms", ms)
+    } else {
+        format!("{:.1}s", ms as f64 / 1000.0)
+    }
+}
+
 /// Render a `label  value` metric line with right-aligned value appearance.
 fn metric_line<'a>(name: &'a str, val: &str, label_style: Style, value_style: Style) -> Line<'a> {
     // Pad label to 6 chars for alignment.
@@ -1005,6 +1171,7 @@ fn render_status_bar(
     let focus_label = match focus {
         CockpitFocus::Agents => "Agents",
         CockpitFocus::Git => "Git",
+        CockpitFocus::Tools => "Tools",
         CockpitFocus::Input => "Broadcast",
         CockpitFocus::Terminal => "Terminal",
         CockpitFocus::Sidebar => "Sidebar",
@@ -1267,6 +1434,28 @@ mod tests {
     }
 
     #[test]
+    fn tool_activity_summary_running_is_neutral() {
+        let tool = ToolCallRecord {
+            id: "tool-1".into(),
+            name: "shell".into(),
+            input: serde_json::Value::Null,
+            output: None,
+            started_at: chrono::Utc::now(),
+            duration_ms: None,
+            success: None,
+        };
+        let (icon, _style, detail) = tool_activity_summary(&tool);
+        assert_eq!(icon, " ◐");
+        assert_eq!(detail, "running");
+    }
+
+    #[test]
+    fn format_duration_compact_switches_units() {
+        assert_eq!(format_duration_compact(250), "250ms");
+        assert_eq!(format_duration_compact(1500), "1.5s");
+    }
+
+    #[test]
     fn agent_status_display_error_is_rust() {
         let (label, color) = agent_status_display(&AgentStatus::Error {
             message: "boom".to_string(),
@@ -1318,7 +1507,8 @@ mod tests {
     #[test]
     fn cockpit_focus_tab_cycle() {
         assert_eq!(CockpitFocus::Agents.next(), CockpitFocus::Git);
-        assert_eq!(CockpitFocus::Git.next(), CockpitFocus::Input);
+        assert_eq!(CockpitFocus::Git.next(), CockpitFocus::Tools);
+        assert_eq!(CockpitFocus::Tools.next(), CockpitFocus::Input);
         assert_eq!(CockpitFocus::Input.next(), CockpitFocus::Terminal);
         assert_eq!(CockpitFocus::Terminal.next(), CockpitFocus::Sidebar);
         assert_eq!(CockpitFocus::Sidebar.next(), CockpitFocus::Agents);
@@ -1328,7 +1518,8 @@ mod tests {
     fn cockpit_focus_shift_tab_cycle() {
         assert_eq!(CockpitFocus::Agents.prev(), CockpitFocus::Sidebar);
         assert_eq!(CockpitFocus::Git.prev(), CockpitFocus::Agents);
-        assert_eq!(CockpitFocus::Input.prev(), CockpitFocus::Git);
+        assert_eq!(CockpitFocus::Tools.prev(), CockpitFocus::Git);
+        assert_eq!(CockpitFocus::Input.prev(), CockpitFocus::Tools);
         assert_eq!(CockpitFocus::Terminal.prev(), CockpitFocus::Input);
         assert_eq!(CockpitFocus::Sidebar.prev(), CockpitFocus::Terminal);
     }
@@ -1336,22 +1527,22 @@ mod tests {
     #[test]
     fn cockpit_focus_full_tab_round_trip() {
         let mut f = CockpitFocus::Input;
-        for _ in 0..5 {
+        for _ in 0..6 {
             f = f.next();
         }
-        assert_eq!(f, CockpitFocus::Input, "5 Tabs should wrap back to Input");
+        assert_eq!(f, CockpitFocus::Input, "6 Tabs should wrap back to Input");
     }
 
     #[test]
     fn cockpit_focus_full_shift_tab_round_trip() {
         let mut f = CockpitFocus::Input;
-        for _ in 0..5 {
+        for _ in 0..6 {
             f = f.prev();
         }
         assert_eq!(
             f,
             CockpitFocus::Input,
-            "5 Shift+Tabs should wrap back to Input"
+            "6 Shift+Tabs should wrap back to Input"
         );
     }
 

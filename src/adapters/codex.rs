@@ -1,9 +1,8 @@
-//! Codex adapter — spawns `codex` (interactive PTY mode) and parses
-//! the JSONL output from `codex exec --json` into canonical [`AgentEvent`]s.
+//! Codex adapter — builds non-interactive `codex exec --json` commands and
+//! parses the resulting JSONL event stream into canonical [`AgentEvent`]s.
 //!
-//! Codex is interactive by default (no `--print` needed).  For structured
-//! output in non-interactive mode use `codex exec --json`; in PTY mode the
-//! events are emitted to the terminal stream but the same JSONL schema applies.
+//! Interactive Codex panes are launched directly by the TUI when needed. This
+//! adapter is the exec-first path used for single-turn structured orchestration.
 
 use std::path::PathBuf;
 
@@ -50,21 +49,22 @@ impl AgentAdapter for CodexAdapter {
         }
     }
 
-    /// Build the Codex CLI command.
+    /// Build the exec-first Codex CLI command.
     ///
-    /// Interactive mode (PTY): `codex [resume <id>] [-m <model>] [flags…]`
-    ///
-    /// Unlike Claude, Codex is interactive by default and does not need `--print`.
-    /// The working dir is set via `current_dir`.
+    /// Default form: `codex exec --json [-m <model>] [flags…]`
+    /// Resume form: `codex exec resume <id> --json [-m <model>] [flags…]`
     fn build_command(&self, config: &AdapterConfig) -> Command {
         let binary = self.detect().unwrap_or_else(|| PathBuf::from("codex"));
         let mut cmd = Command::new(binary);
 
         cmd.current_dir(&config.working_dir);
+        cmd.arg("exec");
 
         if let Some(ref session_id) = config.resume_session_id {
             cmd.arg("resume").arg(session_id);
         }
+
+        cmd.arg("--json");
 
         if let Some(ref model) = config.model {
             cmd.args(["-m", model]);
@@ -335,15 +335,10 @@ mod tests {
     }
 
     #[test]
-    fn build_command_no_args_by_default() {
+    fn build_command_exec_json_by_default() {
         let cmd = adapter().build_command(&default_config());
         let args = cmd_args(&cmd);
-        // With default config (no resume, no model, no extra flags), args should be empty.
-        assert!(
-            args.is_empty(),
-            "default config should produce no args, got {:?}",
-            args
-        );
+        assert_eq!(args, vec!["exec", "--json"]);
     }
 
     #[test]
@@ -354,9 +349,10 @@ mod tests {
         };
         let cmd = adapter().build_command(&config);
         let args = cmd_args(&cmd);
-        // Should produce: resume abc-123
-        assert_eq!(args[0], "resume", "first arg must be 'resume'");
-        assert_eq!(args[1], "abc-123", "second arg must be the session id");
+        assert_eq!(args[0], "exec", "first arg must be 'exec'");
+        assert_eq!(args[1], "resume", "second arg must be 'resume'");
+        assert_eq!(args[2], "abc-123", "third arg must be the session id");
+        assert!(args.contains(&"--json".to_string()));
     }
 
     #[test]
@@ -404,7 +400,6 @@ mod tests {
 
     #[test]
     fn build_command_resume_and_model_order() {
-        // resume comes before model flag.
         let config = AdapterConfig {
             resume_session_id: Some("sess-xyz".to_string()),
             model: Some("o4-mini".to_string()),
@@ -416,8 +411,16 @@ mod tests {
             .iter()
             .position(|a| a == "resume")
             .expect("resume missing");
+        let json_pos = args
+            .iter()
+            .position(|a| a == "--json")
+            .expect("--json missing");
         let model_pos = args.iter().position(|a| a == "-m").expect("-m missing");
-        assert!(resume_pos < model_pos, "resume must come before -m in args");
+        assert!(
+            resume_pos < json_pos,
+            "resume must come before --json in args"
+        );
+        assert!(json_pos < model_pos, "--json must come before -m in args");
     }
 
     // ── parse_line: empty / whitespace ────────────────────────────────────────

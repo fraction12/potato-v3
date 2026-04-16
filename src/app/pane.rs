@@ -1,13 +1,13 @@
 //! Pane management for multi-session cockpit layout.
 //!
-//! A [`Pane`] bundles one Claude session's state with its PTY and log tracker
+//! A [`Pane`] bundles one agent session's state with its PTY and log tracker
 //! handles. [`PaneManager`] owns up to [`MAX_PANES`] simultaneous panes and
 //! tracks which one currently has input focus.
 
 use std::fmt;
 
-use crate::claude_log::ClaudeSessionLogTracker;
 use crate::pty::RealPty;
+use crate::session::AgentSessionLogTracker;
 
 use super::state::SessionState;
 
@@ -48,10 +48,10 @@ pub struct Pane {
     pub id: PaneId,
     /// The session state for this pane.
     pub session: SessionState,
-    /// Live PTY wrapping the Claude process, if spawned.
+    /// Live PTY wrapping the agent process, if spawned.
     pub pty: Option<RealPty>,
-    /// Claude JSONL log tracker for sidebar metrics.
-    pub log: Option<ClaudeSessionLogTracker>,
+    /// Provider-specific session log tracker for sidebar metrics.
+    pub log: Option<AgentSessionLogTracker>,
     /// Number of events already persisted (for incremental JSONL reading).
     pub persisted_event_count: u64,
     /// Optional role name assigned to this pane (e.g. `"architect"`).
@@ -236,11 +236,11 @@ impl PaneManager {
         self.panes.iter_mut().enumerate()
     }
 
-    /// Find the pane index whose session has the given claude_session_id.
+    /// Find the pane index whose session has the given native agent session id.
     pub fn find_by_session_id(&self, session_id: &str) -> Option<usize> {
         self.panes
             .iter()
-            .position(|p| p.session.claude_session_id.as_deref() == Some(session_id))
+            .position(|p| p.session.agent_session_id.as_deref() == Some(session_id))
     }
 
     /// Find the pane index whose pane.id matches.
@@ -389,8 +389,8 @@ mod tests {
         let mut pm = PaneManager::new();
         pm.open("sess-1", "claude");
         pm.open("sess-2", "claude");
-        pm.get_mut(0).unwrap().session.claude_session_id = Some("claude-abc".into());
-        pm.get_mut(1).unwrap().session.claude_session_id = Some("claude-xyz".into());
+        pm.get_mut(0).unwrap().session.agent_session_id = Some("claude-abc".into());
+        pm.get_mut(1).unwrap().session.agent_session_id = Some("claude-xyz".into());
 
         assert_eq!(pm.find_by_session_id("claude-abc"), Some(0));
         assert_eq!(pm.find_by_session_id("claude-xyz"), Some(1));

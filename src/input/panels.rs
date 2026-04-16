@@ -6,11 +6,12 @@ use crate::app::state::{AppScreen, AppState, CockpitFocus};
 
 use super::KeyAction;
 
-/// Handle a key event for Agents, Git, or Sidebar focus.
+/// Handle a key event for Agents, Git, Tools, or Sidebar focus.
 pub fn handle(state: &mut AppState, key: &KeyEvent, focus: CockpitFocus) -> KeyAction {
     match focus {
         CockpitFocus::Agents => handle_agents(state, key),
         CockpitFocus::Git => handle_git(state, key),
+        CockpitFocus::Tools => handle_tools(state, key),
         CockpitFocus::Sidebar => handle_sidebar(state, key),
         _ => KeyAction::Unhandled,
     }
@@ -79,6 +80,42 @@ fn handle_git(state: &mut AppState, key: &KeyEvent) -> KeyAction {
             }
             KeyCode::PageDown => {
                 session.git_scroll = session.git_scroll.saturating_add(10);
+                true
+            }
+            _ => false,
+        };
+        if handled {
+            return KeyAction::Handled;
+        }
+    }
+    KeyAction::Unhandled
+}
+
+fn handle_tools(state: &mut AppState, key: &KeyEvent) -> KeyAction {
+    if let AppScreen::Session(ref mut session) = state.screen {
+        let handled = match key.code {
+            KeyCode::Up => {
+                session.tools_scroll = session.tools_scroll.saturating_sub(1);
+                true
+            }
+            KeyCode::Down => {
+                session.tools_scroll = session.tools_scroll.saturating_add(1);
+                true
+            }
+            KeyCode::Home => {
+                session.tools_scroll = 0;
+                true
+            }
+            KeyCode::End => {
+                session.tools_scroll = usize::MAX;
+                true
+            }
+            KeyCode::PageUp => {
+                session.tools_scroll = session.tools_scroll.saturating_sub(10);
+                true
+            }
+            KeyCode::PageDown => {
+                session.tools_scroll = session.tools_scroll.saturating_add(10);
                 true
             }
             _ => false,

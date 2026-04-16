@@ -167,9 +167,8 @@ pub fn apply_event(session: &mut SessionState, event: AgentEvent, now: DateTime<
         }
 
         AgentEvent::SessionBound { agent_session_id } => {
-            // Store the Claude-native session id for use with --resume on the next turn.
-            session.claude_session_id = Some(agent_session_id.clone());
-            session.session_id = agent_session_id;
+            // Store the provider-native session/thread id for future resumed turns.
+            session.agent_session_id = Some(agent_session_id.clone());
         }
 
         AgentEvent::AgentStarted { .. } => {
@@ -238,7 +237,7 @@ mod tests {
     // ─────────────────────────────────────────────────────────────────────────
 
     #[test]
-    fn session_bound_replaces_session_id() {
+    fn session_bound_preserves_local_session_id() {
         let mut s = fresh_session();
         assert_eq!(s.session_id, "sess-001");
 
@@ -251,17 +250,17 @@ mod tests {
         );
 
         assert_eq!(
-            s.session_id, "native-abc-123",
-            "SessionBound should overwrite the local placeholder id with the native agent session id"
+            s.session_id, "sess-001",
+            "SessionBound should preserve the local pane/session id"
         );
     }
 
     #[test]
-    fn session_bound_populates_claude_session_id() {
+    fn session_bound_populates_agent_session_id() {
         let mut s = fresh_session();
         assert!(
-            s.claude_session_id.is_none(),
-            "claude_session_id should start as None"
+            s.agent_session_id.is_none(),
+            "agent_session_id should start as None"
         );
 
         apply_event(
@@ -273,14 +272,14 @@ mod tests {
         );
 
         assert_eq!(
-            s.claude_session_id.as_deref(),
+            s.agent_session_id.as_deref(),
             Some("claude-sess-xyz"),
-            "SessionBound should store the native session id in claude_session_id for --resume",
+            "SessionBound should store the native agent session id for resumed turns",
         );
     }
 
     #[test]
-    fn session_bound_updates_claude_session_id_on_subsequent_turns() {
+    fn session_bound_updates_agent_session_id_on_subsequent_turns() {
         let mut s = fresh_session();
         apply_event(
             &mut s,
@@ -296,7 +295,7 @@ mod tests {
             },
             t0(),
         );
-        assert_eq!(s.claude_session_id.as_deref(), Some("id-second"));
+        assert_eq!(s.agent_session_id.as_deref(), Some("id-second"));
     }
 
     #[test]
@@ -1026,7 +1025,8 @@ mod tests {
             },
             now,
         );
-        assert_eq!(s.session_id, "nat-001");
+        assert_eq!(s.session_id, "sess-001");
+        assert_eq!(s.agent_session_id.as_deref(), Some("nat-001"));
 
         // 2. Agent starts thinking (TurnStart).
         apply_event(&mut s, AgentEvent::TurnStart, now);

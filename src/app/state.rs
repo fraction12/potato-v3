@@ -105,6 +105,88 @@ pub struct AgentInfo {
     pub available: bool,
 }
 
+// ── Custom tool types ─────────────────────────────────────────────────────────
+
+/// A custom tool loaded from `.potato/tools/<name>/tool.toml`.
+#[derive(Debug, Clone, Default)]
+pub struct ToolInfo {
+    /// Display name of the tool.
+    pub name: String,
+    /// Short description shown in the Tools panel.
+    pub description: String,
+    /// Shell command to invoke the tool.
+    pub command: String,
+}
+
+/// Scan `.potato/tools/` in the current directory for tool definitions.
+///
+/// Each subdirectory may contain a `tool.toml` with `name`, `description`,
+/// and `command` fields. Directories without a valid `tool.toml` are skipped.
+/// Returns an empty Vec if the directory doesn't exist or can't be read.
+pub fn scan_custom_tools() -> Vec<ToolInfo> {
+    let tools_dir = match std::env::current_dir() {
+        Ok(cwd) => cwd.join(".potato").join("tools"),
+        Err(_) => return Vec::new(),
+    };
+
+    if !tools_dir.is_dir() {
+        return Vec::new();
+    }
+
+    let mut tools = Vec::new();
+
+    let entries = match std::fs::read_dir(&tools_dir) {
+        Ok(e) => e,
+        Err(_) => return Vec::new(),
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let toml_path = path.join("tool.toml");
+        if !toml_path.is_file() {
+            continue;
+        }
+        let contents = match std::fs::read_to_string(&toml_path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let parsed: toml::Value = match toml::from_str(&contents) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let name = parsed
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        let description = parsed
+            .get("description")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        let command = parsed
+            .get("command")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+
+        if !name.is_empty() {
+            tools.push(ToolInfo {
+                name,
+                description,
+                command,
+            });
+        }
+    }
+
+    // Sort alphabetically for stable display.
+    tools.sort_by(|a, b| a.name.cmp(&b.name));
+    tools
+}
+
 /// A brief summary of a past session, shown in the dashboard.
 #[derive(Debug, Clone)]
 pub struct SessionSummary {
@@ -216,14 +298,16 @@ pub struct PathSnapshots {
 pub enum CockpitFocus {
     /// Left rail top — agent picker (e.g. "Claude").
     Agents,
-    /// Left rail bottom — git repository info.
+    /// Left rail middle — git repository info.
     Git,
+    /// Left rail bottom — custom tools from `.potato/tools/`.
+    Tools,
     /// Bottom-center — Potato-owned text input bar.
     #[default]
     Input,
     /// Center — the embedded PTY terminal viewport.
     Terminal,
-    /// Right rail — metrics / tools / skills sidebar.
+    /// Right rail — quick actions, agent summary, activity, and context.
     Sidebar,
 }
 
@@ -232,7 +316,8 @@ impl CockpitFocus {
     pub fn next(self) -> Self {
         match self {
             Self::Agents => Self::Git,
-            Self::Git => Self::Input,
+            Self::Git => Self::Tools,
+            Self::Tools => Self::Input,
             Self::Input => Self::Terminal,
             Self::Terminal => Self::Sidebar,
             Self::Sidebar => Self::Agents,
@@ -244,7 +329,8 @@ impl CockpitFocus {
         match self {
             Self::Agents => Self::Sidebar,
             Self::Git => Self::Agents,
-            Self::Input => Self::Git,
+            Self::Tools => Self::Git,
+            Self::Input => Self::Tools,
             Self::Terminal => Self::Input,
             Self::Sidebar => Self::Terminal,
         }
@@ -396,11 +482,12 @@ pub struct SessionState {
     pub user_scrolled: bool,
     pub input_cursor: usize,
     pub tick_count: u64,
-    /// The Claude-native session id received from the last `AgentEvent::SessionBound` event.
+    /// The native agent session/thread id received from the last
+    /// `AgentEvent::SessionBound` event.
     ///
-    /// Pass this as `--resume <id>` when spawning the next turn so Claude can
-    /// continue the conversation thread. `None` until the first turn completes.
-    pub claude_session_id: Option<String>,
+    /// This is provider-neutral: Claude emits a session id, Codex emits a
+    /// thread id. `None` until the first bound turn completes.
+    pub agent_session_id: Option<String>,
 
     /// Cumulative token count for this session (updated from metrics events).
     pub tokens_used: u64,
@@ -427,10 +514,13 @@ pub struct SessionState {
     /// Scroll offset for the git panel in the left rail.
     pub git_scroll: usize,
 
-    /// Scrollback offset for the embedded Claude terminal viewport.
+    /// Scroll offset for the tools panel in the left rail.
+    pub tools_scroll: usize,
+
+    /// Scrollback offset for the embedded provider terminal viewport.
     ///
     /// `0` means live-follow at the bottom. Larger values mean the user has
-    /// scrolled up in the Claude pane.
+    /// scrolled up in the active agent pane.
     pub terminal_scroll: usize,
 
     /// Currently active modal overlay, if any.
@@ -465,7 +555,7 @@ impl SessionState {
             user_scrolled: false,
             input_cursor: 0,
             tick_count: 0,
-            claude_session_id: None,
+            agent_session_id: None,
             tokens_used: 0,
             next_turn_seq: 0,
             active_turn_seq: None,
@@ -473,6 +563,7 @@ impl SessionState {
             selected_agent: 0,
             selected_session: 0,
             git_scroll: 0,
+            tools_scroll: 0,
             terminal_scroll: 0,
             overlay: None,
             agent_picker: AgentPickerState::default(),
@@ -555,8 +646,8 @@ pub struct AppState {
     pub tool_output_panel: ToolOutputPanel,
 
     // ── Multi-pane session management (cockpit mode) ──────────────────────────
-    /// Manages up to 2 simultaneous Claude session panes, each with its own
-    /// PTY and log tracker.
+    /// Manages simultaneous agent session panes, each with its own PTY and
+    /// provider log tracker.
     pub panes: crate::app::pane::PaneManager,
 
     // ── Session store (cockpit persistence) ───────────────────────────────────
@@ -575,6 +666,9 @@ pub struct AppState {
     pub git_snapshot: crate::git::GitSnapshot,
     /// Tick counter for periodic git refresh.
     pub git_refresh_ticks: u64,
+
+    /// Custom tools scanned from `.potato/tools/` at startup.
+    pub custom_tools: Vec<ToolInfo>,
 
     /// Unix timestamp of the last left-rail refresh (seconds).
     pub last_rail_refresh: i64,
@@ -657,6 +751,7 @@ impl Default for AppState {
             rail_sessions: Vec::new(),
             git_snapshot: crate::git::GitSnapshot::default(),
             git_refresh_ticks: 0,
+            custom_tools: Vec::new(),
             last_rail_refresh: 0,
             persisted_event_count: 0,
             mcp_socket_path: None,

@@ -4,7 +4,7 @@
 
 *A terminal cockpit for coding agents.*
 
-Potato runs real agents like Claude Code and Codex in embedded terminal panes, gives them shared coordination tools over MCP, and lets you watch the work happen in one place.
+Potato runs real agents like Codex and Claude Code in one project cockpit, gives them shared coordination tools over MCP, and lets you watch the work happen in one place.
 
 > Potato does **not** replace your agents. It gives them a shared workspace, project context, and a mission control you can actually use.
 
@@ -43,15 +43,16 @@ If Claude Code is excellent in one terminal, Potato is what happens when you wan
 - project-aware **roles**, **messages**, and **shared context**,
 - and a TUI that shows what your agents are actually doing.
 
-Potato is built in Rust with [ratatui](https://github.com/ratatui/ratatui). It embeds real PTY sessions, tails native agent logs for observability, and wires sessions together through a built-in MCP server.
+Potato is built in Rust with [ratatui](https://github.com/ratatui/ratatui). It supports both embedded PTY sessions and exec-backed agent flows, tails native agent logs for observability, and wires sessions together through a built-in MCP server.
 
 ## What It Does Today
 
-### Real embedded agent terminals
-- Launch Claude Code, Codex, or a generic CLI agent in actual PTYs
+### Native agent runtimes
+- Launch Codex, Claude Code, or a generic CLI agent from one cockpit
+- Use exec-backed Codex flows where they fit, while still supporting embedded PTYs
 - Keep the native agent feel instead of simulating turns in a fake chat UI
 - Support side-by-side panes for concurrent work
-- Preserve terminal-local scrollback inside each pane
+- Preserve terminal-local scrollback inside PTY-backed panes
 
 ### Coordination via MCP
 - Potato exposes MCP tools to running agents
@@ -173,7 +174,7 @@ Before you start a session, Potato gives you a dashboard with:
 ### Session view
 During a run, Potato focuses on project collaboration:
 - **Left rail:** project/git awareness
-- **Center:** real terminal panes with full PTY passthrough
+- **Center:** live agent panes, with full PTY passthrough when a pane is terminal-backed
 - **Right rail:** Team, Tasks, Context, and compact agent metrics
 
 ### Keyboard
@@ -191,8 +192,8 @@ During a run, Potato focuses on project collaboration:
 
 | Agent | Status | Notes |
 |-------|--------|-------|
-| Claude Code | Supported | Native session/log observability |
-| Codex | Supported | Native session/log observability |
+| Codex | Supported | Exec-backed and PTY-backed flows, plus native session/log observability |
+| Claude Code | Supported | Native PTY/session-log observability |
 | Generic CLI | Experimental | Basic terminal hosting via adapter |
 
 ---
@@ -212,7 +213,8 @@ During a run, Potato focuses on project collaboration:
 Potato is already useful for real multi-agent work, especially on coding tasks where you want multiple agents in one project with a visible coordination layer.
 
 What’s solid:
-- embedded PTY sessions,
+- Codex-first multi-agent support,
+- embedded PTY sessions where they still fit,
 - Claude/Codex support,
 - MCP coordination,
 - project-local state,
