@@ -19,7 +19,8 @@ jobs:
   # ── Formatting ───────────────────────────────────────────────────────────
   fmt:
     name: Format
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, dushyantpc, home-linux-trusted]
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -30,7 +31,8 @@ jobs:
   # ── Clippy (deny warnings) ──────────────────────────────────────────────
   clippy:
     name: Clippy
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, dushyantpc, home-linux-trusted]
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -42,7 +44,8 @@ jobs:
   # ── MSRV check ──────────────────────────────────────────────────────────
   msrv:
     name: MSRV (${{ matrix.msrv }})
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, dushyantpc, home-linux-trusted]
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     strategy:
       matrix:
         msrv: ["1.86"]
@@ -56,13 +59,18 @@ jobs:
 
   # ── Tests (multi-OS) ────────────────────────────────────────────────────
   test:
-    name: Test (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    name: Test (${{ matrix.os.name }})
+    runs-on: ${{ fromJSON(matrix.os.runner) }}
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os:
+          - name: ubuntu
+            runner: '["self-hosted","Linux","X64","dushyantpc","home-linux-trusted"]'
+          - name: macos
+            runner: '"macos-latest"'
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -72,7 +80,8 @@ jobs:
   # ── Doc warnings ────────────────────────────────────────────────────────
   docs:
     name: Doc Warnings
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, dushyantpc, home-linux-trusted]
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -84,7 +93,8 @@ jobs:
   # ── Typo checker ────────────────────────────────────────────────────────
   typos:
     name: Typos
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, dushyantpc, home-linux-trusted]
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     steps:
       - uses: actions/checkout@v4
       - uses: crate-ci/typos@master
@@ -92,7 +102,8 @@ jobs:
   # ── Dependency audit (licenses + advisories) ────────────────────────────
   cargo-deny:
     name: Deny (${{ matrix.checks }})
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, dushyantpc, home-linux-trusted]
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     strategy:
       matrix:
         checks:
